@@ -120,6 +120,11 @@ async function ensureStorageFile(filePath = storagePath()) {
 
 export async function storageStatus() {
   const requested = requestedStoragePath();
+  try {
+    await ensureStorageFile(requested);
+  } catch (error) {
+    storageWarning = `Excel-хранилище не удалось инициализировать: ${error.message}`;
+  }
   const seed = seedStoragePath();
   const status = {
     requestedPath: requested,
