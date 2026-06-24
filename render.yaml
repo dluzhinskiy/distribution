@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: mts-load-distribution-mvp
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: STORAGE_FILE
+        value: /data/raspredelenie_storage.xlsx
+    disk:
+      name: app-data
+      mountPath: /data
+      sizeGB: 1
