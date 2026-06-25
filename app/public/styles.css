@@ -616,6 +616,17 @@ p {
   gap: 14px;
 }
 
+.party-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.party-grid.has-third-party {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .subtabs {
   display: flex;
   gap: 8px;
@@ -1374,6 +1385,8 @@ textarea:disabled {
   .cards-grid,
   .grid.two,
   .distribution-layout,
+  .party-grid,
+  .party-grid.has-third-party,
   .vacation-layout,
   .year-calendar {
     grid-template-columns: 1fr;

@@ -233,14 +233,36 @@ function toTabsDate(value, withTime = false) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
 }
 
+function fromTabsUrl(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "object") {
+    return cleanText(value.text ?? value.url ?? value.title ?? "");
+  }
+  return cleanText(value);
+}
+
+function toTabsUrl(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  return {
+    title: "CasePRO",
+    text,
+    favicon: "",
+  };
+}
+
 function normalizeFromTabs(table, fields = {}) {
   const dateSet = new Set(table.dateFields);
   const row = {};
   for (const header of table.headers) {
     const value = fields[header];
-    row[header] = dateSet.has(header)
-      ? fromTabsDate(value, header === "Дата события")
-      : value ?? "";
+    if (table.name === "Дела" && header === "Ссылка") {
+      row[header] = fromTabsUrl(value);
+    } else {
+      row[header] = dateSet.has(header)
+        ? fromTabsDate(value, header === "Дата события")
+        : value ?? "";
+    }
   }
   return row;
 }
@@ -251,11 +273,15 @@ function normalizeToTabs(table, row = {}) {
   const fields = {};
   for (const header of table.headers) {
     const value = row[header];
-    fields[header] = dateSet.has(header)
-      ? toTabsDate(value, header === "Дата события")
-      : numberSet.has(header)
-        ? (value === "" || value === null || value === undefined ? null : Number(value))
-        : (value === null || value === undefined ? "" : String(value));
+    if (table.name === "Дела" && header === "Ссылка") {
+      fields[header] = toTabsUrl(value);
+    } else {
+      fields[header] = dateSet.has(header)
+        ? toTabsDate(value, header === "Дата события")
+        : numberSet.has(header)
+          ? (value === "" || value === null || value === undefined ? null : Number(value))
+          : (value === null || value === undefined ? "" : String(value));
+    }
   }
   return fields;
 }

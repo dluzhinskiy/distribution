@@ -127,25 +127,27 @@
                   <input type="date" name="Дата поступления" required />
                 </label>
                 <label class="field">
-                  <span>Истец / заявитель</span>
-                  <input name="Истец" />
-                </label>
-                <label class="field">
-                  <span>Ответчик</span>
-                  <input name="Ответчик" />
-                </label>
-                <label class="field hidden" id="thirdPartyField">
-                  <span>Третье лицо</span>
-                  <input name="Третье лицо" />
-                </label>
-                <label class="field">
                   <span>Номер дела</span>
                   <input name="Номер дела" />
                 </label>
                 <label class="field">
-                  <span>Ссылка</span>
-                  <input name="Ссылка" placeholder="CasePro / другой источник" />
+                  <span>Ссылка на карточку в CasePRO</span>
+                  <input type="url" name="Ссылка" placeholder="https://..." />
                 </label>
+                <div class="party-grid" id="partyGrid">
+                  <label class="field">
+                    <span>Истец / заявитель</span>
+                    <input name="Истец" />
+                  </label>
+                  <label class="field">
+                    <span>Ответчик</span>
+                    <input name="Ответчик" />
+                  </label>
+                  <label class="field hidden" id="thirdPartyField">
+                    <span>Третье лицо</span>
+                    <input name="Третье лицо" />
+                  </label>
+                </div>
                 <label class="field">
                   <span>Назначить вне очереди</span>
                   <select name="manualResponsible" id="manualResponsible">
@@ -165,7 +167,7 @@
 
             <aside class="card recommendation-card">
               <div class="card-head">
-                <h2>Рекомендация</h2>
+                <h2>Автоназначение</h2>
                 <span id="recommendationBadge" class="badge badge-gray">ожидает ввода</span>
               </div>
               <div class="recommendation-person" id="recommendationPerson">—</div>

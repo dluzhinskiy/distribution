@@ -795,9 +795,11 @@ function updateThirdPartyVisibility() {
   const form = $("#caseForm");
   const type = form.elements["Тип дела"]?.value;
   const field = $("#thirdPartyField");
+  const grid = $("#partyGrid");
   const input = form.elements["Третье лицо"];
   const visible = type === "судебное";
   field?.classList.toggle("hidden", !visible);
+  grid?.classList.toggle("has-third-party", visible);
   if (!visible && input) input.value = "";
 }
 
@@ -1129,7 +1131,7 @@ function caseDetailRows(row) {
     ["Предмет", row["Предмет"]],
     ["Основание", row["Основание"]],
     ["Комментарий", row["Комментарий"]],
-    ["Ссылка", row["Ссылка"]],
+    ["Ссылка на карточку в CasePRO", row["Ссылка"]],
   ].filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== "");
 }
 
