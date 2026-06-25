@@ -1,16 +1,11 @@
 {
-  "name": "mts-load-distribution-tabs-mvp",
+  "name": "mts-load-distribution-render-tabs",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "start": "node server.mjs",
-    "tabs:diagnostics": "node scripts/tabs-api-diagnostics.mjs",
-    "tabs:debug-queue": "node scripts/tabs-debug-queue.mjs",
-    "tabs:debug-responsibles": "node scripts/tabs-debug-responsibles.mjs",
-    "tabs:ensure-queues": "node scripts/tabs-ensure-queues.mjs",
-    "tabs:find-case": "node scripts/tabs-find-case.mjs",
-    "test": "node scripts/smoke-test.mjs"
-  },
-  "dependencies": {}
+    "postinstall": "cd app && npm install",
+    "start": "cd app && npm start",
+    "test": "cd app && npm test",
+    "tabs:ensure-queues": "cd app && npm run tabs:ensure-queues"
+  }
 }
