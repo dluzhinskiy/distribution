@@ -791,6 +791,16 @@ function manualFormValues() {
   };
 }
 
+function updateThirdPartyVisibility() {
+  const form = $("#caseForm");
+  const type = form.elements["Тип дела"]?.value;
+  const field = $("#thirdPartyField");
+  const input = form.elements["Третье лицо"];
+  const visible = type === "судебное";
+  field?.classList.toggle("hidden", !visible);
+  if (!visible && input) input.value = "";
+}
+
 function showRecommendation(result) {
   state.lastRecommendation = result;
   const badgeNode = $("#recommendationBadge");
@@ -863,6 +873,7 @@ function scheduleRecommendation() {
 function resetDistributionForm(message) {
   $("#caseForm").reset();
   $("#autoAssignBtn").textContent = "Назначить";
+  updateThirdPartyVisibility();
   renderManualSelect();
   renderYucRegionSelects();
   $("#caseForm").elements["Дата поступления"].value = today();
@@ -1324,6 +1335,7 @@ function bindEvents() {
   }));
   $("#caseForm").elements["Тип дела"].addEventListener("change", () => {
     state.lastRecommendation = null;
+    updateThirdPartyVisibility();
     scheduleRecommendation();
   });
   $("#manualResponsible").addEventListener("change", () => {
@@ -1428,6 +1440,7 @@ function bindEvents() {
 
 function init() {
   $("#caseForm").elements["Дата поступления"].value = today();
+  updateThirdPartyVisibility();
   bindEvents();
   loadData().catch((error) => {
     setStatus("Ошибка");

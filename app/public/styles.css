@@ -359,6 +359,10 @@ p {
   display: block;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .grid {
   display: grid;
   gap: 16px;
