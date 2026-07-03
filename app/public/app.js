@@ -1525,14 +1525,22 @@ function formDraft() {
   return draft;
 }
 
-function manualAssignableEmployees(draft = formDraft()) {
+function currentQueueEmployeeNames() {
+  return (state.lastRecommendation?.queuePreview?.rows ?? [])
+    .map((row) => row.name)
+    .filter(Boolean);
+}
+
+function manualAssignableEmployees(draft = formDraft(), options = {}) {
   const type = draft["Тип дела"];
   const date = draft["Дата поступления"] || today();
+  const excludedNames = options.excludeCurrentQueue ? currentQueueEmployeeNames() : [];
   return employeesForSelectedYuc()
     .filter((employee) =>
       yes(employee["Активен"]) &&
       employeeParticipatesInCaseType(employee, type) &&
-      !isEmployeeOnVacationDate(employee, date)
+      !isEmployeeOnVacationDate(employee, date) &&
+      !excludedNames.some((name) => nameMatches(name, employee["ФИО"]))
     )
     .sort((a, b) => displayName(a["ФИО"]).localeCompare(displayName(b["ФИО"]), "ru"));
 }
@@ -1595,7 +1603,7 @@ function manualAssignAnyButtonHtml() {
   return `
     <div class="queue-preview-manual">
       <button class="btn btn-secondary queue-assign-manual-all" type="button">Назначить вне очереди</button>
-      <span>Ручной выбор любого доступного сотрудника выбранного ЮЦ.</span>
+      <span>Ручной выбор доступного сотрудника вне показанной очереди.</span>
     </div>
   `;
 }
@@ -2215,7 +2223,7 @@ function openQueueManualAssignModal(name = "") {
   if (!validateDraftForAssignment(draft)) return;
   const selectField = $("#queueManualAssignEmployeeField");
   const select = $("#queueManualAssignEmployeeSelect");
-  const candidates = manualAssignableEmployees(draft);
+  const candidates = manualAssignableEmployees(draft, { excludeCurrentQueue: !name });
   if (name) {
     const employee = employeesForSelectedYuc().find((item) => nameMatches(item["ФИО"], name));
     const fullName = employee?.["ФИО"] || name;
@@ -2228,7 +2236,7 @@ function openQueueManualAssignModal(name = "") {
     `;
   } else {
     if (!candidates.length) {
-      toast("Нет доступных сотрудников для ручного назначения по выбранному типу и дате.", "error");
+      toast("Нет доступных сотрудников вне текущей очереди по выбранному типу и дате.", "error");
       return;
     }
     state.queueManualCandidate = "";
@@ -2238,7 +2246,7 @@ function openQueueManualAssignModal(name = "") {
     selectField?.classList.remove("hidden");
     $("#queueManualAssignInfo").innerHTML = `
       <div><strong>Режим:</strong> назначение вне текущей системной очереди</div>
-      <div class="muted">Можно выбрать любого доступного сотрудника выбранного ЮЦ, даже если он не входит в показанную региональную очередь. Комментарий руководителя обязателен.</div>
+      <div class="muted">Можно выбрать доступного сотрудника выбранного ЮЦ, который не входит в показанную очередь. Комментарий руководителя обязателен.</div>
     `;
   }
   $("#queueManualAssignComment").value = "";
