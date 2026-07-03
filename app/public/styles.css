@@ -2418,6 +2418,11 @@ body.theme-apple .day-cell.vacation {
   background: linear-gradient(135deg, var(--apple-gradient-start), var(--apple-gradient-end));
 }
 
+body.theme-apple .workload-bar.active,
+body.theme-apple .type-load-bar.active {
+  box-shadow: 0 0 0 3px var(--apple-accent-soft);
+}
+
 body.theme-apple .workload-bar.inactive,
 body.theme-apple .type-load-bar.inactive,
 body.theme-apple .legend-dot.inactive {
