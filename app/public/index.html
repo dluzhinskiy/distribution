@@ -113,7 +113,9 @@
                   <h2>Новое дело</h2>
                   <p>Заполните карточку — приложение предложит кандидата по очереди.</p>
                 </div>
-                <span class="badge badge-red">не два подряд</span>
+                <div class="rule-badges" id="distributionRuleBadges">
+                  <span class="badge badge-red">не два подряд</span>
+                </div>
               </div>
 
               <form id="caseForm" class="form-grid">
@@ -551,6 +553,10 @@
         </div>
         <div class="modal-body">
           <div class="delete-case-info" id="queueManualAssignInfo"></div>
+          <label class="field full hidden" id="queueManualAssignEmployeeField">
+            <span>Сотрудник</span>
+            <select id="queueManualAssignEmployeeSelect"></select>
+          </label>
           <label class="field full">
             <span>Комментарий руководителя</span>
             <textarea id="queueManualAssignComment" rows="4" placeholder="Укажите причину назначения вне очереди"></textarea>

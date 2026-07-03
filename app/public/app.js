@@ -665,6 +665,13 @@ function displayName(name) {
   return shortName(name) || "—";
 }
 
+function employeeParticipatesInCaseType(employee, type) {
+  if (type === "судебное") return yes(employee["Судебные"]);
+  if (type === "административное") return yes(employee["Административные"]);
+  if (type === "претензия") return yes(employee["Претензии"]);
+  return false;
+}
+
 function nameMatches(a, b) {
   const left = String(a ?? "").trim();
   const right = String(b ?? "").trim();
@@ -1059,6 +1066,19 @@ function vacationDatesSet(employeeId, year) {
     dates.push(...eachDateInRange(start, end).filter((date) => String(date).startsWith(`${year}-`)));
   }
   return new Set(dates);
+}
+
+function isEmployeeOnVacationDate(employee, isoDate) {
+  if (!employee || !isoDate) return false;
+  return (state.data?.vacations ?? []).some((row) => {
+    const sameEmployee = row.employee_id
+      ? row.employee_id === employee.employee_id
+      : nameMatches(row["ФИО"] || row["Сотрудник"], employee["ФИО"]);
+    if (!sameEmployee) return false;
+    const start = row["Дата начала"] || row["Дата"];
+    const end = row["Дата окончания"] || row["Дата"] || start;
+    return Boolean(start && end && start <= isoDate && isoDate <= end);
+  });
 }
 
 function vacationDraftKey(employeeId, year) {
@@ -1505,6 +1525,18 @@ function formDraft() {
   return draft;
 }
 
+function manualAssignableEmployees(draft = formDraft()) {
+  const type = draft["Тип дела"];
+  const date = draft["Дата поступления"] || today();
+  return employeesForSelectedYuc()
+    .filter((employee) =>
+      yes(employee["Активен"]) &&
+      employeeParticipatesInCaseType(employee, type) &&
+      !isEmployeeOnVacationDate(employee, date)
+    )
+    .sort((a, b) => displayName(a["ФИО"]).localeCompare(displayName(b["ФИО"]), "ru"));
+}
+
 function updateThirdPartyVisibility() {
   const form = $("#caseForm");
   const type = form.elements["Тип дела"]?.value;
@@ -1559,6 +1591,15 @@ function queueSectionHtml(title, rows) {
   `;
 }
 
+function manualAssignAnyButtonHtml() {
+  return `
+    <div class="queue-preview-manual">
+      <button class="btn btn-secondary queue-assign-manual-all" type="button">Назначить вне очереди</button>
+      <span>Ручной выбор любого доступного сотрудника выбранного ЮЦ.</span>
+    </div>
+  `;
+}
+
 function renderQueuePreview(preview) {
   const node = $("#queuePreview");
   if (!node) return;
@@ -1575,6 +1616,7 @@ function renderQueuePreview(preview) {
         </div>
       </div>
       <div class="queue-preview-empty">Для этого ЮЦ и типа нагрузки нет строк очереди.</div>
+      ${manualAssignAnyButtonHtml()}
     `;
     return;
   }
@@ -1594,11 +1636,43 @@ function renderQueuePreview(preview) {
     </div>
     ${queueSectionHtml("Уже прошли", passed)}
     ${queueSectionHtml("Следующие", next)}
+    ${manualAssignAnyButtonHtml()}
   `;
+}
+
+function activeRuleItems(result) {
+  const items = [{ text: "не два подряд", kind: "red" }];
+  if (!result || result.pending) return items;
+  const preview = result.queuePreview;
+  const mode = preview?.mode;
+  if (mode === "regional") items.push({ text: "региональная очередь", kind: "blue" });
+  if (mode === "substitution") items.push({ text: "замещение", kind: "orange" });
+  if (mode === "outside-region") items.push({ text: "вне региона по перегрузу", kind: "orange" });
+  if (mode === "general") items.push({ text: "общая очередь", kind: "gray" });
+  const basis = String(result.basis ?? "").toLowerCase();
+  if (basis.includes("долг после отпуска")) items.push({ text: "долг после отпуска", kind: "blue" });
+  if (basis.includes("повтор допускается")) items.push({ text: "повтор разрешён регионом", kind: "orange" });
+  if ((result.skippedVacation ?? []).length) items.push({ text: "учтены отпуска", kind: "orange" });
+  return items;
+}
+
+function renderDistributionRuleBadges(result = state.lastRecommendation) {
+  const node = $("#distributionRuleBadges");
+  if (!node) return;
+  const seen = new Set();
+  node.innerHTML = activeRuleItems(result)
+    .filter((item) => {
+      if (seen.has(item.text)) return false;
+      seen.add(item.text);
+      return true;
+    })
+    .map((item) => badge(item.text, item.kind))
+    .join("");
 }
 
 function showRecommendation(result) {
   state.lastRecommendation = result;
+  renderDistributionRuleBadges(result);
   const badgeNode = $("#recommendationBadge");
   const personNode = $("#recommendationPerson");
   const metaNode = $("#recommendationMeta");
@@ -2136,32 +2210,59 @@ function closeCaseModal() {
   $("#caseModal").classList.remove("show");
 }
 
-function openQueueManualAssignModal(name) {
+function openQueueManualAssignModal(name = "") {
   const draft = formDraft();
   if (!validateDraftForAssignment(draft)) return;
-  const employee = employeesForSelectedYuc().find((item) => nameMatches(item["ФИО"], name));
-  const fullName = employee?.["ФИО"] || name;
-  state.queueManualCandidate = fullName;
-  $("#queueManualAssignInfo").innerHTML = `
-    <div><strong>Сотрудник:</strong> ${escapeHtml(displayName(fullName))}</div>
-    <div class="muted">Назначение будет выполнено вручную, вне очереди. Комментарий руководителя обязателен.</div>
-  `;
+  const selectField = $("#queueManualAssignEmployeeField");
+  const select = $("#queueManualAssignEmployeeSelect");
+  const candidates = manualAssignableEmployees(draft);
+  if (name) {
+    const employee = employeesForSelectedYuc().find((item) => nameMatches(item["ФИО"], name));
+    const fullName = employee?.["ФИО"] || name;
+    state.queueManualCandidate = fullName;
+    selectField?.classList.add("hidden");
+    select.innerHTML = "";
+    $("#queueManualAssignInfo").innerHTML = `
+      <div><strong>Сотрудник:</strong> ${escapeHtml(displayName(fullName))}</div>
+      <div class="muted">Назначение будет выполнено вручную, вне очереди. Комментарий руководителя обязателен.</div>
+    `;
+  } else {
+    if (!candidates.length) {
+      toast("Нет доступных сотрудников для ручного назначения по выбранному типу и дате.", "error");
+      return;
+    }
+    state.queueManualCandidate = "";
+    select.innerHTML = candidates
+      .map((employee) => `<option value="${escapeHtml(employee["ФИО"])}">${escapeHtml(displayName(employee["ФИО"]))}</option>`)
+      .join("");
+    selectField?.classList.remove("hidden");
+    $("#queueManualAssignInfo").innerHTML = `
+      <div><strong>Режим:</strong> назначение вне текущей системной очереди</div>
+      <div class="muted">Можно выбрать любого доступного сотрудника выбранного ЮЦ, даже если он не входит в показанную региональную очередь. Комментарий руководителя обязателен.</div>
+    `;
+  }
   $("#queueManualAssignComment").value = "";
   $("#queueManualAssignModal").classList.add("show");
   $("#queueManualAssignModal").setAttribute("aria-hidden", "false");
-  $("#queueManualAssignComment").focus();
+  (name ? $("#queueManualAssignComment") : select)?.focus();
 }
 
 function closeQueueManualAssignModal() {
   state.queueManualCandidate = null;
+  $("#queueManualAssignEmployeeField")?.classList.add("hidden");
+  $("#queueManualAssignEmployeeSelect").innerHTML = "";
   $("#queueManualAssignModal")?.classList.remove("show");
   $("#queueManualAssignModal")?.setAttribute("aria-hidden", "true");
 }
 
 async function saveQueueManualAssign() {
-  const responsible = state.queueManualCandidate;
+  const responsible = state.queueManualCandidate || $("#queueManualAssignEmployeeSelect")?.value || "";
   const comment = $("#queueManualAssignComment")?.value ?? "";
-  if (!responsible) return;
+  if (!responsible) {
+    toast("Выберите сотрудника для назначения вне очереди.", "error");
+    $("#queueManualAssignEmployeeSelect")?.focus();
+    return;
+  }
   if (!comment.trim()) {
     toast("Для назначения вне очереди нужен комментарий руководителя.", "error");
     $("#queueManualAssignComment")?.focus();
@@ -2508,6 +2609,11 @@ function bindEvents() {
     const queueManualButton = event.target.closest(".queue-assign-manual");
     if (queueManualButton) {
       openQueueManualAssignModal(queueManualButton.dataset.name);
+      return;
+    }
+    const queueManualAllButton = event.target.closest(".queue-assign-manual-all");
+    if (queueManualAllButton) {
+      openQueueManualAssignModal();
       return;
     }
     const yucTab = event.target.closest(".yuc-tab");

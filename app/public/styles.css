@@ -429,6 +429,14 @@ body.write-pending button:not(:disabled) {
   color: #cc4400;
 }
 
+.rule-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 360px;
+}
+
 .view {
   display: none;
 }
@@ -1503,6 +1511,28 @@ textarea:focus,
   padding: 0 12px;
   border-radius: var(--radius-pill);
   white-space: nowrap;
+  font-size: 13px;
+}
+
+.queue-preview-manual {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--mts-gray-200);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.66);
+  color: var(--mts-gray-600);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.queue-preview-manual .btn {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
   font-size: 13px;
 }
 
