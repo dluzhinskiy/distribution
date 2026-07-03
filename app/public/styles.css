@@ -670,9 +670,26 @@ body.write-pending button:not(:disabled) {
   min-width: 230px;
 }
 
-.workload-employee strong {
+.workload-employee strong,
+.workload-employee-link {
   display: block;
   font-size: 13px;
+}
+
+.workload-employee-link {
+  padding: 0;
+  border: 0;
+  color: var(--mts-gray-900);
+  background: transparent;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workload-employee-link:hover {
+  color: var(--apple-accent, var(--mts-red));
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .workload-employee span,

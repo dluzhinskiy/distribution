@@ -10,6 +10,7 @@ const state = {
   deleteEditEnabled: false,
   showDeletedCases: false,
   casesQuickFilter: "",
+  casesResponsibleFilter: "",
   completionControlExpanded: false,
   deleteModalCaseId: "",
   postponeCompletionCaseId: "",
@@ -658,18 +659,33 @@ function caseMatchesQuickFilter(row) {
   return true;
 }
 
+function caseMatchesResponsibleFilter(row) {
+  if (!state.casesResponsibleFilter) return true;
+  return nameMatches(row["Ответственный"], state.casesResponsibleFilter);
+}
+
 function renderCasesQuickFilter() {
   const node = $("#casesQuickFilterStrip");
   if (!node) return;
+  const chips = [];
   const label = casesQuickFilterLabel();
-  node.innerHTML = label
-    ? `
+  if (label) {
+    chips.push(`
       <span class="quick-filter-chip">
         ${escapeHtml(label)}
         <button type="button" id="clearCasesQuickFilter" aria-label="Сбросить фильтр">×</button>
       </span>
-    `
-    : "";
+    `);
+  }
+  if (state.casesResponsibleFilter) {
+    chips.push(`
+      <span class="quick-filter-chip">
+        Ответственный: ${escapeHtml(displayName(state.casesResponsibleFilter))}
+        <button type="button" id="clearCasesResponsibleFilter" aria-label="Сбросить фильтр по ответственному">×</button>
+      </span>
+    `);
+  }
+  node.innerHTML = chips.join("");
 }
 
 function employeeInitials(name) {
@@ -757,7 +773,12 @@ function renderWorkloadDashboard() {
         <div class="workload-employee">
           <div class="avatar avatar-sm">${escapeHtml(employeeInitials(row.employee["ФИО"]))}</div>
           <div>
-            <strong title="${escapeHtml(row.employee["ФИО"])}">${escapeHtml(displayName(row.employee["ФИО"]))}</strong>
+            <button
+              type="button"
+              class="workload-employee-link"
+              data-dashboard-responsible="${escapeHtml(row.employee["ФИО"])}"
+              title="Показать дела сотрудника"
+            >${escapeHtml(displayName(row.employee["ФИО"]))}</button>
             <span>${row.activeTotal} активных · ${row.inactiveTotal} неактивных</span>
           </div>
         </div>
@@ -917,6 +938,7 @@ function renderCases() {
   const rows = casesForSelectedYuc()
     .filter((row) => state.showDeletedCases || !isDeletedCase(row))
     .filter(caseMatchesQuickFilter)
+    .filter(caseMatchesResponsibleFilter)
     .filter((row) => !term || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(term)))
     .slice()
     .reverse();
@@ -941,6 +963,15 @@ function renderCases() {
 
 function applyCasesQuickFilter(filter) {
   state.casesQuickFilter = filter || "";
+  state.casesResponsibleFilter = "";
+  if ($("#casesSearch")) $("#casesSearch").value = "";
+  showView("cases");
+  renderCases();
+}
+
+function applyCasesResponsibleFilter(responsible) {
+  state.casesResponsibleFilter = responsible || "";
+  state.casesQuickFilter = "";
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
   renderCases();
@@ -2627,6 +2658,10 @@ function bindEvents() {
       state.casesQuickFilter = "";
       renderCases();
     }
+    if (event.target.closest("#clearCasesResponsibleFilter")) {
+      state.casesResponsibleFilter = "";
+      renderCases();
+    }
   });
   $("#caseResponsibleEditToggle").addEventListener("change", (event) => {
     setResponsibleEditEnabled(event.target.checked);
@@ -2684,6 +2719,11 @@ function bindEvents() {
     const summaryButton = event.target.closest("[data-summary-action]");
     if (summaryButton) {
       handleSummaryAction(summaryButton.dataset.summaryAction);
+      return;
+    }
+    const dashboardResponsibleButton = event.target.closest("[data-dashboard-responsible]");
+    if (dashboardResponsibleButton) {
+      applyCasesResponsibleFilter(dashboardResponsibleButton.dataset.dashboardResponsible);
       return;
     }
     const queueAutoButton = event.target.closest(".queue-assign-auto");
