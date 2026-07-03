@@ -24,6 +24,7 @@ const state = {
   writeLockCount: 0,
   vacationImportPlan: null,
   caseImportPlan: null,
+  caseImportSelectedRows: new Set(),
   vacationDrafts: {},
   queueManualCandidate: null,
   journalLoaded: false,
@@ -1011,13 +1012,70 @@ function closeCaseImportModal() {
   if ($("#caseImportInput")) $("#caseImportInput").value = "";
 }
 
+function selectedCaseImportRows() {
+  const plan = state.caseImportPlan;
+  if (!plan) return [];
+  const selected = state.caseImportSelectedRows ?? new Set();
+  return (plan.toAdd ?? []).filter((item) => selected.has(String(item.rowNumber)));
+}
+
+function updateCaseImportSelectionState() {
+  const plan = state.caseImportPlan;
+  const total = plan?.toAdd?.length ?? 0;
+  const selectedCount = selectedCaseImportRows().length;
+  const applyButton = $("#caseImportApplyBtn");
+  const selectedNode = $("#caseImportSelectedCount");
+  const selectAll = $("#caseImportSelectAll");
+  if (applyButton) {
+    applyButton.disabled = selectedCount === 0;
+    applyButton.textContent = selectedCount ? `Добавить выбранные (${selectedCount})` : "Добавить выбранные";
+  }
+  if (selectedNode) {
+    selectedNode.textContent = `${selectedCount} из ${total} отмечены для добавления`;
+  }
+  if (selectAll) {
+    selectAll.checked = total > 0 && selectedCount === total;
+    selectAll.indeterminate = selectedCount > 0 && selectedCount < total;
+  }
+}
+
+function caseImportRow(item, options = {}) {
+  const checked = options.checked ? "checked" : "";
+  const disabled = options.disabled ? "disabled" : "";
+  const mutedReason = options.reason || item.reason || "";
+  return `
+    <li class="import-row ${options.disabled ? "is-disabled" : ""}">
+      <label class="import-row-check">
+        <input
+          type="checkbox"
+          class="case-import-check"
+          data-row-number="${escapeHtml(item.rowNumber)}"
+          ${checked}
+          ${disabled}
+        />
+        <span class="checkbox-ui"></span>
+      </label>
+      <div class="import-row-body">
+        <div>
+          <strong>Строка ${item.rowNumber}: ${escapeHtml(item.source["Предмет"])}</strong>
+          ${mutedReason ? `<span class="muted"> · ${escapeHtml(mutedReason)}</span>` : ""}
+        </div>
+        <div class="muted">
+          ${escapeHtml(item.source["Тип дела"] || "тип не указан")} ·
+          ${escapeHtml(item.source["Регион"] || "регион не указан")} ·
+          ${escapeHtml(item.source["Ответственный"] ? displayName(item.source["Ответственный"]) : "без ответственного")}
+        </div>
+      </div>
+    </li>
+  `;
+}
+
 function renderCaseImportModal() {
   const plan = state.caseImportPlan;
   const content = $("#caseImportContent");
   const applyButton = $("#caseImportApplyBtn");
   if (!content || !applyButton || !plan) return;
   const hasWarnings = Boolean(plan.invalid?.length || plan.duplicateInFile?.length);
-  applyButton.disabled = !(plan.toAdd?.length);
   content.innerHTML = `
     <p class="muted">
       Импорт добавит только отсутствующие дела. Проверка дублей выполняется по типу, дате поступления, региону,
@@ -1034,26 +1092,31 @@ function renderCaseImportModal() {
         Часть строк не будет добавлена: есть некорректные строки или повторы внутри файла.
       </div>
     ` : ""}
-    <h3>Будут добавлены</h3>
-    <ul class="import-list">
-      ${(plan.toAdd ?? []).slice(0, 12).map((item) => `
-        <li>
-          Строка ${item.rowNumber}: ${escapeHtml(item.source["Предмет"])}
-          <span class="muted">· ${escapeHtml(item.source["Тип дела"])} · ${escapeHtml(item.source["Регион"])} · ${escapeHtml(item.source["Ответственный"] ? displayName(item.source["Ответственный"]) : "без ответственного")}</span>
-        </li>
-      `).join("") || `<li>Новых дел для добавления нет.</li>`}
-      ${(plan.toAdd ?? []).length > 12 ? `<li>…и ещё ${(plan.toAdd ?? []).length - 12}</li>` : ""}
+    <div class="import-selection-head">
+      <h3>Новые дела</h3>
+      <div class="import-selection-controls">
+        <label class="import-select-all">
+          <input type="checkbox" id="caseImportSelectAll">
+          <span class="checkbox-ui"></span>
+          <span id="caseImportSelectedCount"></span>
+        </label>
+        <button class="tiny-btn light" id="caseImportSelectAllBtn" type="button">Отметить все</button>
+        <button class="tiny-btn light" id="caseImportClearAllBtn" type="button">Снять все</button>
+      </div>
+    </div>
+    <ul class="import-list case-import-list">
+      ${(plan.toAdd ?? []).map((item) => caseImportRow(item, {
+        checked: state.caseImportSelectedRows.has(String(item.rowNumber)),
+      })).join("") || `<li>Новых дел для добавления нет.</li>`}
     </ul>
     ${(plan.existing ?? []).length ? `
       <h3>Уже есть в реестре</h3>
-      <ul class="import-list">
-        ${(plan.existing ?? []).slice(0, 8).map((item) => `
-          <li>
-            Строка ${item.rowNumber}: ${escapeHtml(item.source["Предмет"])}
-            ${item.reason ? `<span class="muted">· ${escapeHtml(item.reason)}</span>` : ""}
-          </li>
-        `).join("")}
-        ${(plan.existing ?? []).length > 8 ? `<li>…и ещё ${(plan.existing ?? []).length - 8}</li>` : ""}
+      <ul class="import-list case-import-list secondary">
+        ${(plan.existing ?? []).map((item) => caseImportRow(item, {
+          disabled: true,
+          checked: false,
+          reason: item.reason || "уже есть",
+        })).join("")}
       </ul>
     ` : ""}
     ${(plan.invalid ?? []).length ? `
@@ -1064,6 +1127,7 @@ function renderCaseImportModal() {
       </ul>
     ` : ""}
   `;
+  updateCaseImportSelectionState();
   $("#caseImportModal")?.classList.add("show");
   $("#caseImportModal")?.setAttribute("aria-hidden", "false");
 }
@@ -1078,19 +1142,26 @@ async function previewCaseImport(file) {
   setStatus("Читаю дела из Excel…");
   const payload = await uploadCaseWorkbook(file);
   state.caseImportPlan = payload.plan;
+  state.caseImportSelectedRows = new Set((payload.plan?.toAdd ?? []).map((item) => String(item.rowNumber)));
   renderCaseImportModal();
   setStatus("Готово");
 }
 
 async function applyCaseImport() {
   if (!state.caseImportPlan) return;
+  const selectedRows = selectedCaseImportRows();
+  if (!selectedRows.length) {
+    toast("Выберите хотя бы одно новое дело для добавления.", "error");
+    return;
+  }
   setStatus("Добавляю новые дела в MTS Tabs…");
   const payload = await api("/api/cases/import-apply", {
     method: "POST",
-    body: JSON.stringify({ plan: state.caseImportPlan }),
+    body: JSON.stringify({ rows: selectedRows }),
   });
   setDataFromPayload(payload);
   state.caseImportPlan = null;
+  state.caseImportSelectedRows = new Set();
   closeCaseImportModal();
   toast(`Импорт завершён: добавлено ${payload.result?.added ?? 0} дел.`);
   setStatus("Готово");
@@ -2780,6 +2851,14 @@ function bindEvents() {
   $("#caseImportCancelBtn")?.addEventListener("click", closeCaseImportModal);
   $("#caseImportModal")?.addEventListener("click", (event) => {
     if (event.target.id === "caseImportModal") closeCaseImportModal();
+    if (event.target.closest("#caseImportSelectAllBtn")) {
+      state.caseImportSelectedRows = new Set((state.caseImportPlan?.toAdd ?? []).map((item) => String(item.rowNumber)));
+      renderCaseImportModal();
+    }
+    if (event.target.closest("#caseImportClearAllBtn")) {
+      state.caseImportSelectedRows = new Set();
+      renderCaseImportModal();
+    }
   });
   $("#caseImportApplyBtn")?.addEventListener("click", () => applyCaseImport().catch((error) => {
     setStatus("Ошибка");
@@ -2949,6 +3028,22 @@ function bindEvents() {
     if (vacationDay) handleVacationDateClick(vacationDay.dataset.date);
   });
   document.addEventListener("change", (event) => {
+    if (event.target.matches("#caseImportSelectAll")) {
+      state.caseImportSelectedRows = event.target.checked
+        ? new Set((state.caseImportPlan?.toAdd ?? []).map((item) => String(item.rowNumber)))
+        : new Set();
+      renderCaseImportModal();
+      return;
+    }
+    if (event.target.matches(".case-import-check")) {
+      const rowNumber = String(event.target.dataset.rowNumber ?? "");
+      if (rowNumber) {
+        if (event.target.checked) state.caseImportSelectedRows.add(rowNumber);
+        else state.caseImportSelectedRows.delete(rowNumber);
+      }
+      updateCaseImportSelectionState();
+      return;
+    }
     if (event.target.matches(".case-status")) {
       if (!state.responsibleEditEnabled) return;
       updateStatusDraft(event.target.dataset.id, event.target.value);

@@ -1180,6 +1180,114 @@ body.write-pending button:not(:disabled) {
   color: var(--mts-gray-800);
 }
 
+.import-selection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.import-selection-head h3 {
+  margin: 0;
+}
+
+.import-selection-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.import-select-all,
+.import-row-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mts-gray-600);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.import-select-all input,
+.import-row-check input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.checkbox-ui {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(95, 130, 165, 0.36);
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  flex: 0 0 auto;
+}
+
+.import-select-all input:checked + .checkbox-ui,
+.import-row-check input:checked + .checkbox-ui {
+  border-color: var(--apple-accent, var(--mts-red));
+  background: linear-gradient(135deg, var(--apple-gradient-start, #ff4b55), var(--apple-gradient-end, var(--mts-red)));
+}
+
+.import-select-all input:checked + .checkbox-ui::after,
+.import-row-check input:checked + .checkbox-ui::after {
+  content: "✓";
+  display: block;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 18px;
+  text-align: center;
+}
+
+.import-select-all input:indeterminate + .checkbox-ui {
+  border-color: var(--apple-accent, var(--mts-red));
+  background: var(--apple-accent-soft, var(--mts-red-pale));
+}
+
+.import-select-all input:indeterminate + .checkbox-ui::after {
+  content: "–";
+  display: block;
+  color: var(--apple-accent, var(--mts-red));
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 15px;
+  text-align: center;
+}
+
+.case-import-list {
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.import-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.import-row-body {
+  min-width: 0;
+}
+
+.import-row-body strong {
+  font-weight: 800;
+}
+
+.import-row.is-disabled {
+  opacity: 0.62;
+}
+
+.import-row.is-disabled .import-row-check {
+  cursor: default;
+}
+
 .import-warning {
   margin: 14px 0;
   padding: 12px 14px;
