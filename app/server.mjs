@@ -386,6 +386,7 @@ async function api(req, res, url) {
         [YUC_SETTING.overloadThreshold]: 5,
         [YUC_SETTING.overloadMode]: "общая нагрузка",
         [YUC_SETTING.allowOutsideRegion]: "Да",
+        [YUC_SETTING.includeInactiveLoad]: "Нет",
         [YUC_SETTING.missingRegionMode]: "общая очередь",
         [YUC_SETTING.unavailableRegionalMode]: "заместитель затем общая очередь",
       };
@@ -396,6 +397,7 @@ async function api(req, res, url) {
       [YUC_SETTING.overloadThreshold]: Number(patch[YUC_SETTING.overloadThreshold]) || 0,
       [YUC_SETTING.overloadMode]: cleanText(patch[YUC_SETTING.overloadMode]) || "общая нагрузка",
       [YUC_SETTING.allowOutsideRegion]: yesNo(patch[YUC_SETTING.allowOutsideRegion]),
+      [YUC_SETTING.includeInactiveLoad]: yesNo(patch[YUC_SETTING.includeInactiveLoad]),
       [YUC_SETTING.missingRegionMode]: cleanText(patch[YUC_SETTING.missingRegionMode]) || "общая очередь",
       [YUC_SETTING.unavailableRegionalMode]: cleanText(patch[YUC_SETTING.unavailableRegionalMode]) || "заместитель затем общая очередь",
     });

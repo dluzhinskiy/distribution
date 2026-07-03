@@ -418,9 +418,14 @@ function yucSettingsForSelectedYuc() {
     "Порог перегруза": 5,
     "Считать перегруз по": "общая нагрузка",
     "Автоназначение вне региона вкл/выкл": "Да",
+    "Учитывать неактивные незавершенные в нагрузке": "Нет",
     "Регион не настроен": "общая очередь",
     "Региональные юристы недоступны": "заместитель затем общая очередь",
   };
+}
+
+function includeInactiveInLoadForSelectedYuc() {
+  return yes(yucSettingsForSelectedYuc()["Учитывать неактивные незавершенные в нагрузке"]);
 }
 
 function regionalQueuesEnabled() {
@@ -482,6 +487,7 @@ function summaryForSelectedYuc() {
   const productionCases = cases.filter((caseRow) => !completedStatuses.has(caseRow["Статус"]));
   const activeProductionCases = productionCases.filter((caseRow) => Number(caseRow["Активное число"]) === 1);
   const inactiveProductionCases = productionCases.filter((caseRow) => Number(caseRow["Активное число"]) !== 1);
+  const includeInactive = includeInactiveInLoadForSelectedYuc();
   return {
     totalCases: cases.length,
     productionCases: productionCases.length,
@@ -498,6 +504,7 @@ function summaryForSelectedYuc() {
       return {
         type,
         total: typeRows.length,
+        load: includeInactive ? typeRows.length : active,
         active,
         inactive,
         waiting: typeRows.filter((caseRow) => caseRow["Статус"] === "Ожидает распределения").length,
@@ -536,6 +543,7 @@ function renderYucTabs() {
 
 function renderSummary() {
   const summary = summaryForSelectedYuc();
+  const includeInactive = includeInactiveInLoadForSelectedYuc();
   $("#summaryCards").innerHTML = [
     ["В производстве", summary.productionCases, "production"],
     ["Активных", summary.activeCases, "active"],
@@ -553,15 +561,17 @@ function renderSummary() {
     <div class="type-load-card">
       <div class="type-load-head">
         <strong>${escapeHtml(item.type)}</strong>
-        <span>${item.total}</span>
+        <span>${item.load}</span>
       </div>
       <div class="type-load-bars" title="Активные: ${item.active}; неактивные незавершённые: ${item.inactive}">
-        ${item.total
+        ${includeInactive
           ? `
-            ${item.active ? `<div class="type-load-bar active" style="width:${Math.round((item.active / item.total) * 100)}%"></div>` : ""}
-            ${item.inactive ? `<div class="type-load-bar inactive" style="width:${Math.round((item.inactive / item.total) * 100)}%"></div>` : ""}
+            ${item.active ? `<div class="type-load-bar active" style="width:${Math.round((item.active / Math.max(item.total, 1)) * 100)}%"></div>` : ""}
+            ${item.inactive ? `<div class="type-load-bar inactive" style="width:${Math.round((item.inactive / Math.max(item.total, 1)) * 100)}%"></div>` : ""}
           `
-          : `<div class="type-load-bar empty" style="width:100%"></div>`
+          : item.active
+            ? `<div class="type-load-bar active" style="width:100%"></div>`
+            : `<div class="type-load-bar empty" style="width:100%"></div>`
         }
       </div>
       <div class="type-load-meta">
@@ -681,6 +691,7 @@ function nameMatches(a, b) {
 
 function workloadByEmployee() {
   const yucCases = casesForSelectedYuc();
+  const includeInactive = includeInactiveInLoadForSelectedYuc();
   return employeesForSelectedYuc().map((employee) => {
     const name = employee["ФИО"];
     const productionCases = yucCases.filter((caseRow) =>
@@ -691,23 +702,28 @@ function workloadByEmployee() {
       const rows = productionCases.filter((caseRow) => caseRow["Тип дела"] === type);
       const active = rows.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length;
       const inactive = rows.length - active;
-      return [type, { active, inactive, total: rows.length }];
+      return [type, { active, inactive, total: rows.length, load: includeInactive ? rows.length : active }];
     }));
+    const activeTotal = productionCases.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length;
+    const inactiveTotal = productionCases.filter((caseRow) => Number(caseRow["Активное число"]) !== 1).length;
     return {
       employee,
       byType,
-      total: productionCases.length,
-      activeTotal: productionCases.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length,
-      inactiveTotal: productionCases.filter((caseRow) => Number(caseRow["Активное число"]) !== 1).length,
+      total: includeInactive ? productionCases.length : activeTotal,
+      activeTotal,
+      inactiveTotal,
     };
   }).sort((a, b) => b.total - a.total || a.employee["ФИО"].localeCompare(b.employee["ФИО"], "ru"));
 }
 
 function renderWorkloadDashboard() {
   const rows = workloadByEmployee();
-  const maxTotal = Math.max(...rows.flatMap((row) => caseTypes.map((type) => row.byType[type].total)), 1);
+  const includeInactive = includeInactiveInLoadForSelectedYuc();
+  const loadModeText = includeInactive ? "активные + неактивные незавершённые" : "только активные";
+  const maxTotal = Math.max(...rows.flatMap((row) => caseTypes.map((type) => row.byType[type].load)), 1);
   $("#workloadDashboard").innerHTML = `
     <div class="workload-legend">
+      <span>Режим расчёта: ${escapeHtml(loadModeText)}</span>
       <span><i class="legend-dot active"></i>Активные</span>
       <span><i class="legend-dot inactive"></i>Неактивные, но незавершённые</span>
     </div>
@@ -725,17 +741,17 @@ function renderWorkloadDashboard() {
         </div>
         ${caseTypes.map((type) => {
           const item = row.byType[type];
-          const activeWidth = item.total ? Math.max(8, Math.round((item.active / maxTotal) * 100)) : 0;
-          const inactiveWidth = item.total ? Math.max(8, Math.round((item.inactive / maxTotal) * 100)) : 0;
+          const activeWidth = item.active ? Math.max(8, Math.round((item.active / maxTotal) * 100)) : 0;
+          const inactiveWidth = includeInactive && item.inactive ? Math.max(8, Math.round((item.inactive / maxTotal) * 100)) : 0;
           return `
             <div class="workload-cell">
               <div class="workload-count">
-                <strong>${item.total}</strong>
+                <strong>${item.load}</strong>
                 <span>${item.active} / ${item.inactive}</span>
               </div>
               <div class="workload-bars" title="Активные: ${item.active}; неактивные незавершённые: ${item.inactive}">
                 ${item.active ? `<div class="workload-bar active" style="width:${activeWidth}%"></div>` : ""}
-                ${item.inactive ? `<div class="workload-bar inactive" style="width:${inactiveWidth}%"></div>` : ""}
+                ${includeInactive && item.inactive ? `<div class="workload-bar inactive" style="width:${inactiveWidth}%"></div>` : ""}
               </div>
             </div>
           `;
@@ -1363,6 +1379,7 @@ function renderYucSettingsForm() {
   const form = $("#yucSettingsForm");
   if (!form) return;
   const settings = yucSettingsForSelectedYuc();
+  form.elements["Учитывать неактивные незавершенные в нагрузке"].checked = yes(settings["Учитывать неактивные незавершенные в нагрузке"]);
   form.elements["Региональные очереди вкл\\выкл"].checked = yes(settings["Региональные очереди вкл\\выкл"]);
   form.elements["Порог перегруза"].value = settings["Порог перегруза"] || 5;
   form.elements["Считать перегруз по"].value = settings["Считать перегруз по"] || "общая нагрузка";
@@ -1579,7 +1596,7 @@ function queueRowHtml(row) {
       <div class="queue-preview-person">
         <div class="queue-preview-name">${escapeHtml(displayName(row.name))}</div>
         <div class="queue-preview-details">
-          <span>нагрузка: ${Number(row.load) || 0}</span>
+          <span>нагрузка типа: ${Number(row.load) || 0}</span>
           ${row.phase === "passed" && !row.recommended ? "<span>прошел в цикле</span>" : ""}
         </div>
       </div>
@@ -1839,6 +1856,7 @@ function formYesNo(form, name) {
 async function saveYucSettings() {
   const form = $("#yucSettingsForm");
   const payloadBody = {
+    "Учитывать неактивные незавершенные в нагрузке": formYesNo(form, "Учитывать неактивные незавершенные в нагрузке"),
     "Региональные очереди вкл\\выкл": formYesNo(form, "Региональные очереди вкл\\выкл"),
     "Порог перегруза": form.elements["Порог перегруза"].value,
     "Считать перегруз по": form.elements["Считать перегруз по"].value,
@@ -1852,6 +1870,8 @@ async function saveYucSettings() {
     body: JSON.stringify(payloadBody),
   });
   setDataFromPayload(payload);
+  state.lastRecommendation = null;
+  scheduleRecommendation();
   setStatus("Сохранено");
   toast("Настройки ЮЦ сохранены.");
 }

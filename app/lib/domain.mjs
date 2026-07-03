@@ -106,6 +106,7 @@ export const YUC_SETTINGS_HEADERS = [
   "Порог перегруза",
   "Считать перегруз по",
   "Автоназначение вне региона вкл/выкл",
+  "Учитывать неактивные незавершенные в нагрузке",
   "Регион не настроен",
   "Региональные юристы недоступны",
 ];
@@ -173,6 +174,7 @@ export const YUC_SETTING = {
   overloadThreshold: "Порог перегруза",
   overloadMode: "Считать перегруз по",
   allowOutsideRegion: "Автоназначение вне региона вкл/выкл",
+  includeInactiveLoad: "Учитывать неактивные незавершенные в нагрузке",
   missingRegionMode: "Регион не настроен",
   unavailableRegionalMode: "Региональные юристы недоступны",
 };
@@ -537,6 +539,7 @@ function yucRegionalSettings(data, yuc) {
     [YUC_SETTING.overloadThreshold]: 5,
     [YUC_SETTING.overloadMode]: LOAD_MODE_TOTAL,
     [YUC_SETTING.allowOutsideRegion]: "Да",
+    [YUC_SETTING.includeInactiveLoad]: "Нет",
     [YUC_SETTING.missingRegionMode]: "общая очередь",
     [YUC_SETTING.unavailableRegionalMode]: REGIONAL_UNAVAILABLE_SUBSTITUTE_THEN_GENERAL,
   };
@@ -589,17 +592,46 @@ function queueRowsForEmployees(data, yuc, type, employees) {
   );
 }
 
-function employeeLoad(data, employee, type, mode = LOAD_MODE_TOTAL) {
+function includeInactiveInLoad(data, yuc) {
+  return yes(yucRegionalSettings(data, yuc)[YUC_SETTING.includeInactiveLoad]);
+}
+
+function employeeLoad(data, employee, type, mode = LOAD_MODE_TOTAL, yuc = employee?.[FIELD.yuc]) {
   const name = cleanText(employee?.[FIELD.name]);
   if (!name) return 0;
+  const normalizedYuc = normalizeYuc(yuc);
   const normalizedType = normalizeType(type);
+  const includeInactive = includeInactiveInLoad(data, normalizedYuc);
   return (data.cases ?? []).filter((caseRow) => {
     const status = cleanText(caseRow[FIELD.status]) || "В работе";
     if (COMPLETE_STATUSES.has(status)) return false;
+    if (normalizedYuc && normalizeYuc(caseRow[FIELD.yuc]) !== normalizedYuc) return false;
+    if (!includeInactive && Number(caseRow["Активное число"]) !== 1) return false;
     if (!nameMatches(caseRow[FIELD.responsible], name)) return false;
     if (mode === LOAD_MODE_BY_TYPE && normalizeType(caseRow[FIELD.caseType]) !== normalizedType) return false;
     return true;
   }).length;
+}
+
+function rowAssignmentLoad(data, row, yuc, type) {
+  const info = queueCandidateInfo(data, row, type, new Date(0));
+  return info.employee ? employeeLoad(data, info.employee, type, LOAD_MODE_BY_TYPE, yuc) : Number.POSITIVE_INFINITY;
+}
+
+function compareRowsForAssignment(data, yuc, type, lastPosition = 0) {
+  return (a, b) => {
+    const loadDiff = rowAssignmentLoad(data, a, yuc, type) - rowAssignmentLoad(data, b, yuc, type);
+    if (loadDiff) return loadDiff;
+    const posA = Number(a[FIELD.position]) || 0;
+    const posB = Number(b[FIELD.position]) || 0;
+    const cycleA = lastPosition > 0 && posA <= lastPosition ? 1 : 0;
+    const cycleB = lastPosition > 0 && posB <= lastPosition ? 1 : 0;
+    return cycleA - cycleB || posA - posB;
+  };
+}
+
+function orderedRowsForAssignment(data, rows, yuc, type, lastPosition = 0) {
+  return rows.slice().sort(compareRowsForAssignment(data, yuc, type, lastPosition));
 }
 
 function vacationNames(rows = []) {
@@ -723,7 +755,8 @@ function recommendFromQueueRows(data, rows, yuc, type, date, basisPrefix = "оч
     .sort((a, b) => {
       const dateA = toISODate(a.row[FIELD.debtDate]) || "9999-12-31";
       const dateB = toISODate(b.row[FIELD.debtDate]) || "9999-12-31";
-      return dateA.localeCompare(dateB) || Number(a.row[FIELD.position]) - Number(b.row[FIELD.position]);
+      const loadDiff = employeeLoad(data, a.employee, type, LOAD_MODE_BY_TYPE, yuc) - employeeLoad(data, b.employee, type, LOAD_MODE_BY_TYPE, yuc);
+      return loadDiff || dateA.localeCompare(dateB) || Number(a.row[FIELD.position]) - Number(b.row[FIELD.position]);
     });
   const debtCandidate = debtCandidates.find((item) => cleanText(item.row[FIELD.name]) !== lastAuto) ||
     (allowRepeatLastAuto ? debtCandidates[0] : null);
@@ -735,10 +768,7 @@ function recommendFromQueueRows(data, rows, yuc, type, date, basisPrefix = "оч
     return recommendationResult(debtCandidate, basis, "debt");
   }
 
-  const ordered = [
-    ...rows.filter((row) => Number(row[FIELD.position]) > lastPosition),
-    ...rows.filter((row) => Number(row[FIELD.position]) <= lastPosition),
-  ];
+  const ordered = orderedRowsForAssignment(data, rows, yuc, type, lastPosition);
   let availableCount = 0;
   let previousAvailable = false;
   let previousCandidate = null;
@@ -791,7 +821,7 @@ function recommendLeastLoaded(data, rows, yuc, type, date, basis, loadMode = "о
     };
   }
   candidates.sort((a, b) =>
-    employeeLoad(data, a.employee, type, loadMode) - employeeLoad(data, b.employee, type, loadMode) ||
+    employeeLoad(data, a.employee, type, loadMode, yuc) - employeeLoad(data, b.employee, type, loadMode, yuc) ||
     Number(a.row[FIELD.position]) - Number(b.row[FIELD.position])
   );
   const selected = candidates[0];
@@ -844,11 +874,16 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
         previousAuto,
         recommended: recommendedRow,
         available,
-        load: info.employee ? employeeLoad(data, info.employee, type) : 0,
+        load: info.employee ? employeeLoad(data, info.employee, type, LOAD_MODE_BY_TYPE, yuc) : 0,
         markers,
       };
     })
-    .sort((a, b) => a.position - b.position);
+    .sort((a, b) => {
+      const loadDiff = a.load - b.load;
+      const cycleA = !cycleReset && lastPosition > 0 && a.position <= lastPosition ? 1 : 0;
+      const cycleB = !cycleReset && lastPosition > 0 && b.position <= lastPosition ? 1 : 0;
+      return loadDiff || cycleA - cycleB || a.position - b.position;
+    });
 }
 
 function buildQueuePreview(data, draft, recommendation, date = new Date()) {
@@ -974,8 +1009,8 @@ export function recommend(data, draft, date = new Date()) {
     const loadMode = cleanText(settings[YUC_SETTING.overloadMode]) || LOAD_MODE_TOTAL;
 
     if (allowOutside && outsideCandidates.length) {
-      const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, loadMode)));
-      const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, loadMode)));
+      const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc)));
+      const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc)));
       if (minRegionalLoad - minOutsideLoad > overloadThreshold) {
         const outside = recommendLeastLoaded(
           data,

@@ -23,6 +23,7 @@ function baseData({ regionalLoad = 0, regionalEnabled = "Да" } = {}) {
     "Дата поступления": "2026-06-01",
     "Статус": "В работе",
     "Ответственный": "Иванов И.И.",
+    "Активное число": 1,
   }));
 
   return {
@@ -75,6 +76,25 @@ const date = new Date("2026-06-28T12:00:00");
   const result = recommend(data, draft(), date);
   assert.equal(result.ok, false);
   assert.match(result.reason, /Единственный доступный сотрудник уже был предыдущим автополучателем/);
+}
+
+{
+  const data = baseData({ regionalEnabled: "Нет" });
+  data.state[0]["Последняя позиция"] = 0;
+  data.state[0]["Последний автоназначенный"] = "";
+  data.cases.push({
+    case_id: "CASE-INACTIVE",
+    "ЮЦ": "Дальний Восток",
+    "Регион": "Хабаровский край",
+    "Тип дела": "судебное",
+    "Дата поступления": "2026-06-01",
+    "Статус": "В работе",
+    "Ответственный": "Иванов И.И.",
+    "Активное число": 0,
+  });
+  assert.equal(recommend(data, draft(), date).candidate, "Иванов И.И.");
+  data.yucSettings[0]["Учитывать неактивные незавершенные в нагрузке"] = "Да";
+  assert.equal(recommend(data, draft(), date).candidate, "Петров П.П.");
 }
 
 console.log("Domain smoke test: OK");
