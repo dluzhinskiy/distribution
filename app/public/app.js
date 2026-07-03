@@ -456,16 +456,32 @@ function deadlineSettingForType(type) {
   const normalized = String(type ?? "").trim().toLowerCase();
   const row = rowsForSelectedYuc(state.data?.settings).find((item) => normalizeCaseType(item["Тип дела"]) === normalized);
   const defaults = {
-    "претензия": { activity: 5, autocompletion: 30 },
-    "административное": { activity: 10, autocompletion: 90 },
-    "судебное": { activity: 30, autocompletion: 360 },
+    "претензия": { activity: 5, autocompletion: 30, maxDebt: 0 },
+    "административное": { activity: 10, autocompletion: 90, maxDebt: 0 },
+    "судебное": { activity: 30, autocompletion: 360, maxDebt: 0 },
   };
   return {
     "ЮЦ": selectedYuc(),
     "Тип дела": normalized,
     "Активность, дни": Number(row?.["Активность, дни"]) || defaults[normalized]?.activity || 1,
     "Автозавершение, дни": Number(row?.["Автозавершение, дни"]) || defaults[normalized]?.autocompletion || 1,
+    "Учитывать долг": yes(row?.["Учитывать долг"]) ? "Да" : "Нет",
+    "Максимальный долг": Number(row?.["Максимальный долг"]) || defaults[normalized]?.maxDebt || 0,
   };
+}
+
+function debtAmount(value) {
+  if (yes(value)) return 1;
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
+}
+
+function debtEnabledForType(type) {
+  return yes(deadlineSettingForType(type)["Учитывать долг"]);
+}
+
+function maxDebtForType(type) {
+  return Number(deadlineSettingForType(type)["Максимальный долг"]) || 0;
 }
 
 function normalizeCaseType(value) {
@@ -956,14 +972,27 @@ function employeeToggle(value, employeeId, field, options = {}) {
   });
 }
 
-function employeeDebtToggle(employee, type) {
+function employeeDebtInput(employee, type) {
   const queue = queueForEmployeeType(employee, type);
   if (!queue) return `<span class="muted" title="Для сотрудника не найдена строка очереди этого типа">—</span>`;
-  return yesNoToggle({
-    className: "employee-debt-field",
-    attrs: `data-queue="${escapeHtml(queue.queue_id)}" data-employee="${escapeHtml(queue.employee_id)}" data-field="Долг"`,
-    checked: yes(queue["Долг"]),
-  });
+  const enabled = debtEnabledForType(type);
+  const max = maxDebtForType(type);
+  const value = Math.min(debtAmount(queue["Долг"]), max || Number.POSITIVE_INFINITY);
+  return `
+    <input
+      class="inline-input employee-debt-field"
+      type="number"
+      min="0"
+      step="1"
+      ${max ? `max="${escapeHtml(max)}"` : ""}
+      value="${escapeHtml(value)}"
+      data-queue="${escapeHtml(queue.queue_id)}"
+      data-employee="${escapeHtml(queue.employee_id)}"
+      data-field="Долг"
+      ${enabled ? "" : "disabled"}
+      title="${enabled ? `Долг по типу нагрузки, максимум ${max}` : "Учёт долга для этого типа нагрузки выключен в настройках"}"
+    />
+  `;
 }
 
 function renderEmployees() {
@@ -973,11 +1002,11 @@ function renderEmployees() {
       <td><strong title="${escapeHtml(employee["ФИО"])}">${escapeHtml(displayName(employee["ФИО"]))}</strong><div class="muted">${escapeHtml(employee.employee_id)}</div></td>
       <td>${employeeToggle(employee["Активен"], employee.employee_id, "Активен")}</td>
       <td>${employeeToggle(employee["Судебные"], employee.employee_id, "Судебные", { disabled: !yes(employee["Активен"]) })}</td>
-      <td>${employeeDebtToggle(employee, "судебное")}</td>
+      <td>${employeeDebtInput(employee, "судебное")}</td>
       <td>${employeeToggle(employee["Административные"], employee.employee_id, "Административные", { disabled: !yes(employee["Активен"]) })}</td>
-      <td>${employeeDebtToggle(employee, "административное")}</td>
+      <td>${employeeDebtInput(employee, "административное")}</td>
       <td>${employeeToggle(employee["Претензии"], employee.employee_id, "Претензии", { disabled: !yes(employee["Активен"]) })}</td>
-      <td>${employeeDebtToggle(employee, "претензия")}</td>
+      <td>${employeeDebtInput(employee, "претензия")}</td>
       <td>${employee["Сейчас в отпуске"] === "Да" ? badge("отпуск", "orange") : badge("доступен", "green")}</td>
       <td>${employee["Активные всего"]}</td>
       <td><button class="tiny-btn save-employee" data-id="${employee.employee_id}">Сохранить</button></td>
@@ -1374,6 +1403,12 @@ function renderDeadlineSettings() {
       <td>${escapeHtml(row["Тип дела"])}</td>
       <td><input class="deadline-input deadline-setting-field" type="number" min="1" step="1" data-field="Активность, дни" value="${escapeHtml(row["Активность, дни"])}" /></td>
       <td><input class="deadline-input deadline-setting-field" type="number" min="1" step="1" data-field="Автозавершение, дни" value="${escapeHtml(row["Автозавершение, дни"])}" /></td>
+      <td>${yesNoToggle({
+        className: "deadline-setting-field",
+        attrs: `data-field="Учитывать долг"`,
+        checked: yes(row["Учитывать долг"]),
+      })}</td>
+      <td><input class="deadline-input deadline-setting-field" type="number" min="0" step="1" data-field="Максимальный долг" value="${escapeHtml(row["Максимальный долг"])}" /></td>
     </tr>
   `).join("");
 }
@@ -1581,7 +1616,7 @@ function queueMarkerKind(marker) {
   if (marker === "кандидат") return "green";
   if (marker === "неактивен" || marker === "нет в сотрудниках" || marker === "не участвует") return "gray";
   if (marker === "отпуск") return "orange";
-  if (marker === "долг") return "blue";
+  if (String(marker).startsWith("долг")) return "blue";
   if (marker === "предыдущий") return "red";
   return "gray";
 }
@@ -1678,7 +1713,8 @@ function activeRuleItems(result) {
   if (mode === "outside-region") items.push({ text: "вне региона по перегрузу", kind: "orange" });
   if (mode === "general") items.push({ text: "общая очередь", kind: "gray" });
   const basis = String(result.basis ?? "").toLowerCase();
-  if (basis.includes("долг после отпуска")) items.push({ text: "долг после отпуска", kind: "blue" });
+  if (basis.includes("долг")) items.push({ text: "погашение долга", kind: "blue" });
+  if (basis.includes("не два подряд") && basis.includes("не применяется")) items.push({ text: "не два подряд не применяется", kind: "orange" });
   if (basis.includes("повтор допускается")) items.push({ text: "повтор разрешён регионом", kind: "orange" });
   if ((result.skippedVacation ?? []).length) items.push({ text: "учтены отпуска", kind: "orange" });
   return items;
@@ -1696,6 +1732,14 @@ function renderDistributionRuleBadges(result = state.lastRecommendation) {
     })
     .map((item) => badge(item.text, item.kind))
     .join("");
+}
+
+function invalidateRecommendation(message) {
+  showRecommendation({
+    ok: false,
+    reason: message,
+  });
+  state.lastRecommendation = null;
 }
 
 function showRecommendation(result) {
@@ -1794,7 +1838,7 @@ function resetDistributionForm(message) {
 async function autoAssign() {
   const draft = formDraft();
   if (!validateDraftForAssignment(draft)) return;
-  const result = state.lastRecommendation ?? await recommendCurrent();
+  const result = await recommendCurrent();
   if (!result) return;
   if (!result.ok) {
     toast("Автоназначение остановлено: нужен ручной выбор руководителя.", "error");
@@ -1842,12 +1886,17 @@ async function saveEmployee(employeeId) {
   });
   const debtToggles = $$(`tr[data-employee-row="${CSS.escape(employeeId)}"] .employee-debt-field`);
   for (const input of debtToggles) {
+    if (input.disabled) continue;
+    const max = Number(input.max) || Number.POSITIVE_INFINITY;
+    const value = Math.max(0, Math.min(max, Math.floor(Number(input.value) || 0)));
     payload = await api(`/api/queues/${encodeURIComponent(input.dataset.queue)}/${encodeURIComponent(input.dataset.employee)}`, {
       method: "PATCH",
-      body: JSON.stringify({ [input.dataset.field]: input.checked ? "Да" : "Нет" }),
+      body: JSON.stringify({ [input.dataset.field]: value }),
     });
   }
   setDataFromPayload(payload);
+  state.lastRecommendation = null;
+  scheduleRecommendation();
   setStatus("Сохранено");
   toast("Данные сотрудника и долги сохранены.");
 }
@@ -1886,7 +1935,7 @@ async function saveDeadlineSettings() {
       "Тип дела": tr.dataset.deadlineType,
     };
     tr.querySelectorAll(".deadline-setting-field").forEach((input) => {
-      row[input.dataset.field] = Number(input.value);
+      row[input.dataset.field] = input.type === "checkbox" ? (input.checked ? "Да" : "Нет") : Number(input.value);
     });
     return row;
   });
@@ -2727,6 +2776,9 @@ function bindEvents() {
     }
     if (event.target.matches(".employee-active-field")) {
       refreshEmployeeAvailabilityRow(event.target.dataset.id, event.target.checked ? "Да" : "Нет");
+    }
+    if (event.target.matches(".employee-field, .employee-debt-field")) {
+      invalidateRecommendation("Изменены доступность или долги сотрудника. Сохраните изменения — рекомендация будет пересчитана.");
     }
     if (event.target.matches(".toggle-inline input[type='checkbox']")) {
       const caption = event.target.closest(".toggle-inline")?.querySelector(".toggle-caption");

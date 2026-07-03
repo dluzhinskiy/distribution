@@ -44,6 +44,7 @@ const TABLES = {
     headers: QUEUE_HEADERS,
     keyFields: ["queue_id", "employee_id"],
     dateFields: ["Дата долга"],
+    numberFields: ["Долг"],
   },
   state: {
     name: "Состояние",
@@ -78,7 +79,7 @@ const TABLES = {
     headers: SETTINGS_HEADERS,
     keyFields: ["ЮЦ", "Тип дела"],
     dateFields: [],
-    numberFields: ["Активность, дни", "Автозавершение, дни"],
+    numberFields: ["Активность, дни", "Автозавершение, дни", "Максимальный долг"],
   },
   yucSettings: {
     name: "Настройки ЮЦ",

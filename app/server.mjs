@@ -415,6 +415,8 @@ async function api(req, res, url) {
       if (!type) continue;
       const activityDays = Number(raw["Активность, дни"]);
       const autocompletionDays = Number(raw["Автозавершение, дни"]);
+      const debtEnabledValue = yesNo(raw["Учитывать долг"]);
+      const maxDebtValue = Math.max(0, Math.floor(Number(raw["Максимальный долг"]) || 0));
       if (!Number.isFinite(activityDays) || activityDays <= 0) {
         throw new Error(`Срок активности для «${type}» должен быть положительным числом.`);
       }
@@ -428,6 +430,8 @@ async function api(req, res, url) {
           [FIELD.caseType]: type,
           "Активность, дни": activityDays,
           "Автозавершение, дни": autocompletionDays,
+          "Учитывать долг": debtEnabledValue,
+          "Максимальный долг": maxDebtValue,
         };
         data.settings.push(row);
       } else {
@@ -436,6 +440,8 @@ async function api(req, res, url) {
           [FIELD.caseType]: type,
           "Активность, дни": activityDays,
           "Автозавершение, дни": autocompletionDays,
+          "Учитывать долг": debtEnabledValue,
+          "Максимальный долг": maxDebtValue,
         });
       }
     }

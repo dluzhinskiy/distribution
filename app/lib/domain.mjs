@@ -97,7 +97,7 @@ export const JOURNAL_HEADERS = [
   "Комментарий",
 ];
 
-export const SETTINGS_HEADERS = ["ЮЦ", "Тип дела", "Активность, дни", "Автозавершение, дни"];
+export const SETTINGS_HEADERS = ["ЮЦ", "Тип дела", "Активность, дни", "Автозавершение, дни", "Учитывать долг", "Максимальный долг"];
 
 export const YUC_SETTINGS_HEADERS = [
   "Название",
@@ -310,6 +310,17 @@ export function autocompletionDays(settings, yuc, type) {
   const row = typeSettings(settings, yuc, normalized);
   const days = Number(row?.["Автозавершение, дни"]);
   return Number.isFinite(days) && days > 0 ? days : DEFAULT_AUTOCOMPLETE_DAYS[normalized] ?? "";
+}
+
+export function debtEnabled(settings, yuc, type) {
+  const row = typeSettings(settings, yuc, normalizeType(type));
+  return yes(row?.["Учитывать долг"]);
+}
+
+export function maxDebt(settings, yuc, type) {
+  const row = typeSettings(settings, yuc, normalizeType(type));
+  const value = Number(row?.["Максимальный долг"]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 export function relevanceDays(settings, type, yuc = "") {
@@ -634,6 +645,25 @@ function orderedRowsForAssignment(data, rows, yuc, type, lastPosition = 0) {
   return rows.slice().sort(compareRowsForAssignment(data, yuc, type, lastPosition));
 }
 
+function queueDebtAmount(row) {
+  const raw = row?.[FIELD.debt];
+  if (yes(raw)) return 1;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function setQueueDebt(row, value, limit = Number.POSITIVE_INFINITY, date = new Date()) {
+  if (!row) return;
+  const normalized = Math.max(0, Math.min(Number.isFinite(limit) ? limit : Number.POSITIVE_INFINITY, Math.floor(Number(value) || 0)));
+  row[FIELD.debt] = normalized;
+  row[FIELD.debtDate] = normalized > 0 ? todayISO(date) : "";
+}
+
+function debtLimitFor(data, yuc, type) {
+  if (!debtEnabled(data.settings ?? [], yuc, type)) return 0;
+  return maxDebt(data.settings ?? [], yuc, type);
+}
+
 function vacationNames(rows = []) {
   return rows.map((item) => cleanText(item[FIELD.name])).filter(Boolean);
 }
@@ -648,6 +678,7 @@ function recommendationResult(candidateInfo, basis, queueEffect, skippedVacation
     queueEffect,
     reason: "",
     skippedVacation: vacationNames(skippedVacation),
+    debtAccrualQueueIds: candidateInfo.debtAccrualQueueIds ?? [],
   };
 }
 
@@ -696,21 +727,22 @@ function ensureAssignableExistingCase(caseRow) {
 
 function applyAutomaticQueueEffects(data, normalized, result, state, date) {
   const queueRows = queueRowsFor(data, normalized[FIELD.yuc], normalized[FIELD.caseType]);
-  for (const row of queueRows) {
-    const employee = employeeForQueueRow(data, row);
-    if (employee && yes(employee[FIELD.employeeActive]) && employeeParticipates(employee, normalized[FIELD.caseType]) && isEmployeeOnVacation(employee, date, data.vacations ?? [])) {
-      row[FIELD.debt] = "Да";
-      row[FIELD.debtDate] = row[FIELD.debtDate] || todayISO(date);
+  const debtLimit = debtLimitFor(data, normalized[FIELD.yuc], normalized[FIELD.caseType]);
+  if (debtLimit > 0) {
+    const accrualIds = [...new Set((result.debtAccrualQueueIds ?? []).filter(Boolean))];
+    for (const queueId of accrualIds) {
+      const row = queueRows.find((item) => cleanText(item.queue_id) === cleanText(queueId));
+      if (!row) continue;
+      setQueueDebt(row, queueDebtAmount(row) + 1, debtLimit, date);
     }
   }
 
   if (result.ok) {
     const selectedQueueRow = queueRows.find((row) => cleanText(row[FIELD.name]) === result.candidate);
     if (result.queueEffect === "debt" && selectedQueueRow) {
-      selectedQueueRow[FIELD.debt] = "Нет";
-      selectedQueueRow[FIELD.debtDate] = "";
+      setQueueDebt(selectedQueueRow, queueDebtAmount(selectedQueueRow) - 1, debtLimit || Number.POSITIVE_INFINITY, date);
     }
-    if (result.queueEffect === "queue" && selectedQueueRow) {
+    if ((result.queueEffect === "queue" || result.queueEffect === "debt") && selectedQueueRow) {
       const oldPosition = Number(state["Последняя позиция"]) || 0;
       const newPosition = Number(selectedQueueRow[FIELD.position]) || 0;
       if (oldPosition > 0 && newPosition <= oldPosition) {
@@ -748,23 +780,22 @@ function recommendFromQueueRows(data, rows, yuc, type, date, basisPrefix = "оч
   const state = makeQueueState(data, yuc, type);
   const lastAuto = cleanText(state["Последний автоназначенный"]);
   const lastPosition = Number(state["Последняя позиция"]) || 0;
-  const debtCandidates = rows
-    .filter((row) => yes(row[FIELD.debt]))
+  const debtLimit = debtLimitFor(data, yuc, type);
+  const debtCandidates = debtLimit > 0 ? rows
+    .filter((row) => queueDebtAmount(row) > 0)
     .map((row) => ({ row, ...queueCandidateInfo(data, row, type, date) }))
     .filter((item) => item.available)
     .sort((a, b) => {
-      const dateA = toISODate(a.row[FIELD.debtDate]) || "9999-12-31";
-      const dateB = toISODate(b.row[FIELD.debtDate]) || "9999-12-31";
+      const debtDiff = queueDebtAmount(b.row) - queueDebtAmount(a.row);
       const loadDiff = employeeLoad(data, a.employee, type, LOAD_MODE_BY_TYPE, yuc) - employeeLoad(data, b.employee, type, LOAD_MODE_BY_TYPE, yuc);
-      return loadDiff || dateA.localeCompare(dateB) || Number(a.row[FIELD.position]) - Number(b.row[FIELD.position]);
-    });
-  const debtCandidate = debtCandidates.find((item) => cleanText(item.row[FIELD.name]) !== lastAuto) ||
-    (allowRepeatLastAuto ? debtCandidates[0] : null);
+      return debtDiff || loadDiff || Number(a.row[FIELD.position]) - Number(b.row[FIELD.position]);
+    }) : [];
+  const debtCandidate = debtCandidates[0] ?? null;
   if (debtCandidate) {
-    const repeated = lastAuto && cleanText(debtCandidate.row[FIELD.name]) === lastAuto;
+    const debtAmount = queueDebtAmount(debtCandidate.row);
     const basis = basisPrefix === "очередь"
-      ? "долг после отпуска"
-      : `${basisPrefix}: долг после отпуска${repeated ? `, ${REGIONAL_REPEAT_BASIS}` : ""}`;
+      ? `долг ${debtAmount}: погашение долга, правило «не два подряд» не применяется`
+      : `${basisPrefix}: долг ${debtAmount}, правило «не два подряд» не применяется`;
     return recommendationResult(debtCandidate, basis, "debt");
   }
 
@@ -773,21 +804,26 @@ function recommendFromQueueRows(data, rows, yuc, type, date, basisPrefix = "оч
   let previousAvailable = false;
   let previousCandidate = null;
   const skippedVacation = [];
+  const debtAccrualQueueIds = [];
   for (const row of ordered) {
     const info = queueCandidateInfo(data, row, type, date);
     if (!info.employee) continue;
-    if (!yes(info.employee[FIELD.employeeActive]) || !employeeParticipates(info.employee, type)) continue;
+    if (!yes(info.employee[FIELD.employeeActive]) || !employeeParticipates(info.employee, type)) {
+      debtAccrualQueueIds.push(cleanText(row.queue_id));
+      continue;
+    }
     if (info.vacation) {
       skippedVacation.push(row);
+      debtAccrualQueueIds.push(cleanText(row.queue_id));
       continue;
     }
     availableCount += 1;
     if (cleanText(row[FIELD.name]) === lastAuto) {
       previousAvailable = true;
-      previousCandidate = { row, ...info };
+      previousCandidate = { row, ...info, debtAccrualQueueIds: [...debtAccrualQueueIds] };
       continue;
     }
-    return recommendationResult({ row, ...info }, basisPrefix, "queue", skippedVacation);
+    return recommendationResult({ row, ...info, debtAccrualQueueIds: [...debtAccrualQueueIds] }, basisPrefix, "queue", skippedVacation);
   }
   if (allowRepeatLastAuto && previousCandidate) {
     return recommendationResult(previousCandidate, `${basisPrefix}: ${REGIONAL_REPEAT_BASIS}`, "queue", skippedVacation);
@@ -849,7 +885,7 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
       const active = Boolean(info.employee && yes(info.employee[FIELD.employeeActive]));
       const participates = Boolean(info.employee && employeeParticipates(info.employee, type));
       const vacation = Boolean(info.vacation);
-      const debt = yes(row[FIELD.debt]);
+      const debt = queueDebtAmount(row);
       const previousAuto = Boolean(lastAuto && name === lastAuto);
       const recommendedRow = Boolean(recommendedName && nameMatches(name, recommendedName));
       const available = Boolean(info.employee && active && participates && !vacation);
@@ -859,7 +895,7 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
       if (info.employee && !active) markers.push("неактивен");
       if (info.employee && !participates) markers.push("не участвует");
       if (vacation) markers.push("отпуск");
-      if (debt) markers.push("долг");
+      if (debt) markers.push(`долг ${debt}`);
       if (previousAuto) markers.push("предыдущий");
       return {
         position,
@@ -1002,7 +1038,7 @@ export function recommend(data, draft, date = new Date()) {
     const allRows = queueRowsFor(data, normalizedYuc, type);
     const regionalNames = mainEmployees.map((employee) => cleanText(employee[FIELD.name])).filter(Boolean);
     const outsideRows = allRows.filter((row) => !regionalNames.some((name) => nameMatches(row[FIELD.name], name)));
-    const outsideAvailability = availableCandidateRows(data, outsideRows, type, date, lastAuto);
+    const outsideAvailability = availableCandidateRows(data, outsideRows, type, date, "");
     const outsideCandidates = outsideAvailability.candidates;
     const allowOutside = yes(settings[YUC_SETTING.allowOutsideRegion]);
     const overloadThreshold = Number(settings[YUC_SETTING.overloadThreshold]) || 0;
@@ -1012,14 +1048,13 @@ export function recommend(data, draft, date = new Date()) {
       const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc)));
       const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc)));
       if (minRegionalLoad - minOutsideLoad > overloadThreshold) {
-        const outside = recommendLeastLoaded(
+        const outside = recommendFromQueueRows(
           data,
           outsideRows,
           normalizedYuc,
           type,
           date,
           `вне региона: перегруз региональной группы ${minRegionalLoad - minOutsideLoad} > ${overloadThreshold}`,
-          loadMode,
         );
         return {
           ...outside,

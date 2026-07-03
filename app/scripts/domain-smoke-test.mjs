@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { recommend } from "../lib/domain.mjs";
+import { assignAutomatically, recommend } from "../lib/domain.mjs";
 
 function yucSettings(overrides = {}) {
   return {
@@ -40,6 +40,7 @@ function baseData({ regionalLoad = 0, regionalEnabled = "Да" } = {}) {
     ],
     cases: regionalCases,
     vacations: [],
+    journal: [],
     settings: [],
     yucSettings: [yucSettings({ "Региональные очереди вкл\\выкл": regionalEnabled })],
     regionalAssignments: [
@@ -95,6 +96,45 @@ const date = new Date("2026-06-28T12:00:00");
   assert.equal(recommend(data, draft(), date).candidate, "Иванов И.И.");
   data.yucSettings[0]["Учитывать неактивные незавершенные в нагрузке"] = "Да";
   assert.equal(recommend(data, draft(), date).candidate, "Петров П.П.");
+}
+
+{
+  const data = baseData({ regionalEnabled: "Нет" });
+  data.settings = [{
+    "ЮЦ": "Дальний Восток",
+    "Тип дела": "судебное",
+    "Активность, дни": 30,
+    "Автозавершение, дни": 360,
+    "Учитывать долг": "Да",
+    "Максимальный долг": 3,
+  }];
+  data.queues[0]["Долг"] = 2;
+  const result = recommend(data, draft(), date);
+  assert.equal(result.ok, true);
+  assert.equal(result.candidate, "Иванов И.И.");
+  assert.match(result.basis, /долг 2/);
+  assert.match(result.basis, /не два подряд/);
+  const assigned = assignAutomatically(data, { ...draft(), "Предмет": "Тест долга" }, date);
+  assert.equal(assigned.case["Ответственный"], "Иванов И.И.");
+  assert.equal(data.queues[0]["Долг"], 1);
+}
+
+{
+  const data = baseData({ regionalEnabled: "Нет" });
+  data.settings = [{
+    "ЮЦ": "Дальний Восток",
+    "Тип дела": "судебное",
+    "Активность, дни": 30,
+    "Автозавершение, дни": 360,
+    "Учитывать долг": "Да",
+    "Максимальный долг": 2,
+  }];
+  data.employees[0]["Активен"] = "Нет";
+  data.state[0]["Последняя позиция"] = 0;
+  data.state[0]["Последний автоназначенный"] = "";
+  const assigned = assignAutomatically(data, { ...draft(), "Предмет": "Тест начисления долга" }, date);
+  assert.equal(assigned.case["Ответственный"], "Петров П.П.");
+  assert.equal(data.queues[0]["Долг"], 1);
 }
 
 console.log("Domain smoke test: OK");
