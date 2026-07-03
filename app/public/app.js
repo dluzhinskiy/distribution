@@ -294,6 +294,9 @@ function showView(name) {
   $(`#view-${name}`).classList.add("active");
   $$(".nav-link").forEach((link) => link.classList.toggle("active", link.dataset.view === name));
   $("#pageTitle").textContent = titles[name];
+  if (name === "settings" && state.data) {
+    renderSettings();
+  }
   if (name === "journal") {
     loadJournal().catch((error) => {
       setStatus("Ошибка");
