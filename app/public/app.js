@@ -1659,6 +1659,7 @@ async function recommendCurrent(options = {}) {
 }
 
 function scheduleRecommendation() {
+  state.recommendationRequestId = (state.recommendationRequestId ?? 0) + 1;
   clearTimeout(state.recommendationTimer);
   state.recommendationTimer = setTimeout(() => {
     recommendCurrent({ silent: true }).catch((error) => {
@@ -1666,6 +1667,14 @@ function scheduleRecommendation() {
       toast(error.message, "error");
     });
   }, 220);
+}
+
+function handleCaseFormRecommendationChange(event) {
+  const fieldName = event.target?.name;
+  if (fieldName === "Тип дела") updateThirdPartyVisibility();
+  if (!["Тип дела", "Регион", "Дата поступления"].includes(fieldName)) return;
+  state.lastRecommendation = null;
+  scheduleRecommendation();
 }
 
 function resetDistributionForm(message) {
@@ -2423,11 +2432,7 @@ function bindEvents() {
     setStatus("Ошибка");
     toast(error.message, "error");
   }));
-  $("#caseForm").elements["Тип дела"].addEventListener("change", () => {
-    state.lastRecommendation = null;
-    updateThirdPartyVisibility();
-    scheduleRecommendation();
-  });
+  $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
   $("#casesSearch").addEventListener("input", renderCases);
   $("#casesQuickFilterStrip")?.addEventListener("click", (event) => {
     if (event.target.closest("#clearCasesQuickFilter")) {
