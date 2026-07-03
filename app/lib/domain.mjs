@@ -1295,6 +1295,207 @@ export function assignExistingManually(data, caseId, responsible, comment, date 
   return { recommendation, case: caseRow };
 }
 
+function comparableCaseImportText(value) {
+  return cleanText(value).toLowerCase().replaceAll("ё", "е");
+}
+
+function duplicateCaseText(value) {
+  return comparableCaseImportText(value)
+    .replaceAll("№", " ")
+    .replace(/["«»„“”]/g, "")
+    .replace(/[^а-яa-z0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function duplicateCaseTextCompact(value) {
+  return duplicateCaseText(value).replace(/\s+/g, "");
+}
+
+function legalCaseNumbers(value) {
+  const text = comparableCaseImportText(value).toUpperCase();
+  const numbers = new Set();
+  const patterns = [
+    /[АA]\d{1,3}[-–—]\d+\/\d{4}/g,
+    /\d+[-–—]\d+\/\d{4}/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      numbers.add(match[0].replace(/[–—]/g, "-"));
+    }
+  }
+  return numbers;
+}
+
+function levenshteinDistance(a, b) {
+  const left = String(a ?? "");
+  const right = String(b ?? "");
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 0; i < left.length; i += 1) {
+    const current = [i + 1];
+    for (let j = 0; j < right.length; j += 1) {
+      const cost = left[i] === right[j] ? 0 : 1;
+      current[j + 1] = Math.min(
+        current[j] + 1,
+        previous[j + 1] + 1,
+        previous[j] + cost,
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length];
+}
+
+function subjectSimilarity(a, b) {
+  const left = duplicateCaseText(a);
+  const right = duplicateCaseText(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const leftCompact = duplicateCaseTextCompact(a);
+  const rightCompact = duplicateCaseTextCompact(b);
+  if (!leftCompact || !rightCompact) return 0;
+  if (leftCompact === rightCompact) return 1;
+  const shorter = leftCompact.length <= rightCompact.length ? leftCompact : rightCompact;
+  const longer = leftCompact.length > rightCompact.length ? leftCompact : rightCompact;
+  if (shorter.length >= 18 && longer.includes(shorter)) return 0.96;
+  const maxLength = Math.max(leftCompact.length, rightCompact.length);
+  if (!maxLength || maxLength > 320) return 0;
+  return 1 - levenshteinDistance(leftCompact, rightCompact) / maxLength;
+}
+
+function sameCaseType(a, b) {
+  const left = normalizeType(a?.[FIELD.caseType]);
+  const right = normalizeType(b?.[FIELD.caseType]);
+  return Boolean(left && right && left === right);
+}
+
+function sameCaseDate(a, b) {
+  const left = toISODate(a?.["Дата поступления"]);
+  const right = toISODate(b?.["Дата поступления"]);
+  return Boolean(left && right && left === right);
+}
+
+function sameCaseRegion(a, b) {
+  const left = normalizeRegionName(a?.["Регион"]);
+  const right = normalizeRegionName(b?.["Регион"]);
+  return Boolean(left && right && left === right);
+}
+
+function sameCaseResponsible(a, b) {
+  return nameMatches(a?.[FIELD.responsible], b?.[FIELD.responsible]);
+}
+
+function sameCaseParty(a, b) {
+  const leftParties = ["Истец", "Ответчик", "Третье лицо"]
+    .map((field) => duplicateCaseText(a?.[field]))
+    .filter(Boolean);
+  const rightParties = ["Истец", "Ответчик", "Третье лицо"]
+    .map((field) => duplicateCaseText(b?.[field]))
+    .filter(Boolean);
+  return leftParties.some((left) => rightParties.includes(left));
+}
+
+export function caseDuplicateReason(candidate, existing, options = {}) {
+  if (!candidate || !existing || !sameCaseType(candidate, existing)) return "";
+  if (caseImportKey(candidate) === caseImportKey(existing)) return "строгое совпадение основных полей";
+
+  const candidateNumbers = legalCaseNumbers(candidate["Предмет"]);
+  const existingNumbers = legalCaseNumbers(existing["Предмет"]);
+  const commonNumber = [...candidateNumbers].find((number) => existingNumbers.has(number));
+  if (commonNumber) return `совпадает номер дела ${commonNumber}`;
+  if (options.strictOnly) return "";
+  if (candidateNumbers.size && existingNumbers.size) return "";
+
+  const subjectScore = subjectSimilarity(candidate["Предмет"], existing["Предмет"]);
+  if (subjectScore < 0.92) return "";
+
+  const anchors = [
+    sameCaseResponsible(candidate, existing) ? "ответственный" : "",
+    sameCaseRegion(candidate, existing) ? "регион" : "",
+    sameCaseParty(candidate, existing) ? "сторона" : "",
+    sameCaseDate(candidate, existing) ? "дата поступления" : "",
+  ].filter(Boolean);
+  if (!anchors.length) return "";
+  return subjectScore === 1
+    ? `совпадает предмет и ${anchors[0]}`
+    : `похожий предмет (${Math.round(subjectScore * 100)}%) и ${anchors[0]}`;
+}
+
+export function caseImportKey(row) {
+  return [
+    normalizeType(row?.[FIELD.caseType]),
+    toISODate(row?.["Дата поступления"]),
+    normalizeRegionName(row?.["Регион"]),
+    comparableCaseImportText(row?.["Предмет"]),
+    comparableCaseImportText(row?.["Истец"]),
+    comparableCaseImportText(row?.["Ответчик"]),
+    comparableCaseImportText(row?.["Третье лицо"]),
+  ].join("::");
+}
+
+export function importCasesFromRows(data, rows, date = new Date()) {
+  const existingKeys = new Set((data.cases ?? []).map(caseImportKey).filter(Boolean));
+  const added = [];
+  const skipped = [];
+  for (const item of rows ?? []) {
+    const source = item.source ?? item;
+    const normalized = normalizeDraft(source);
+    const key = caseImportKey(normalized);
+    const duplicateReason = (data.cases ?? [])
+      .map((caseRow) => caseDuplicateReason(normalized, caseRow))
+      .find(Boolean);
+    if (existingKeys.has(key) || duplicateReason) {
+      skipped.push({ rowNumber: item.rowNumber, reason: duplicateReason || "уже есть", source: normalized });
+      continue;
+    }
+    const responsible = cleanText(source[FIELD.responsible]);
+    const caseId = makeCaseId(data.cases);
+    const created = {
+      case_id: caseId,
+      "Номер дела": normalized["Номер дела"],
+      "Предмет": normalized["Предмет"],
+      [FIELD.yuc]: normalized[FIELD.yuc],
+      "Регион": normalized["Регион"],
+      "Истец": normalized["Истец"],
+      "Ответчик": normalized["Ответчик"],
+      "Третье лицо": normalized["Третье лицо"],
+      [FIELD.caseType]: normalized[FIELD.caseType],
+      "Дата поступления": normalized["Дата поступления"],
+      [FIELD.status]: responsible ? "В работе" : "Ожидает распределения",
+      "Дата завершения": "",
+      "Отложить завершение до": "",
+      "Причина отложения завершения дела": "",
+      "Дата предупреждения о завершении": "",
+      [FIELD.responsible]: responsible,
+      "Дата распределения": "",
+      "Основание": "Импорт из Excel",
+      "Распределено системой": "Нет",
+      "Ручное назначение": "Нет",
+      "Комментарий": `Импорт из Excel${item.rowNumber ? `, строка ${item.rowNumber}` : ""}`,
+      "Ссылка": normalized["Ссылка"],
+    };
+    data.cases.push(created);
+    existingKeys.add(key);
+    added.push(created);
+  }
+  data.journal.push({
+    "Дата события": nowISO(date),
+    case_id: "",
+    [FIELD.caseType]: "",
+    [FIELD.responsible]: "",
+    "Основание": "Импорт из Excel",
+    "Способ": "импорт",
+    [FIELD.yuc]: "",
+    "Цикл": "",
+    "Предложенный системой": "",
+    "Комментарий": `Добавлено дел: ${added.length}; пропущено дублей: ${skipped.length}`,
+  });
+  return { added, skipped };
+}
+
 export function changeCaseResponsible(data, caseId, responsible, date = new Date()) {
   const caseRow = caseById(data, caseId);
   if (!caseRow) throw new Error("Дело не найдено.");

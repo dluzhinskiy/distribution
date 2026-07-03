@@ -160,12 +160,12 @@ function parseSheetRows(sheetXml, sharedStrings) {
     const rowAttrs = parseAttrs(rowMatch[1]);
     const rowIndex = Number(rowAttrs.r || rows.length + 1) - 1;
     const row = rows[rowIndex] ?? [];
-    const cellRe = /<c\b([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    const cellRe = /<c\b([^>]*?)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g;
     let cellMatch;
     while ((cellMatch = cellRe.exec(rowMatch[2]))) {
-      const attrs = parseAttrs(cellMatch[1]);
+      const attrs = parseAttrs(cellMatch[1] ?? cellMatch[2]);
       const index = attrs.r ? columnIndex(attrs.r) : row.length;
-      row[index] = parseCellValue(attrs, cellMatch[2] || "", sharedStrings);
+      row[index] = parseCellValue(attrs, cellMatch[3] || "", sharedStrings);
     }
     rows[rowIndex] = row;
   }

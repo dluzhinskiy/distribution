@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { assignAutomatically, recommend } from "../lib/domain.mjs";
+import { assignAutomatically, caseDuplicateReason, recommend } from "../lib/domain.mjs";
 
 function yucSettings(overrides = {}) {
   return {
@@ -135,6 +135,58 @@ const date = new Date("2026-06-28T12:00:00");
   const assigned = assignAutomatically(data, { ...draft(), "Предмет": "Тест начисления долга" }, date);
   assert.equal(assigned.case["Ответственный"], "Петров П.П.");
   assert.equal(data.queues[0]["Долг"], 1);
+}
+
+{
+  const existing = {
+    "Тип дела": "претензия",
+    "Дата поступления": "2026-01-02",
+    "Регион": "Забайкальский край",
+    "Предмет": "Возмещение убытков от залива",
+    "Ответственный": "Анисимова А.В.",
+    "Ответчик": "ПАО \"МТС\"",
+  };
+  const imported = {
+    ...existing,
+    "Дата поступления": "2026-01-01",
+    "Предмет": "возмещение убытков от залива",
+  };
+  assert.match(caseDuplicateReason(imported, existing), /совпадает предмет/);
+}
+
+{
+  const existing = {
+    "Тип дела": "судебное",
+    "Регион": "Приморский край",
+    "Предмет": "О взыскании ущерба, причиненного в результате пожара",
+    "Ответственный": "Сагитова А.А.",
+  };
+  const imported = {
+    ...existing,
+    "Предмет": "О взыскании ущерба, причененного в результате пожара",
+  };
+  assert.match(caseDuplicateReason(imported, existing), /похожий предмет/);
+}
+
+{
+  const existing = {
+    "Тип дела": "судебное",
+    "Регион": "Амурская область",
+    "Дата поступления": "2026-06-20",
+    "Предмет": "Судебный приказ по делу № А04-4578/2026",
+    "Ответственный": "Жукова О.В.",
+  };
+  const imported = {
+    ...existing,
+    "Регион": "Хабаровский край",
+    "Дата поступления": "2026-06-19",
+    "Предмет": "судебный приказ по делу № А04-4578/2026",
+  };
+  assert.match(caseDuplicateReason(imported, existing), /А04-4578\/2026/);
+  assert.equal(caseDuplicateReason(
+    { ...imported, "Предмет": "судебный приказ по делу № А04-4579/2026" },
+    existing,
+  ), "");
 }
 
 console.log("Domain smoke test: OK");

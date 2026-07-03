@@ -23,6 +23,7 @@ const state = {
   substitutionDraftOpen: false,
   writeLockCount: 0,
   vacationImportPlan: null,
+  caseImportPlan: null,
   vacationDrafts: {},
   queueManualCandidate: null,
   journalLoaded: false,
@@ -199,6 +200,25 @@ async function uploadVacationWorkbook(file) {
   beginWriteLock();
   try {
     const response = await fetch("/api/vacations/import-preview", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-File-Name": encodeURIComponent(file.name),
+      },
+      body: file,
+    });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "Не удалось прочитать Excel.");
+    return payload;
+  } finally {
+    endWriteLock();
+  }
+}
+
+async function uploadCaseWorkbook(file) {
+  beginWriteLock();
+  try {
+    const response = await fetch(`/api/cases/import-preview?yuc=${encodeURIComponent(selectedYuc())}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/octet-stream",
@@ -588,18 +608,21 @@ function renderSummary() {
       </div>
       <div class="type-load-bars" title="Активные: ${item.active}; неактивные незавершённые: ${item.inactive}">
         ${includeInactive
-          ? `
-            ${item.active ? `<div class="type-load-bar active" style="width:${Math.round((item.active / Math.max(item.total, 1)) * 100)}%"></div>` : ""}
-            ${item.inactive ? `<div class="type-load-bar inactive" style="width:${Math.round((item.inactive / Math.max(item.total, 1)) * 100)}%"></div>` : ""}
-          `
+          ? item.load
+            ? `<div class="type-load-bar active" style="width:100%"></div>`
+            : `<div class="type-load-bar empty" style="width:100%"></div>`
           : item.active
             ? `<div class="type-load-bar active" style="width:100%"></div>`
             : `<div class="type-load-bar empty" style="width:100%"></div>`
         }
       </div>
       <div class="type-load-meta">
-        <span><i class="legend-dot active"></i>${item.active} активных</span>
-        <span><i class="legend-dot inactive"></i>${item.inactive} неактивных</span>
+        ${includeInactive
+          ? `<span><i class="legend-dot active"></i>${item.load} в расчёте</span>`
+          : `
+            <span><i class="legend-dot active"></i>${item.active} активных</span>
+            <span><i class="legend-dot inactive"></i>${item.inactive} неактивных</span>
+          `}
         <span>${item.waiting ? `${item.waiting} ждут распределения` : "нет ожидающих"}</span>
       </div>
     </div>
@@ -762,8 +785,12 @@ function renderWorkloadDashboard() {
   $("#workloadDashboard").innerHTML = `
     <div class="workload-legend">
       <span>Режим расчёта: ${escapeHtml(loadModeText)}</span>
-      <span><i class="legend-dot active"></i>Активные</span>
-      <span><i class="legend-dot inactive"></i>Неактивные, но незавершённые</span>
+      ${includeInactive
+        ? `<span><i class="legend-dot active"></i>Единая нагрузка</span>`
+        : `
+          <span><i class="legend-dot active"></i>Активные</span>
+          <span><i class="legend-dot inactive"></i>Неактивные, но незавершённые</span>
+        `}
     </div>
     <div class="workload-table">
       <div class="workload-header employee-col">Сотрудник</div>
@@ -779,29 +806,30 @@ function renderWorkloadDashboard() {
               data-dashboard-responsible="${escapeHtml(row.employee["ФИО"])}"
               title="Показать дела сотрудника"
             >${escapeHtml(displayName(row.employee["ФИО"]))}</button>
-            <span>${row.activeTotal} активных · ${row.inactiveTotal} неактивных</span>
+            <span>${includeInactive ? `${row.total} в расчёте` : `${row.activeTotal} активных · ${row.inactiveTotal} неактивных`}</span>
           </div>
         </div>
         ${caseTypes.map((type) => {
           const item = row.byType[type];
           const activeWidth = item.active ? Math.max(8, Math.round((item.active / maxTotal) * 100)) : 0;
-          const inactiveWidth = includeInactive && item.inactive ? Math.max(8, Math.round((item.inactive / maxTotal) * 100)) : 0;
+          const loadWidth = item.load ? Math.max(8, Math.round((item.load / maxTotal) * 100)) : 0;
           return `
             <div class="workload-cell">
               <div class="workload-count">
                 <strong>${item.load}</strong>
-                <span>${item.active} / ${item.inactive}</span>
+                <span>${includeInactive ? "в расчёте" : `${item.active} / ${item.inactive}`}</span>
               </div>
-              <div class="workload-bars" title="Активные: ${item.active}; неактивные незавершённые: ${item.inactive}">
-                ${item.active ? `<div class="workload-bar active" style="width:${activeWidth}%"></div>` : ""}
-                ${includeInactive && item.inactive ? `<div class="workload-bar inactive" style="width:${inactiveWidth}%"></div>` : ""}
+              <div class="workload-bars" title="${includeInactive ? `В расчёте: ${item.load}` : `Активные: ${item.active}; неактивные незавершённые: ${item.inactive}`}">
+                ${includeInactive
+                  ? item.load ? `<div class="workload-bar active" style="width:${loadWidth}%"></div>` : ""
+                  : item.active ? `<div class="workload-bar active" style="width:${activeWidth}%"></div>` : ""}
               </div>
             </div>
           `;
         }).join("")}
         <div class="workload-total">
           <strong>${row.total}</strong>
-          <span>${row.activeTotal} + ${row.inactiveTotal}</span>
+          <span>${includeInactive ? "в расчёте" : `${row.activeTotal} + ${row.inactiveTotal}`}</span>
         </div>
       `).join("")}
     </div>
@@ -975,6 +1003,97 @@ function applyCasesResponsibleFilter(responsible) {
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
   renderCases();
+}
+
+function closeCaseImportModal() {
+  $("#caseImportModal")?.classList.remove("show");
+  $("#caseImportModal")?.setAttribute("aria-hidden", "true");
+  if ($("#caseImportInput")) $("#caseImportInput").value = "";
+}
+
+function renderCaseImportModal() {
+  const plan = state.caseImportPlan;
+  const content = $("#caseImportContent");
+  const applyButton = $("#caseImportApplyBtn");
+  if (!content || !applyButton || !plan) return;
+  const hasWarnings = Boolean(plan.invalid?.length || plan.duplicateInFile?.length);
+  applyButton.disabled = !(plan.toAdd?.length);
+  content.innerHTML = `
+    <p class="muted">
+      Импорт добавит только отсутствующие дела. Проверка дублей выполняется по типу, дате поступления, региону,
+      предмету и сторонам. Очереди назначения при импорте не изменяются.
+    </p>
+    <div class="import-summary-grid">
+      <div class="import-summary-card"><span>Лист</span><strong>${escapeHtml(plan.sheetName || "—")}</strong></div>
+      <div class="import-summary-card"><span>Строк в файле</span><strong>${plan.stats?.sourceRows ?? 0}</strong></div>
+      <div class="import-summary-card"><span>Новых дел</span><strong>${plan.stats?.newCases ?? 0}</strong></div>
+      <div class="import-summary-card"><span>Уже есть</span><strong>${plan.stats?.existingCases ?? 0}</strong></div>
+    </div>
+    ${hasWarnings ? `
+      <div class="import-warning">
+        Часть строк не будет добавлена: есть некорректные строки или повторы внутри файла.
+      </div>
+    ` : ""}
+    <h3>Будут добавлены</h3>
+    <ul class="import-list">
+      ${(plan.toAdd ?? []).slice(0, 12).map((item) => `
+        <li>
+          Строка ${item.rowNumber}: ${escapeHtml(item.source["Предмет"])}
+          <span class="muted">· ${escapeHtml(item.source["Тип дела"])} · ${escapeHtml(item.source["Регион"])} · ${escapeHtml(item.source["Ответственный"] ? displayName(item.source["Ответственный"]) : "без ответственного")}</span>
+        </li>
+      `).join("") || `<li>Новых дел для добавления нет.</li>`}
+      ${(plan.toAdd ?? []).length > 12 ? `<li>…и ещё ${(plan.toAdd ?? []).length - 12}</li>` : ""}
+    </ul>
+    ${(plan.existing ?? []).length ? `
+      <h3>Уже есть в реестре</h3>
+      <ul class="import-list">
+        ${(plan.existing ?? []).slice(0, 8).map((item) => `
+          <li>
+            Строка ${item.rowNumber}: ${escapeHtml(item.source["Предмет"])}
+            ${item.reason ? `<span class="muted">· ${escapeHtml(item.reason)}</span>` : ""}
+          </li>
+        `).join("")}
+        ${(plan.existing ?? []).length > 8 ? `<li>…и ещё ${(plan.existing ?? []).length - 8}</li>` : ""}
+      </ul>
+    ` : ""}
+    ${(plan.invalid ?? []).length ? `
+      <h3>Не будут добавлены</h3>
+      <ul class="import-list">
+        ${(plan.invalid ?? []).slice(0, 8).map((item) => `<li>Строка ${item.rowNumber}: ${escapeHtml(item.reason)}</li>`).join("")}
+        ${(plan.invalid ?? []).length > 8 ? `<li>…и ещё ${(plan.invalid ?? []).length - 8}</li>` : ""}
+      </ul>
+    ` : ""}
+  `;
+  $("#caseImportModal")?.classList.add("show");
+  $("#caseImportModal")?.setAttribute("aria-hidden", "false");
+}
+
+async function previewCaseImport(file) {
+  if (!file) return;
+  const lowerName = file.name.toLowerCase();
+  if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xlsm")) {
+    toast("Выберите файл Excel в формате .xlsx или .xlsm.", "error");
+    return;
+  }
+  setStatus("Читаю дела из Excel…");
+  const payload = await uploadCaseWorkbook(file);
+  state.caseImportPlan = payload.plan;
+  renderCaseImportModal();
+  setStatus("Готово");
+}
+
+async function applyCaseImport() {
+  if (!state.caseImportPlan) return;
+  setStatus("Добавляю новые дела в MTS Tabs…");
+  const payload = await api("/api/cases/import-apply", {
+    method: "POST",
+    body: JSON.stringify({ plan: state.caseImportPlan }),
+  });
+  setDataFromPayload(payload);
+  state.caseImportPlan = null;
+  closeCaseImportModal();
+  toast(`Импорт завершён: добавлено ${payload.result?.added ?? 0} дел.`);
+  setStatus("Готово");
 }
 
 function handleSummaryAction(action) {
@@ -2651,6 +2770,21 @@ function bindEvents() {
     setStatus("Ошибка");
     toast(error.message, "error");
   }));
+  $("#caseImportBtn")?.addEventListener("click", () => $("#caseImportInput")?.click());
+  $("#caseImportInput")?.addEventListener("change", (event) => {
+    previewCaseImport(event.target.files?.[0]).catch((error) => {
+      setStatus("Ошибка");
+      toast(error.message, "error");
+    });
+  });
+  $("#caseImportCancelBtn")?.addEventListener("click", closeCaseImportModal);
+  $("#caseImportModal")?.addEventListener("click", (event) => {
+    if (event.target.id === "caseImportModal") closeCaseImportModal();
+  });
+  $("#caseImportApplyBtn")?.addEventListener("click", () => applyCaseImport().catch((error) => {
+    setStatus("Ошибка");
+    toast(error.message, "error");
+  }));
   $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
   $("#casesSearch").addEventListener("input", renderCases);
   $("#casesQuickFilterStrip")?.addEventListener("click", (event) => {
@@ -2839,6 +2973,7 @@ function bindEvents() {
       closeDeleteCaseModal();
       closePostponeCompletionModal();
       closeVacationImportModal();
+      closeCaseImportModal();
       closeQueueManualAssignModal();
     }
   });

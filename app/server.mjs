@@ -2,9 +2,10 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FIELD, YUC_SETTING, allDatesInRange, assignAutomatically, assignExistingAutomatically, assignExistingManually, assignManually, changeCaseResponsible, cleanText, clearVacationYear, completeCaseByDeadline, deleteCase, enrichData, normalizeDraft, normalizeType, normalizeYuc, postponeCaseCompletion, recommend, recommendWithPreview, replaceVacationDatesForEmployees, replaceVacationYear, restoreCase, setVacationDates, toISODate, yesNo } from "./lib/domain.mjs";
+import { FIELD, YUC_SETTING, allDatesInRange, assignAutomatically, assignExistingAutomatically, assignExistingManually, assignManually, changeCaseResponsible, cleanText, clearVacationYear, completeCaseByDeadline, deleteCase, enrichData, importCasesFromRows, normalizeDraft, normalizeType, normalizeYuc, postponeCaseCompletion, recommend, recommendWithPreview, replaceVacationDatesForEmployees, replaceVacationYear, restoreCase, setVacationDates, toISODate, yesNo } from "./lib/domain.mjs";
 import { readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
+import { parseCaseWorkbook } from "./lib/xlsx-case-import.mjs";
 import { parseVacationWorkbook } from "./lib/xlsx-vacation-import.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -669,6 +670,34 @@ async function api(req, res, url) {
     const result = replaceVacationDatesForEmployees(data, plan.matched, plan.scopeDates);
     const confirmedData = await confirmedDataAfterSave(data, ["vacations"]);
     return sendJson(res, 200, { ok: true, result, data: confirmedData });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cases/import-preview") {
+    const buffer = await readBinaryBody(req);
+    const data = await readData(["cases"]);
+    const plan = parseCaseWorkbook(buffer, data.cases ?? [], { yuc: url.searchParams.get("yuc") || "Дальний Восток" });
+    return sendJson(res, 200, { ok: true, plan });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cases/import-apply") {
+    const body = await readBody(req);
+    const rows = body.plan?.toAdd ?? body.rows ?? [];
+    if (!rows.length) {
+      return sendJson(res, 400, { ok: false, error: "В плане импорта нет новых дел для добавления." });
+    }
+    const data = await readData();
+    const result = importCasesFromRows(data, rows);
+    const confirmedData = await confirmedDataAfterSave(data, ["cases", "journal"], (freshData) => result.added.every((item) => Boolean(findCase(freshData, item.case_id))));
+    return sendJson(res, 200, {
+      ok: true,
+      result: {
+        added: result.added.length,
+        skipped: result.skipped.length,
+        firstCaseId: result.added[0]?.case_id ?? "",
+        lastCaseId: result.added.at(-1)?.case_id ?? "",
+      },
+      data: confirmedData,
+    });
   }
 
   if (req.method === "PATCH" && url.pathname.startsWith("/api/cases/")) {
