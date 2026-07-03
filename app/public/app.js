@@ -294,6 +294,9 @@ function showView(name) {
   $(`#view-${name}`).classList.add("active");
   $$(".nav-link").forEach((link) => link.classList.toggle("active", link.dataset.view === name));
   $("#pageTitle").textContent = titles[name];
+  if (name === "employees" && state.data) {
+    resetEmployeeAvailabilityDrafts();
+  }
   if (name === "settings" && state.data) {
     renderSettings();
   }
@@ -1012,6 +1015,10 @@ function renderEmployees() {
       <td><button class="tiny-btn save-employee" data-id="${employee.employee_id}">Сохранить</button></td>
     </tr>
   `).join("") : `<tr><td colspan="11" class="empty-cell">Сотрудники выбранного ЮЦ не найдены.</td></tr>`;
+}
+
+function resetEmployeeAvailabilityDrafts() {
+  renderEmployees();
 }
 
 function refreshEmployeeAvailabilityRow(employeeId, activeValue) {
@@ -2634,6 +2641,7 @@ function bindEvents() {
   $$(".subtab").forEach((button) => {
     button.addEventListener("click", () => {
       state.employeeSection = button.dataset.employeeSection;
+      if (state.data) resetEmployeeAvailabilityDrafts();
       $$(".subtab").forEach((item) => item.classList.toggle("active", item === button));
       $$(".employee-section").forEach((section) => section.classList.toggle("active", section.id === `employee-section-${state.employeeSection}`));
     });
