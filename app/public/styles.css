@@ -2253,7 +2253,7 @@ textarea:disabled {
 }
 
 .case-modal-card {
-  width: min(720px, 100%);
+  width: min(1080px, 100%);
   border: 1px solid rgba(255, 255, 255, 0.62);
   background: rgba(255, 255, 255, 0.74);
   backdrop-filter: blur(24px) saturate(145%);
@@ -2277,6 +2277,53 @@ textarea:disabled {
 .case-modal-card .modal-actions {
   padding: 0 24px 24px;
   border-top: 0;
+}
+
+.case-modal-form {
+  display: grid;
+  gap: 14px;
+}
+
+.case-modal-status-row,
+.case-modal-grid,
+.case-modal-party-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.case-modal-party-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.case-modal-party-grid.has-third-party {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.case-edit-field.wide {
+  grid-column: span 2;
+}
+
+.case-modal-grid .case-edit-field.wide,
+.case-modal-grid .case-detail-item.wide {
+  grid-column: 1 / -1;
+}
+
+.case-modal-form .field {
+  min-width: 0;
+}
+
+.case-modal-form input,
+.case-modal-form select {
+  height: 46px;
+}
+
+.case-modal-form textarea {
+  min-height: 112px;
+}
+
+.case-id-preview strong {
+  white-space: nowrap;
 }
 
 .case-detail-grid {
@@ -2732,6 +2779,10 @@ body.theme-apple .toast {
   .grid.two,
   .type-load-grid,
   .case-detail-grid,
+  .case-modal-status-row,
+  .case-modal-grid,
+  .case-modal-party-grid,
+  .case-modal-party-grid.has-third-party,
   #caseForm.form-grid,
   .distribution-layout,
   .party-grid,
@@ -2743,6 +2794,12 @@ body.theme-apple .toast {
   }
 
   #caseForm .distribution-link {
+    grid-column: 1;
+  }
+
+  .case-edit-field.wide,
+  .case-modal-grid .case-edit-field.wide,
+  .case-modal-grid .case-detail-item.wide {
     grid-column: 1;
   }
 

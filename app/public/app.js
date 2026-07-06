@@ -25,6 +25,9 @@ const state = {
   vacationImportPlan: null,
   caseImportPlan: null,
   caseImportSelectedRows: new Set(),
+  caseModalCaseId: "",
+  caseModalEditing: false,
+  caseModalDraft: null,
   vacationDrafts: {},
   queueManualCandidate: null,
   journalLoaded: false,
@@ -2481,52 +2484,276 @@ async function savePostponeCompletion() {
   toast(`Завершение ${caseId} отложено.`);
 }
 
-function caseDetailRows(row) {
-  const rows = [
-    ["ID", row.case_id],
-    ["Тип дела", row["Тип дела"]],
-    ["Статус", row["Статус"]],
-    ["Ответственный", displayName(row["Ответственный"])],
-    ["Регион", row["Регион"]],
-    ["Истец / заявитель", row["Истец"]],
-    ["Ответчик", row["Ответчик"]],
-  ];
-  if (String(row["Третье лицо"] ?? "").trim()) rows.push(["Третье лицо", row["Третье лицо"]]);
-  rows.push(
-    ["Предмет", row["Предмет"]],
-    ["Ссылка на CasePro", row["Ссылка"]],
-  );
-  return rows.filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== "");
+const caseModalEditableFields = [
+  "Номер дела",
+  "Ссылка",
+  "Тип дела",
+  "Статус",
+  "Ответственный",
+  "Регион",
+  "Дата поступления",
+  "Истец",
+  "Ответчик",
+  "Третье лицо",
+  "Предмет",
+];
+
+function caseModalRow() {
+  if (!state.caseModalCaseId) return null;
+  return state.data?.cases?.find((item) => item.case_id === state.caseModalCaseId) ?? null;
 }
 
-function caseDetailValueHtml(label, value) {
-  if (label !== "Ссылка на CasePro") return escapeHtml(value);
-  const link = caseLinkInfo(value);
-  if (!link) return "—";
-  const safeUrl = escapeHtml(link.url);
-  return `<a class="case-link-chip" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.title)}</a>`;
+function caseModalLinkValue(row) {
+  return caseLinkInfo(row?.["Ссылка"])?.url || String(row?.["Ссылка"] ?? "");
+}
+
+function caseModalInitialDraft(row) {
+  return {
+    "Номер дела": row["Номер дела"] ?? "",
+    "Ссылка": caseModalLinkValue(row),
+    "Тип дела": row["Тип дела"] ?? "",
+    "Статус": row["Статус"] ?? "",
+    "Ответственный": row["Ответственный"] ?? "",
+    "Регион": row["Регион"] ?? "",
+    "Дата поступления": row["Дата поступления"] ?? "",
+    "Истец": row["Истец"] ?? "",
+    "Ответчик": row["Ответчик"] ?? "",
+    "Третье лицо": row["Третье лицо"] ?? "",
+    "Предмет": row["Предмет"] ?? "",
+  };
+}
+
+function caseModalDraft() {
+  const row = caseModalRow();
+  if (!row) return {};
+  return state.caseModalEditing && state.caseModalDraft
+    ? state.caseModalDraft
+    : caseModalInitialDraft(row);
+}
+
+function caseModalOption(value, selected, label = value) {
+  return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+function caseModalResponsibleOptions(selected) {
+  const employees = employeesForSelectedYuc();
+  const options = [];
+  if (selected && !employees.some((employee) => nameMatches(employee["ФИО"], selected))) {
+    options.push(caseModalOption(selected, selected, displayName(selected)));
+  }
+  options.push(...employees
+    .slice()
+    .sort((a, b) => displayName(a["ФИО"]).localeCompare(displayName(b["ФИО"]), "ru"))
+    .map((employee) => caseModalOption(employee["ФИО"], selected, displayName(employee["ФИО"]))));
+  return `<option value="">Не назначен</option>${options.join("")}`;
+}
+
+function caseModalRegionOptions(selected) {
+  const regions = state.data?.directories?.regionsByYuc?.[selectedYuc()] ?? [];
+  const normalized = String(selected ?? "").trim();
+  const options = [];
+  if (normalized && !regions.includes(normalized)) {
+    options.push(caseModalOption(normalized, normalized));
+  }
+  options.push(...regions.map((region) => caseModalOption(region, normalized)));
+  return `<option value="">Не выбран</option>${options.join("")}`;
+}
+
+function caseModalReadonlyValue(field, value) {
+  if (field === "Ответственный") return escapeHtml(displayName(value));
+  if (field === "Дата поступления") return escapeHtml(formatRuDateDash(value) || "—");
+  if (field === "Ссылка") {
+    const link = caseLinkInfo(value);
+    if (!link) return "—";
+    const safeUrl = escapeHtml(link.url);
+    return `<a class="case-link-chip" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.title)}</a>`;
+  }
+  return escapeHtml(value || "—");
+}
+
+function caseModalField({ field, label, type = "text", wide = false, rows = 3, readonly = false }) {
+  const draft = caseModalDraft();
+  const value = draft[field] ?? "";
+  const editing = state.caseModalEditing && !readonly;
+  const classes = ["case-edit-field", wide ? "wide" : ""].filter(Boolean).join(" ");
+  if (!editing) {
+    return `
+      <div class="case-detail-item ${wide ? "wide" : ""}" data-case-detail-field="${escapeHtml(field)}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${caseModalReadonlyValue(field, value)}</strong>
+      </div>
+    `;
+  }
+  if (type === "textarea") {
+    return `
+      <label class="field ${classes}">
+        <span>${escapeHtml(label)}</span>
+        <textarea data-case-modal-field="${escapeHtml(field)}" rows="${rows}">${escapeHtml(value)}</textarea>
+      </label>
+    `;
+  }
+  if (type === "select") {
+    let options = "";
+    if (field === "Тип дела") {
+      options = `<option value="">Выберите тип</option>${caseTypes.map((item) => caseModalOption(item, value, item[0].toUpperCase() + item.slice(1))).join("")}`;
+    } else if (field === "Статус") {
+      const statusOptions = statuses.includes(value) || !value ? statuses : [value, ...statuses];
+      options = statusOptions.map((item) => caseModalOption(item, value)).join("");
+    } else if (field === "Ответственный") {
+      options = caseModalResponsibleOptions(value);
+    } else if (field === "Регион") {
+      options = caseModalRegionOptions(value);
+    }
+    return `
+      <label class="field ${classes}">
+        <span>${escapeHtml(label)}</span>
+        <select data-case-modal-field="${escapeHtml(field)}">${options}</select>
+      </label>
+    `;
+  }
+  return `
+    <label class="field ${classes}">
+      <span>${escapeHtml(label)}</span>
+      <input data-case-modal-field="${escapeHtml(field)}" type="${type}" value="${escapeHtml(value)}" />
+    </label>
+  `;
+}
+
+function renderCaseModal() {
+  const row = caseModalRow();
+  if (!row) return;
+  const draft = caseModalDraft();
+  const isJudicial = normalizeCaseType(draft["Тип дела"]) === "судебное";
+  const canEdit = !isDeletedCase(row);
+  $("#caseModalTitle").textContent = `Карточка ${row.case_id}`;
+  $("#caseModalBody").innerHTML = `
+    <div class="case-modal-form ${state.caseModalEditing ? "editing" : "readonly"}">
+      <div class="case-modal-status-row">
+        <div class="case-detail-item case-id-preview">
+          <span>ID</span>
+          <strong>${escapeHtml(row.case_id)}</strong>
+        </div>
+        ${caseModalField({ field: "Статус", label: "Статус", type: "select" })}
+        ${caseModalField({ field: "Ответственный", label: "Ответственный", type: "select" })}
+      </div>
+      <div class="case-modal-grid">
+        ${caseModalField({ field: "Тип дела", label: "Тип дела", type: "select" })}
+        ${caseModalField({ field: "Регион", label: "Регион", type: "select" })}
+        ${caseModalField({ field: "Дата поступления", label: "Дата поступления", type: "date" })}
+        ${caseModalField({ field: "Номер дела", label: "Номер дела" })}
+        ${caseModalField({ field: "Ссылка", label: "Ссылка на карточку в CasePRO", type: "url", wide: true })}
+      </div>
+      <div class="case-modal-party-grid ${isJudicial ? "has-third-party" : ""}">
+        ${caseModalField({ field: "Истец", label: "Истец / заявитель" })}
+        ${caseModalField({ field: "Ответчик", label: "Ответчик" })}
+        ${isJudicial ? caseModalField({ field: "Третье лицо", label: "Третье лицо" }) : ""}
+      </div>
+      <div class="case-modal-grid">
+        ${caseModalField({ field: "Предмет", label: "Предмет", type: "textarea", wide: true, rows: 4 })}
+      </div>
+    </div>
+  `;
+  $("#caseModalEdit").classList.toggle("hidden", state.caseModalEditing || !canEdit);
+  $("#caseModalSave").classList.toggle("hidden", !state.caseModalEditing);
+  $("#caseModalCancelEdit").classList.toggle("hidden", !state.caseModalEditing);
+  $("#caseModalOk").textContent = state.caseModalEditing ? "Закрыть" : "Закрыть";
 }
 
 function openCaseModal(caseId) {
   const row = state.data.cases.find((item) => item.case_id === caseId);
   if (!row) return;
-  $("#caseModalTitle").textContent = `Карточка ${row.case_id}`;
-  $("#caseModalBody").innerHTML = `
-    <div class="case-detail-grid">
-      ${caseDetailRows(row).map(([label, value]) => `
-        <div class="case-detail-item ${label === "Предмет" ? "wide" : ""}">
-          <span>${escapeHtml(label)}</span>
-          <strong>${caseDetailValueHtml(label, value)}</strong>
-        </div>
-      `).join("")}
-    </div>
-  `;
+  state.caseModalCaseId = caseId;
+  state.caseModalEditing = false;
+  state.caseModalDraft = null;
+  renderCaseModal();
   $("#caseModal").classList.add("show");
-  $("#caseModalOk").focus();
+  $("#caseModalEdit").focus();
 }
 
 function closeCaseModal() {
+  if (state.caseModalEditing && hasCaseModalChanges()) {
+    const confirmed = window.confirm("Закрыть карточку без сохранения изменений?");
+    if (!confirmed) return;
+  }
   $("#caseModal").classList.remove("show");
+  state.caseModalCaseId = "";
+  state.caseModalEditing = false;
+  state.caseModalDraft = null;
+}
+
+function startCaseModalEdit() {
+  const row = caseModalRow();
+  if (!row) return;
+  if (isDeletedCase(row)) {
+    toast("Удалённое дело сначала нужно восстановить.", "error");
+    return;
+  }
+  state.caseModalEditing = true;
+  state.caseModalDraft = caseModalInitialDraft(row);
+  renderCaseModal();
+}
+
+function cancelCaseModalEdit() {
+  state.caseModalEditing = false;
+  state.caseModalDraft = null;
+  renderCaseModal();
+}
+
+function updateCaseModalDraft(field, value) {
+  if (!state.caseModalEditing || !state.caseModalDraft) return;
+  state.caseModalDraft[field] = value;
+  if (field === "Тип дела" && normalizeCaseType(value) !== "судебное") {
+    state.caseModalDraft["Третье лицо"] = "";
+  }
+  renderCaseModal();
+}
+
+function normalizedCaseModalValue(field, value) {
+  if (field === "Тип дела") return normalizeCaseType(value);
+  return String(value ?? "").trim();
+}
+
+function hasCaseModalChanges() {
+  const row = caseModalRow();
+  if (!row || !state.caseModalDraft) return false;
+  const initial = caseModalInitialDraft(row);
+  return caseModalEditableFields.some((field) =>
+    normalizedCaseModalValue(field, state.caseModalDraft[field]) !== normalizedCaseModalValue(field, initial[field])
+  );
+}
+
+async function saveCaseModal() {
+  const row = caseModalRow();
+  if (!row || !state.caseModalDraft) return;
+  const initial = caseModalInitialDraft(row);
+  const patch = {};
+  for (const field of caseModalEditableFields) {
+    const nextValue = normalizedCaseModalValue(field, state.caseModalDraft[field]);
+    const currentValue = normalizedCaseModalValue(field, initial[field]);
+    if (nextValue !== currentValue) {
+      patch[field] = nextValue;
+    }
+  }
+  if (!Object.keys(patch).length) {
+    cancelCaseModalEdit();
+    return;
+  }
+  if (patch["Статус"] && ["Завершено", "Отменено"].includes(patch["Статус"]) && !row["Дата завершения"]) {
+    patch["Дата завершения"] = today();
+  }
+  setStatus("Сохраняю карточку дела…");
+  const payload = await api(`/api/cases/${encodeURIComponent(row.case_id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  setDataFromPayload(payload);
+  state.lastRecommendation = null;
+  state.caseModalCaseId = payload.case?.case_id || row.case_id;
+  state.caseModalEditing = false;
+  state.caseModalDraft = null;
+  renderCaseModal();
+  setStatus("Сохранено");
+  toast(`Карточка ${row.case_id} сохранена.`);
 }
 
 function openQueueManualAssignModal(name = "") {
@@ -2802,6 +3029,12 @@ function bindEvents() {
     renderRegionalAssignments();
   });
   $("#caseModalOk").addEventListener("click", closeCaseModal);
+  $("#caseModalEdit")?.addEventListener("click", startCaseModalEdit);
+  $("#caseModalCancelEdit")?.addEventListener("click", cancelCaseModalEdit);
+  $("#caseModalSave")?.addEventListener("click", () => saveCaseModal().catch((error) => {
+    setStatus("Ошибка");
+    toast(error.message, "error");
+  }));
   $("#caseModal").addEventListener("click", (event) => {
     if (event.target.id === "caseModal") closeCaseModal();
   });
@@ -3043,6 +3276,10 @@ function bindEvents() {
         else state.caseImportSelectedRows.delete(rowNumber);
       }
       updateCaseImportSelectionState();
+      return;
+    }
+    if (event.target.matches("[data-case-modal-field]")) {
+      updateCaseModalDraft(event.target.dataset.caseModalField, event.target.value);
       return;
     }
     if (event.target.matches(".case-status")) {
