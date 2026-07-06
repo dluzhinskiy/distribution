@@ -70,7 +70,7 @@ const tables = [
       "Позиция": String(stamp).slice(-4),
       employee_id: `DIAG-EMP-${stamp}`,
       "ФИО": `Диагностика API ${stamp}`,
-      "Долг": "0",
+      "Долг": 0,
       "Дата долга": null,
       "Примечание": "Создано диагностикой. Запись должна быть удалена автоматически.",
     }),
@@ -152,6 +152,24 @@ const tables = [
     updateFields: () => ({
       "Активность, дни": 998,
       "Автозавершение, дни": 998,
+    }),
+  },
+  {
+    key: "regionalAssignments",
+    name: "Региональные закрепления",
+    datasheetId: process.env.TABS_REGIONAL_ASSIGNMENTS_DATASHEET_ID || "dstPFbxwoPH7YfCRAz",
+    viewId: process.env.TABS_REGIONAL_ASSIGNMENTS_VIEW_ID || "viwrYdxBbj4UD",
+    createFields: (stamp) => ({
+      "ЮЦ": "Дальний Восток",
+      "Регион": "Иркутская область",
+      "Сотрудник": `Диагностика API ${stamp}`,
+      "Заместитель": "нет",
+      "Тип нагрузки": "судебное",
+      "Активно": "Нет",
+    }),
+    updateFields: () => ({
+      "Активно": "Да",
+      "Заместитель": "нет",
     }),
   },
 ];

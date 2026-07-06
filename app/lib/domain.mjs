@@ -10,7 +10,6 @@ export const SHEETS = {
   settings: "Настройки",
   yucSettings: "Настройки ЮЦ",
   regionalAssignments: "Региональные закрепления",
-  regionalSubstitutions: "Региональные замещения",
 };
 
 export const CASE_HEADERS = [
@@ -116,19 +115,9 @@ export const REGIONAL_ASSIGNMENT_HEADERS = [
   "ЮЦ",
   "Регион",
   "Сотрудник",
+  "Заместитель",
   "Тип нагрузки",
   "Активно",
-];
-
-export const REGIONAL_SUBSTITUTION_HEADERS = [
-  "Название",
-  "ЮЦ",
-  "Регион",
-  "Основной сотрудник",
-  "Замещающий сотрудник",
-  "Тип нагрузки",
-  "Активно",
-  "Комментарий",
 ];
 
 export const DEFAULT_ACTIVITY_DAYS = {
@@ -572,19 +561,6 @@ function regionalAssignmentsFor(data, yuc, region, type) {
   );
 }
 
-function regionalSubstitutionsFor(data, yuc, region, type, mainEmployees) {
-  const normalizedYuc = normalizeYuc(yuc);
-  const normalizedRegion = normalizeRegionName(region);
-  const mainNames = new Set(mainEmployees.map((employee) => cleanText(employee[FIELD.name])).filter(Boolean));
-  return (data.regionalSubstitutions ?? []).filter((row) =>
-    yes(row[FIELD.ruleActive]) &&
-    normalizeYuc(row[FIELD.yuc]) === normalizedYuc &&
-    normalizeRegionName(row["Регион"]) === normalizedRegion &&
-    regionalTypeMatches(row[FIELD.workloadType], type) &&
-    [...mainNames].some((name) => nameMatches(name, row["Основной сотрудник"]))
-  );
-}
-
 function uniqueEmployeesByName(items) {
   const result = [];
   for (const employee of items) {
@@ -601,6 +577,45 @@ function queueRowsForEmployees(data, yuc, type, employees) {
     names.some((name) => nameMatches(row[FIELD.name], name)) ||
     employees.some((employee) => cleanText(employee?.employee_id) && cleanText(employee.employee_id) === cleanText(row.employee_id))
   );
+}
+
+function queueRowForEmployee(data, yuc, type, employee) {
+  const employeeId = cleanText(employee?.employee_id);
+  const name = cleanText(employee?.[FIELD.name]);
+  return queueRowsFor(data, yuc, type).find((row) =>
+    (employeeId && cleanText(row.employee_id) === employeeId) ||
+    (name && nameMatches(row[FIELD.name], name))
+  );
+}
+
+function substitutionRowsForRegionalAbsence(data, yuc, region, type, mainEmployees, regionalRows, date) {
+  const result = [];
+  const usedSubstitutes = new Set();
+  for (const regionalRow of regionalRows.slice().sort((a, b) => Number(a[FIELD.position]) - Number(b[FIELD.position]))) {
+    const mainEmployee = employeeForQueueRow(data, regionalRow);
+    if (!mainEmployee || isEmployeeAvailable(mainEmployee, type, date, data.vacations ?? [])) continue;
+    const mainName = cleanText(mainEmployee[FIELD.name]);
+    const assignment = (data.regionalAssignments ?? []).find((row) =>
+      yes(row[FIELD.ruleActive]) &&
+      normalizeYuc(row[FIELD.yuc]) === normalizeYuc(yuc) &&
+      normalizeRegionName(row["Регион"]) === normalizeRegionName(region) &&
+      regionalTypeMatches(row[FIELD.workloadType], type) &&
+      nameMatches(row["Сотрудник"], mainName)
+    );
+    const substituteName = cleanText(assignment?.["Заместитель"]);
+    if (!substituteName || substituteName.toLowerCase() === "нет") continue;
+    const substitute = employeeByName(data, substituteName);
+    const substituteRow = queueRowForEmployee(data, yuc, type, substitute);
+    const substituteKey = queueRowKey(substituteRow);
+    if (!substitute || !substituteRow || !substituteKey || usedSubstitutes.has(substituteKey)) continue;
+    usedSubstitutes.add(substituteKey);
+    result.push({
+      ...substituteRow,
+      [FIELD.position]: Number(regionalRow[FIELD.position]) || Number(substituteRow[FIELD.position]) || 0,
+      "Замещает": mainName,
+    });
+  }
+  return result;
 }
 
 function includeInactiveInLoad(data, yuc) {
@@ -693,6 +708,7 @@ function recommendationResult(candidateInfo, basis, queueEffect, skippedVacation
     candidate: cleanText(candidateInfo.row[FIELD.name]),
     employee_id: cleanText(candidateInfo.row.employee_id),
     position: Number(candidateInfo.row[FIELD.position]),
+    substituteFor: cleanText(candidateInfo.row["Замещает"]),
     basis,
     queueEffect,
     reason: "",
@@ -836,7 +852,7 @@ function applyAutomaticQueueEffects(data, normalized, result, state, date) {
     }
     if ((result.queueEffect === "queue" || result.queueEffect === "debt") && selectedQueueRow) {
       const oldPosition = Number(state["Последняя позиция"]) || 0;
-      const newPosition = Number(selectedQueueRow[FIELD.position]) || 0;
+      const newPosition = Number(result.position) || Number(selectedQueueRow[FIELD.position]) || 0;
       if (oldPosition > 0 && newPosition <= oldPosition) {
         state["Цикл"] = (Number(state["Цикл"]) || 1) + 1;
       }
@@ -985,8 +1001,10 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
       const previousAuto = Boolean(lastAuto && name === lastAuto);
       const recommendedRow = Boolean(recommendedName && nameMatches(name, recommendedName));
       const available = Boolean(info.employee && active && participates && !vacation);
+      const substituteFor = cleanText(row["Замещает"]);
       const markers = [];
       if (recommendedRow) markers.push("кандидат");
+      if (substituteFor) markers.push(`замещает ${shortName(substituteFor)}`);
       if (!info.employee) markers.push("нет в сотрудниках");
       if (info.employee && !active) markers.push("неактивен");
       if (info.employee && !participates) markers.push("не участвует");
@@ -1005,6 +1023,7 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
         debt,
         previousAuto,
         recommended: recommendedRow,
+        substituteFor,
         available,
         load: info.employee ? employeeLoad(data, info.employee, type, LOAD_MODE_BY_TYPE, yuc, date) : 0,
         markers,
@@ -1048,15 +1067,11 @@ function buildQueuePreview(data, draft, recommendation, date = new Date()) {
       mode = "general";
       title = "Общая очередь";
       note = `Региональные юристы по региону «${region}» недоступны; показана общая очередь.`;
-    } else if (cleanText(recommendation?.basis).startsWith("замещение региональной очереди")) {
-      const substitutions = regionalSubstitutionsFor(data, yuc, region, type, mainEmployees);
-      const substituteEmployees = uniqueEmployeesByName(substitutions
-        .map((row) => employeeByName(data, row["Замещающий сотрудник"]))
-        .filter(Boolean));
-      rows = queueRowsForEmployees(data, yuc, type, substituteEmployees);
-      mode = "substitution";
-      title = "Очередь замещения";
-      note = `Все региональные юристы недоступны; показаны заместители для региона «${region}».`;
+    } else if (cleanText(recommendation?.basis).startsWith(`региональная очередь: ${region} (замещение)`)) {
+      rows = substitutionRowsForRegionalAbsence(data, yuc, region, type, mainEmployees, regionalRows, date);
+      mode = "regional-substitution";
+      title = "Региональная очередь";
+      note = `Основные региональные юристы недоступны; заместители временно показаны на позициях замещаемых сотрудников.`;
     } else if (cleanText(recommendation?.basis).startsWith("вне региона")) {
       const regionalNames = mainEmployees.map((employee) => cleanText(employee[FIELD.name])).filter(Boolean);
       rows = generalRows.filter((row) => !regionalNames.some((name) => nameMatches(row[FIELD.name], name)));
@@ -1191,18 +1206,22 @@ export function recommend(data, draft, date = new Date()) {
   }
 
   if (unavailableMode === REGIONAL_UNAVAILABLE_SUBSTITUTE_THEN_GENERAL) {
-    const substitutions = regionalSubstitutionsFor(data, normalizedYuc, region, type, mainEmployees);
-    const substituteEmployees = uniqueEmployeesByName(substitutions
-      .map((row) => employeeByName(data, row["Замещающий сотрудник"]))
-      .filter(Boolean));
-    const substituteRows = queueRowsForEmployees(data, normalizedYuc, type, substituteEmployees);
+    const substituteRows = substitutionRowsForRegionalAbsence(
+      data,
+      normalizedYuc,
+      region,
+      type,
+      mainEmployees,
+      regionalRows,
+      date,
+    );
     const substitute = recommendFromQueueRows(
       data,
       substituteRows,
       normalizedYuc,
       type,
       date,
-      `замещение региональной очереди: ${region}`,
+      `региональная очередь: ${region} (замещение)`,
       { allowRepeatLastAuto: true },
     );
     if (substitute.ok) {

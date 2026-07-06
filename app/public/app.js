@@ -20,7 +20,6 @@ const state = {
   responsibleDrafts: {},
   statusDrafts: {},
   assignmentDraftOpen: false,
-  substitutionDraftOpen: false,
   writeLockCount: 0,
   vacationImportPlan: null,
   caseImportPlan: null,
@@ -469,10 +468,6 @@ function regionalAssignmentsForSelectedYuc() {
   return rowsForSelectedYuc(state.data?.regionalAssignments);
 }
 
-function regionalSubstitutionsForSelectedYuc() {
-  return rowsForSelectedYuc(state.data?.regionalSubstitutions);
-}
-
 function journalRowsForSelectedYuc() {
   return rowsForSelectedYuc(state.data?.journal);
 }
@@ -612,8 +607,11 @@ function renderSummary() {
           ? item.load
             ? `<div class="type-load-bar active" style="width:100%"></div>`
             : `<div class="type-load-bar empty" style="width:100%"></div>`
-          : item.active
-            ? `<div class="type-load-bar active" style="width:100%"></div>`
+          : item.total
+            ? `
+              ${item.active ? `<div class="type-load-bar active" style="width:${Math.round((item.active / Math.max(item.total, 1)) * 100)}%"></div>` : ""}
+              ${item.inactive ? `<div class="type-load-bar inactive" style="width:${Math.round((item.inactive / Math.max(item.total, 1)) * 100)}%"></div>` : ""}
+            `
             : `<div class="type-load-bar empty" style="width:100%"></div>`
         }
       </div>
@@ -782,7 +780,7 @@ function renderWorkloadDashboard() {
   const rows = workloadByEmployee();
   const includeInactive = includeInactiveInLoadForSelectedYuc();
   const loadModeText = includeInactive ? "активные + неактивные незавершённые" : "только активные";
-  const maxTotal = Math.max(...rows.flatMap((row) => caseTypes.map((type) => row.byType[type].load)), 1);
+  const maxTotal = Math.max(...rows.flatMap((row) => caseTypes.map((type) => includeInactive ? row.byType[type].load : row.byType[type].total)), 1);
   $("#workloadDashboard").innerHTML = `
     <div class="workload-legend">
       <span>Режим расчёта: ${escapeHtml(loadModeText)}</span>
@@ -813,6 +811,7 @@ function renderWorkloadDashboard() {
         ${caseTypes.map((type) => {
           const item = row.byType[type];
           const activeWidth = item.active ? Math.max(8, Math.round((item.active / maxTotal) * 100)) : 0;
+          const inactiveWidth = item.inactive ? Math.max(8, Math.round((item.inactive / maxTotal) * 100)) : 0;
           const loadWidth = item.load ? Math.max(8, Math.round((item.load / maxTotal) * 100)) : 0;
           return `
             <div class="workload-cell">
@@ -823,7 +822,10 @@ function renderWorkloadDashboard() {
               <div class="workload-bars" title="${includeInactive ? `В расчёте: ${item.load}` : `Активные: ${item.active}; неактивные незавершённые: ${item.inactive}`}">
                 ${includeInactive
                   ? item.load ? `<div class="workload-bar active" style="width:${loadWidth}%"></div>` : ""
-                  : item.active ? `<div class="workload-bar active" style="width:${activeWidth}%"></div>` : ""}
+                  : `
+                    ${item.active ? `<div class="workload-bar active" style="width:${activeWidth}%"></div>` : ""}
+                    ${item.inactive ? `<div class="workload-bar inactive" style="width:${inactiveWidth}%"></div>` : ""}
+                  `}
               </div>
             </div>
           `;
@@ -1615,6 +1617,10 @@ function settingsEmployeeOptions(current) {
   return optionList(employeesForSelectedYuc().map((employee) => employee["ФИО"]), current);
 }
 
+function settingsSubstituteOptions(current) {
+  return optionList(["нет", ...employeesForSelectedYuc().map((employee) => employee["ФИО"])], current || "нет");
+}
+
 function settingsRegionOptions(current) {
   return optionList(selectedYucRegions(), current);
 }
@@ -1666,10 +1672,8 @@ function updateRegionalSettingsAvailability() {
     control.disabled = !enabled;
   });
   const addAssignment = $("#addRegionalAssignmentBtn");
-  const addSubstitution = $("#addRegionalSubstitutionBtn");
   if (addAssignment) addAssignment.disabled = !enabled;
-  if (addSubstitution) addSubstitution.disabled = !enabled;
-  $$(".regional-assignment-field, .regional-substitution-field, .save-regional-assignment, .delete-regional-assignment, .save-regional-substitution, .delete-regional-substitution").forEach((control) => {
+  $$(".regional-assignment-field, .save-regional-assignment, .delete-regional-assignment").forEach((control) => {
     control.disabled = !enabled;
     control.closest(".toggle-inline")?.classList.toggle("disabled", !enabled);
   });
@@ -1680,6 +1684,7 @@ function regionalAssignmentRow(row = {}, index = -1, isNew = false) {
     <tr data-regional-assignment-index="${index}" data-new="${isNew ? "1" : "0"}">
       <td><select class="inline-select regional-assignment-field" data-field="Регион">${settingsRegionOptions(row["Регион"])}</select></td>
       <td><select class="inline-select regional-assignment-field" data-field="Сотрудник">${settingsEmployeeOptions(row["Сотрудник"])}</select></td>
+      <td><select class="inline-select regional-assignment-field" data-field="Заместитель">${settingsSubstituteOptions(row["Заместитель"])}</select></td>
       <td><select class="inline-select regional-assignment-field" data-field="Тип нагрузки">${workloadTypeOptions(row["Тип нагрузки"])}</select></td>
       <td>${yesNoToggle({
         className: "regional-assignment-field",
@@ -1696,29 +1701,6 @@ function regionalAssignmentRow(row = {}, index = -1, isNew = false) {
   `;
 }
 
-function regionalSubstitutionRow(row = {}, index = -1, isNew = false) {
-  return `
-    <tr data-regional-substitution-index="${index}" data-new="${isNew ? "1" : "0"}">
-      <td><select class="inline-select regional-substitution-field" data-field="Регион">${settingsRegionOptions(row["Регион"])}</select></td>
-      <td><select class="inline-select regional-substitution-field" data-field="Основной сотрудник">${settingsEmployeeOptions(row["Основной сотрудник"])}</select></td>
-      <td><select class="inline-select regional-substitution-field" data-field="Замещающий сотрудник">${settingsEmployeeOptions(row["Замещающий сотрудник"])}</select></td>
-      <td><select class="inline-select regional-substitution-field" data-field="Тип нагрузки">${workloadTypeOptions(row["Тип нагрузки"])}</select></td>
-      <td>${yesNoToggle({
-        className: "regional-substitution-field",
-        attrs: `data-field="Активно"`,
-        checked: row["Активно"] ? yes(row["Активно"]) : true,
-      })}</td>
-      <td><input class="inline-input regional-substitution-field" data-field="Комментарий" value="${escapeHtml(row["Комментарий"] ?? "")}" placeholder="Комментарий" /></td>
-      <td>
-        <div class="case-actions">
-          <button class="icon-btn confirm save-regional-substitution" title="Сохранить замещение">✓</button>
-          <button class="icon-btn cancel ${isNew ? "cancel-new-regional-substitution" : "delete-regional-substitution"}" title="${isNew ? "Отменить" : "Удалить"}">${isNew ? "×" : "🗑"}</button>
-        </div>
-      </td>
-    </tr>
-  `;
-}
-
 function renderRegionalAssignments() {
   const rows = regionalAssignmentsForSelectedYuc();
   const html = rows.map((row, index) => regionalAssignmentRow(row, index, false)).join("");
@@ -1726,38 +1708,19 @@ function renderRegionalAssignments() {
     "ЮЦ": selectedYuc(),
     "Регион": selectedYucRegions()[0] ?? "",
     "Сотрудник": employeesForSelectedYuc()[0]?.["ФИО"] ?? "",
+    "Заместитель": "нет",
     "Тип нагрузки": "все",
     "Активно": "Да",
   }, -1, true) : "";
   $("#regionalAssignmentsTable").innerHTML = html || draft
     ? `${draft}${html}`
-    : `<tr><td colspan="5" class="empty-cell">Закрепления выбранного ЮЦ пока не настроены.</td></tr>`;
-}
-
-function renderRegionalSubstitutions() {
-  const rows = regionalSubstitutionsForSelectedYuc();
-  const html = rows.map((row, index) => regionalSubstitutionRow(row, index, false)).join("");
-  const firstEmployee = employeesForSelectedYuc()[0]?.["ФИО"] ?? "";
-  const secondEmployee = employeesForSelectedYuc()[1]?.["ФИО"] ?? firstEmployee;
-  const draft = state.substitutionDraftOpen ? regionalSubstitutionRow({
-    "ЮЦ": selectedYuc(),
-    "Регион": selectedYucRegions()[0] ?? "",
-    "Основной сотрудник": firstEmployee,
-    "Замещающий сотрудник": secondEmployee,
-    "Тип нагрузки": "все",
-    "Активно": "Да",
-    "Комментарий": "",
-  }, -1, true) : "";
-  $("#regionalSubstitutionsTable").innerHTML = html || draft
-    ? `${draft}${html}`
-    : `<tr><td colspan="7" class="empty-cell">Замещения выбранного ЮЦ пока не настроены.</td></tr>`;
+    : `<tr><td colspan="6" class="empty-cell">Закрепления выбранного ЮЦ пока не настроены.</td></tr>`;
 }
 
 function renderSettings() {
   renderDeadlineSettings();
   renderYucSettingsForm();
   renderRegionalAssignments();
-  renderRegionalSubstitutions();
   updateRegionalSettingsAvailability();
 }
 
@@ -2229,47 +2192,6 @@ async function deleteRegionalAssignment(button) {
   setDataFromPayload(payload);
   setStatus("Сохранено");
   toast("Региональное закрепление удалено.");
-}
-
-async function saveRegionalSubstitution(button) {
-  if (!regionalQueuesCurrentlyEnabled()) {
-    toast("Сначала включите региональные очереди для выбранного ЮЦ.", "error");
-    return;
-  }
-  const tr = button.closest("tr");
-  const index = Number(tr.dataset.regionalSubstitutionIndex);
-  const original = index >= 0 ? regionalSubstitutionsForSelectedYuc()[index] : null;
-  const row = collectRegionalRow(tr, ".regional-substitution-field");
-  setStatus("Сохраняю замещение…");
-  const payload = await api("/api/regional-substitutions/upsert", {
-    method: "POST",
-    body: JSON.stringify({ yuc: selectedYuc(), original, row }),
-  });
-  state.substitutionDraftOpen = false;
-  setDataFromPayload(payload);
-  setStatus("Сохранено");
-  toast("Региональное замещение сохранено.");
-}
-
-async function deleteRegionalSubstitution(button) {
-  if (!regionalQueuesCurrentlyEnabled()) {
-    toast("Сначала включите региональные очереди для выбранного ЮЦ.", "error");
-    return;
-  }
-  const tr = button.closest("tr");
-  const index = Number(tr.dataset.regionalSubstitutionIndex);
-  const row = regionalSubstitutionsForSelectedYuc()[index];
-  if (!row) return;
-  const confirmed = window.confirm("Удалить региональное замещение?");
-  if (!confirmed) return;
-  setStatus("Удаляю замещение…");
-  const payload = await api("/api/regional-substitutions/delete", {
-    method: "POST",
-    body: JSON.stringify({ yuc: selectedYuc(), row }),
-  });
-  setDataFromPayload(payload);
-  setStatus("Сохранено");
-  toast("Региональное замещение удалено.");
 }
 
 async function saveCaseStatus(caseId, status) {
@@ -2790,11 +2712,6 @@ function bindEvents() {
     state.assignmentDraftOpen = true;
     renderRegionalAssignments();
   });
-  $("#addRegionalSubstitutionBtn")?.addEventListener("click", () => {
-    if (!regionalQueuesCurrentlyEnabled()) return;
-    state.substitutionDraftOpen = true;
-    renderRegionalSubstitutions();
-  });
   $("#caseModalOk").addEventListener("click", closeCaseModal);
   $("#caseModal").addEventListener("click", (event) => {
     if (event.target.id === "caseModal") closeCaseModal();
@@ -2984,21 +2901,6 @@ function bindEvents() {
     if (cancelNewRegionalAssignmentButton) {
       state.assignmentDraftOpen = false;
       renderRegionalAssignments();
-    }
-    const saveRegionalSubstitutionButton = event.target.closest(".save-regional-substitution");
-    if (saveRegionalSubstitutionButton) saveRegionalSubstitution(saveRegionalSubstitutionButton).catch((error) => {
-      setStatus("Ошибка");
-      toast(error.message, "error");
-    });
-    const deleteRegionalSubstitutionButton = event.target.closest(".delete-regional-substitution");
-    if (deleteRegionalSubstitutionButton) deleteRegionalSubstitution(deleteRegionalSubstitutionButton).catch((error) => {
-      setStatus("Ошибка");
-      toast(error.message, "error");
-    });
-    const cancelNewRegionalSubstitutionButton = event.target.closest(".cancel-new-regional-substitution");
-    if (cancelNewRegionalSubstitutionButton) {
-      state.substitutionDraftOpen = false;
-      renderRegionalSubstitutions();
     }
     const existingAutoButton = event.target.closest(".assign-existing-auto");
     if (existingAutoButton) assignExistingAuto(existingAutoButton.dataset.id).catch((error) => {

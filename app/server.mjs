@@ -20,7 +20,6 @@ const CACHE_TTL = {
   settings: Number(process.env.FAST_ENGINE_STATIC_CACHE_TTL_MS || 600000),
   yucSettings: Number(process.env.FAST_ENGINE_STATIC_CACHE_TTL_MS || 600000),
   regionalAssignments: Number(process.env.FAST_ENGINE_STATIC_CACHE_TTL_MS || 600000),
-  regionalSubstitutions: Number(process.env.FAST_ENGINE_STATIC_CACHE_TTL_MS || 600000),
 };
 const ALL_TABLE_KEYS = [
   "cases",
@@ -32,7 +31,6 @@ const ALL_TABLE_KEYS = [
   "settings",
   "yucSettings",
   "regionalAssignments",
-  "regionalSubstitutions",
 ];
 const BOOTSTRAP_TABLE_KEYS = ALL_TABLE_KEYS.filter((key) => key !== "journal");
 
@@ -289,37 +287,15 @@ function regionalAssignmentKey(row = {}) {
   ].join("::");
 }
 
-function regionalSubstitutionKey(row = {}) {
-  return [
-    normalizeYuc(row[FIELD.yuc]),
-    cleanText(row["Регион"]),
-    cleanText(row["Основной сотрудник"]),
-    cleanText(row["Замещающий сотрудник"]),
-    regionalType(row[FIELD.workloadType]),
-  ].join("::");
-}
-
 function normalizeRegionalAssignment(row = {}, yuc = "") {
   return {
     "Название": cleanText(row["Название"]),
     [FIELD.yuc]: normalizeYuc(row[FIELD.yuc] || yuc),
     "Регион": cleanText(row["Регион"]),
     "Сотрудник": cleanText(row["Сотрудник"]),
+    "Заместитель": cleanText(row["Заместитель"]) || "нет",
     [FIELD.workloadType]: regionalType(row[FIELD.workloadType] || "все"),
     [FIELD.ruleActive]: yesNo(row[FIELD.ruleActive]),
-  };
-}
-
-function normalizeRegionalSubstitution(row = {}, yuc = "") {
-  return {
-    "Название": cleanText(row["Название"]),
-    [FIELD.yuc]: normalizeYuc(row[FIELD.yuc] || yuc),
-    "Регион": cleanText(row["Регион"]),
-    "Основной сотрудник": cleanText(row["Основной сотрудник"]),
-    "Замещающий сотрудник": cleanText(row["Замещающий сотрудник"]),
-    [FIELD.workloadType]: regionalType(row[FIELD.workloadType] || "все"),
-    [FIELD.ruleActive]: yesNo(row[FIELD.ruleActive]),
-    "Комментарий": cleanText(row["Комментарий"]),
   };
 }
 
@@ -327,14 +303,9 @@ function assertRegionalAssignment(row) {
   if (!row[FIELD.yuc] || !row["Регион"] || !row["Сотрудник"] || !row[FIELD.workloadType]) {
     throw new Error("Для закрепления нужны ЮЦ, регион, сотрудник и тип нагрузки.");
   }
-}
-
-function assertRegionalSubstitution(row) {
-  if (!row[FIELD.yuc] || !row["Регион"] || !row["Основной сотрудник"] || !row["Замещающий сотрудник"] || !row[FIELD.workloadType]) {
-    throw new Error("Для замещения нужны ЮЦ, регион, основной сотрудник, заместитель и тип нагрузки.");
-  }
-  if (row["Основной сотрудник"] === row["Замещающий сотрудник"]) {
-    throw new Error("Основной сотрудник и заместитель не могут совпадать.");
+  const substitute = cleanText(row["Заместитель"]);
+  if (substitute && substitute.toLowerCase() !== "нет" && substitute === row["Сотрудник"]) {
+    throw new Error("Сотрудник и заместитель не могут совпадать.");
   }
 }
 
@@ -472,31 +443,6 @@ async function api(req, res, url) {
     const data = await readData();
     data.regionalAssignments = data.regionalAssignments.filter((item) => regionalAssignmentKey(item) !== key);
     const confirmedData = await confirmedDataAfterSave(data, ["regionalAssignments"]);
-    return sendJson(res, 200, { ok: true, data: confirmedData });
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/regional-substitutions/upsert") {
-    const body = await readBody(req);
-    const data = await readData();
-    const row = normalizeRegionalSubstitution(body.row, body.yuc);
-    const originalKey = body.original ? regionalSubstitutionKey(normalizeRegionalSubstitution(body.original, body.yuc)) : "";
-    assertRegionalSubstitution(row);
-    const nextKey = regionalSubstitutionKey(row);
-    const duplicate = data.regionalSubstitutions.find((item) => regionalSubstitutionKey(item) === nextKey && regionalSubstitutionKey(item) !== originalKey);
-    if (duplicate) throw new Error("Такое региональное замещение уже существует.");
-    const index = data.regionalSubstitutions.findIndex((item) => regionalSubstitutionKey(item) === (originalKey || nextKey));
-    if (index >= 0) data.regionalSubstitutions[index] = { ...data.regionalSubstitutions[index], ...row };
-    else data.regionalSubstitutions.push(row);
-    const confirmedData = await confirmedDataAfterSave(data, ["regionalSubstitutions"]);
-    return sendJson(res, 200, { ok: true, row, data: confirmedData });
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/regional-substitutions/delete") {
-    const body = await readBody(req);
-    const key = regionalSubstitutionKey(normalizeRegionalSubstitution(body.row, body.yuc));
-    const data = await readData();
-    data.regionalSubstitutions = data.regionalSubstitutions.filter((item) => regionalSubstitutionKey(item) !== key);
-    const confirmedData = await confirmedDataAfterSave(data, ["regionalSubstitutions"]);
     return sendJson(res, 200, { ok: true, data: confirmedData });
   }
 

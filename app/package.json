@@ -8,6 +8,7 @@
     "test:domain": "node scripts/domain-smoke-test.mjs",
     "tabs:diagnostics": "node scripts/tabs-api-diagnostics.mjs",
     "tabs:debug-queue": "node scripts/tabs-debug-queue.mjs",
+    "tabs:debug-regional-debt": "node scripts/tabs-debug-regional-debt.mjs",
     "tabs:debug-responsibles": "node scripts/tabs-debug-responsibles.mjs",
     "tabs:ensure-queues": "node scripts/tabs-ensure-queues.mjs",
     "tabs:find-case": "node scripts/tabs-find-case.mjs",
