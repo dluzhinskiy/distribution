@@ -607,31 +607,50 @@ function includeInactiveInLoad(data, yuc) {
   return yes(yucRegionalSettings(data, yuc)[YUC_SETTING.includeInactiveLoad]);
 }
 
-function employeeLoad(data, employee, type, mode = LOAD_MODE_TOTAL, yuc = employee?.[FIELD.yuc]) {
+function caseForLoad(data, caseRow, date = new Date()) {
+  return caseDerived(caseRow, data.settings ?? [], date);
+}
+
+function employeeLoad(data, employee, type, mode = LOAD_MODE_TOTAL, yuc = employee?.[FIELD.yuc], date = new Date()) {
   const name = cleanText(employee?.[FIELD.name]);
   if (!name) return 0;
   const normalizedYuc = normalizeYuc(yuc);
   const normalizedType = normalizeType(type);
   const includeInactive = includeInactiveInLoad(data, normalizedYuc);
   return (data.cases ?? []).filter((caseRow) => {
-    const status = cleanText(caseRow[FIELD.status]) || "В работе";
+    const calculated = caseForLoad(data, caseRow, date);
+    const status = cleanText(calculated[FIELD.status]) || "В работе";
     if (COMPLETE_STATUSES.has(status)) return false;
-    if (normalizedYuc && normalizeYuc(caseRow[FIELD.yuc]) !== normalizedYuc) return false;
-    if (!includeInactive && Number(caseRow["Активное число"]) !== 1) return false;
-    if (!nameMatches(caseRow[FIELD.responsible], name)) return false;
-    if (mode === LOAD_MODE_BY_TYPE && normalizeType(caseRow[FIELD.caseType]) !== normalizedType) return false;
+    if (normalizedYuc && normalizeYuc(calculated[FIELD.yuc]) !== normalizedYuc) return false;
+    if (!includeInactive && Number(calculated["Активное число"]) !== 1) return false;
+    if (!nameMatches(calculated[FIELD.responsible], name)) return false;
+    if (mode === LOAD_MODE_BY_TYPE && normalizeType(calculated[FIELD.caseType]) !== normalizedType) return false;
     return true;
   }).length;
 }
 
-function rowAssignmentLoad(data, row, yuc, type) {
-  const info = queueCandidateInfo(data, row, type, new Date(0));
-  return info.employee ? employeeLoad(data, info.employee, type, LOAD_MODE_BY_TYPE, yuc) : Number.POSITIVE_INFINITY;
+function rowAssignmentLoad(data, row, yuc, type, date = new Date()) {
+  const info = queueCandidateInfo(data, row, type, date);
+  return info.employee ? employeeLoad(data, info.employee, type, LOAD_MODE_BY_TYPE, yuc, date) : Number.POSITIVE_INFINITY;
 }
 
-function compareRowsForAssignment(data, yuc, type, lastPosition = 0) {
+function queueRowKey(row) {
+  const queueId = cleanText(row?.queue_id);
+  const employeeId = cleanText(row?.employee_id);
+  const name = cleanText(row?.[FIELD.name]);
+  return [queueId, employeeId || name].filter(Boolean).join("::");
+}
+
+function sameQueueRow(row, key) {
+  const normalizedKey = cleanText(key);
+  if (!normalizedKey) return false;
+  if (queueRowKey(row) === normalizedKey) return true;
+  return !normalizedKey.includes("::") && cleanText(row?.queue_id) === normalizedKey;
+}
+
+function compareRowsForAssignment(data, yuc, type, lastPosition = 0, date = new Date()) {
   return (a, b) => {
-    const loadDiff = rowAssignmentLoad(data, a, yuc, type) - rowAssignmentLoad(data, b, yuc, type);
+    const loadDiff = rowAssignmentLoad(data, a, yuc, type, date) - rowAssignmentLoad(data, b, yuc, type, date);
     if (loadDiff) return loadDiff;
     const posA = Number(a[FIELD.position]) || 0;
     const posB = Number(b[FIELD.position]) || 0;
@@ -641,8 +660,8 @@ function compareRowsForAssignment(data, yuc, type, lastPosition = 0) {
   };
 }
 
-function orderedRowsForAssignment(data, rows, yuc, type, lastPosition = 0) {
-  return rows.slice().sort(compareRowsForAssignment(data, yuc, type, lastPosition));
+function orderedRowsForAssignment(data, rows, yuc, type, lastPosition = 0, date = new Date()) {
+  return rows.slice().sort(compareRowsForAssignment(data, yuc, type, lastPosition, date));
 }
 
 function queueDebtAmount(row) {
@@ -679,6 +698,77 @@ function recommendationResult(candidateInfo, basis, queueEffect, skippedVacation
     reason: "",
     skippedVacation: vacationNames(skippedVacation),
     debtAccrualQueueIds: candidateInfo.debtAccrualQueueIds ?? [],
+  };
+}
+
+function crossedQueueRows(rows, lastPosition, selectedPosition) {
+  const selected = Number(selectedPosition) || 0;
+  if (!selected) return [];
+  const last = Number(lastPosition) || 0;
+  return rows
+    .slice()
+    .sort((a, b) => Number(a[FIELD.position]) - Number(b[FIELD.position]))
+    .filter((row) => {
+      const position = Number(row[FIELD.position]) || 0;
+      if (!position) return false;
+      if (!last) return position <= selected;
+      if (selected <= last) return position > last || position <= selected;
+      return position > last && position <= selected;
+    });
+}
+
+function unavailableDebtAccrualForCrossedRows(data, rows, type, date, lastPosition, selectedRow) {
+  const selectedQueueKey = queueRowKey(selectedRow);
+  const selectedPosition = Number(selectedRow?.[FIELD.position]) || 0;
+  const debtAccrualQueueIds = [];
+  const skippedVacation = [];
+  for (const row of crossedQueueRows(rows, lastPosition, selectedPosition)) {
+    if (selectedQueueKey && queueRowKey(row) === selectedQueueKey) continue;
+    const info = queueCandidateInfo(data, row, type, date);
+    if (!info.employee) continue;
+    if (!yes(info.employee[FIELD.employeeActive]) || !employeeParticipates(info.employee, type)) {
+      debtAccrualQueueIds.push(queueRowKey(row));
+      continue;
+    }
+    if (info.vacation) {
+      skippedVacation.push(row);
+      debtAccrualQueueIds.push(queueRowKey(row));
+    }
+  }
+  return { debtAccrualQueueIds, skippedVacation };
+}
+
+function unavailableDebtAccrualForRows(data, rows, type, date) {
+  const debtAccrualQueueIds = [];
+  const skippedVacation = [];
+  for (const row of rows) {
+    const info = queueCandidateInfo(data, row, type, date);
+    if (!info.employee) continue;
+    if (!yes(info.employee[FIELD.employeeActive]) || !employeeParticipates(info.employee, type)) {
+      debtAccrualQueueIds.push(queueRowKey(row));
+      continue;
+    }
+    if (info.vacation) {
+      skippedVacation.push(row);
+      debtAccrualQueueIds.push(queueRowKey(row));
+    }
+  }
+  return { debtAccrualQueueIds, skippedVacation };
+}
+
+function mergeRecommendationDebt(result, extraDebt) {
+  return {
+    ...result,
+    skippedVacation: [
+      ...vacationNames(extraDebt.skippedVacation),
+      ...(result.skippedVacation ?? []),
+    ].filter(Boolean),
+    debtAccrualQueueIds: [
+      ...new Set([
+        ...(extraDebt.debtAccrualQueueIds ?? []),
+        ...(result.debtAccrualQueueIds ?? []),
+      ].filter(Boolean)),
+    ],
   };
 }
 
@@ -731,14 +821,16 @@ function applyAutomaticQueueEffects(data, normalized, result, state, date) {
   if (debtLimit > 0) {
     const accrualIds = [...new Set((result.debtAccrualQueueIds ?? []).filter(Boolean))];
     for (const queueId of accrualIds) {
-      const row = queueRows.find((item) => cleanText(item.queue_id) === cleanText(queueId));
+      const row = queueRows.find((item) => sameQueueRow(item, queueId));
       if (!row) continue;
       setQueueDebt(row, queueDebtAmount(row) + 1, debtLimit, date);
     }
   }
 
   if (result.ok) {
-    const selectedQueueRow = queueRows.find((row) => cleanText(row[FIELD.name]) === result.candidate);
+    const selectedQueueRow = queueRows.find((row) =>
+      cleanText(row.employee_id) && cleanText(row.employee_id) === cleanText(result.employee_id)
+    ) ?? queueRows.find((row) => nameMatches(row[FIELD.name], result.candidate));
     if (result.queueEffect === "debt" && selectedQueueRow) {
       setQueueDebt(selectedQueueRow, queueDebtAmount(selectedQueueRow) - 1, debtLimit || Number.POSITIVE_INFINITY, date);
     }
@@ -787,7 +879,7 @@ function recommendFromQueueRows(data, rows, yuc, type, date, basisPrefix = "оч
     .filter((item) => item.available)
     .sort((a, b) => {
       const debtDiff = queueDebtAmount(b.row) - queueDebtAmount(a.row);
-      const loadDiff = employeeLoad(data, a.employee, type, LOAD_MODE_BY_TYPE, yuc) - employeeLoad(data, b.employee, type, LOAD_MODE_BY_TYPE, yuc);
+      const loadDiff = employeeLoad(data, a.employee, type, LOAD_MODE_BY_TYPE, yuc, date) - employeeLoad(data, b.employee, type, LOAD_MODE_BY_TYPE, yuc, date);
       return debtDiff || loadDiff || Number(a.row[FIELD.position]) - Number(b.row[FIELD.position]);
     }) : [];
   const debtCandidate = debtCandidates[0] ?? null;
@@ -799,34 +891,38 @@ function recommendFromQueueRows(data, rows, yuc, type, date, basisPrefix = "оч
     return recommendationResult(debtCandidate, basis, "debt");
   }
 
-  const ordered = orderedRowsForAssignment(data, rows, yuc, type, lastPosition);
+  const ordered = orderedRowsForAssignment(data, rows, yuc, type, lastPosition, date);
   let availableCount = 0;
   let previousAvailable = false;
   let previousCandidate = null;
   const skippedVacation = [];
-  const debtAccrualQueueIds = [];
   for (const row of ordered) {
     const info = queueCandidateInfo(data, row, type, date);
     if (!info.employee) continue;
     if (!yes(info.employee[FIELD.employeeActive]) || !employeeParticipates(info.employee, type)) {
-      debtAccrualQueueIds.push(cleanText(row.queue_id));
       continue;
     }
     if (info.vacation) {
       skippedVacation.push(row);
-      debtAccrualQueueIds.push(cleanText(row.queue_id));
       continue;
     }
     availableCount += 1;
     if (cleanText(row[FIELD.name]) === lastAuto) {
       previousAvailable = true;
-      previousCandidate = { row, ...info, debtAccrualQueueIds: [...debtAccrualQueueIds] };
+      previousCandidate = { row, ...info };
       continue;
     }
-    return recommendationResult({ row, ...info, debtAccrualQueueIds: [...debtAccrualQueueIds] }, basisPrefix, "queue", skippedVacation);
+    const crossed = unavailableDebtAccrualForCrossedRows(data, rows, type, date, lastPosition, row);
+    return recommendationResult({ row, ...info, debtAccrualQueueIds: crossed.debtAccrualQueueIds }, basisPrefix, "queue", crossed.skippedVacation);
   }
   if (allowRepeatLastAuto && previousCandidate) {
-    return recommendationResult(previousCandidate, `${basisPrefix}: ${REGIONAL_REPEAT_BASIS}`, "queue", skippedVacation);
+    const crossed = unavailableDebtAccrualForCrossedRows(data, rows, type, date, lastPosition, previousCandidate.row);
+    return recommendationResult(
+      { ...previousCandidate, debtAccrualQueueIds: crossed.debtAccrualQueueIds },
+      `${basisPrefix}: ${REGIONAL_REPEAT_BASIS}`,
+      "queue",
+      crossed.skippedVacation,
+    );
   }
   if (availableCount === 1 && previousAvailable) {
     return failedRecommendation(
@@ -857,7 +953,7 @@ function recommendLeastLoaded(data, rows, yuc, type, date, basis, loadMode = "о
     };
   }
   candidates.sort((a, b) =>
-    employeeLoad(data, a.employee, type, loadMode, yuc) - employeeLoad(data, b.employee, type, loadMode, yuc) ||
+    employeeLoad(data, a.employee, type, loadMode, yuc, date) - employeeLoad(data, b.employee, type, loadMode, yuc, date) ||
     Number(a.row[FIELD.position]) - Number(b.row[FIELD.position])
   );
   const selected = candidates[0];
@@ -910,7 +1006,7 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
         previousAuto,
         recommended: recommendedRow,
         available,
-        load: info.employee ? employeeLoad(data, info.employee, type, LOAD_MODE_BY_TYPE, yuc) : 0,
+        load: info.employee ? employeeLoad(data, info.employee, type, LOAD_MODE_BY_TYPE, yuc, date) : 0,
         markers,
       };
     })
@@ -1033,6 +1129,7 @@ export function recommend(data, draft, date = new Date()) {
   const lastAuto = cleanText(state["Последний автоназначенный"]);
   const regionalAvailability = availableCandidateRows(data, regionalRows, type, date, "");
   const availableRegional = regionalAvailability.candidates;
+  const unavailableRegionalDebt = unavailableDebtAccrualForRows(data, regionalRows, type, date);
 
   if (availableRegional.length) {
     const allRows = queueRowsFor(data, normalizedYuc, type);
@@ -1045,8 +1142,8 @@ export function recommend(data, draft, date = new Date()) {
     const loadMode = cleanText(settings[YUC_SETTING.overloadMode]) || LOAD_MODE_TOTAL;
 
     if (allowOutside && outsideCandidates.length) {
-      const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc)));
-      const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc)));
+      const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc, date)));
+      const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc, date)));
       if (minRegionalLoad - minOutsideLoad > overloadThreshold) {
         const outside = recommendFromQueueRows(
           data,
@@ -1109,20 +1206,15 @@ export function recommend(data, draft, date = new Date()) {
       { allowRepeatLastAuto: true },
     );
     if (substitute.ok) {
-      return {
-        ...substitute,
-        skippedVacation: [
-          ...vacationNames(regionalAvailability.skippedVacation),
-          ...(substitute.skippedVacation ?? []),
-        ].filter(Boolean),
-      };
+      return mergeRecommendationDebt(substitute, unavailableRegionalDebt);
     }
   }
 
-  return {
+  const general = {
     ...recommendGeneral(data, normalizedYuc, type, date),
     basis: "общая очередь после недоступности региональных юристов",
   };
+  return mergeRecommendationDebt(general, unavailableRegionalDebt);
 }
 
 export function recommendWithPreview(data, draft, date = new Date()) {
