@@ -1721,6 +1721,70 @@ td .cell-main {
   line-height: 1.35;
 }
 
+.case-cell-filter {
+  display: inline;
+  max-width: 100%;
+  padding: 2px 5px;
+  margin: -2px -5px;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.case-cell-filter:hover {
+  color: #0b63ce;
+  background: rgba(66, 153, 245, 0.12);
+}
+
+.case-cell-filter.is-disabled {
+  cursor: default;
+}
+
+.case-cell-filter.is-disabled:hover {
+  color: inherit;
+  background: transparent;
+}
+
+.case-cell-filter .badge {
+  pointer-events: none;
+}
+
+.case-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.28);
+}
+
+.case-party-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+  color: var(--mts-gray-600);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.case-party-item {
+  display: inline-flex;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.case-party-item .case-cell-filter {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cases-table th:nth-child(5),
 .cases-table .date-cell {
   min-width: 112px;

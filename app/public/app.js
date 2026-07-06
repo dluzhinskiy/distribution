@@ -11,6 +11,7 @@ const state = {
   showDeletedCases: false,
   casesQuickFilter: "",
   casesResponsibleFilter: "",
+  casesCellFilter: null,
   completionControlExpanded: false,
   deleteModalCaseId: "",
   postponeCompletionCaseId: "",
@@ -331,6 +332,37 @@ function showView(name) {
 
 function badge(text, kind = "gray") {
   return `<span class="badge badge-${kind}">${escapeHtml(text)}</span>`;
+}
+
+const caseCellFilterFields = new Set([
+  "Тип дела",
+  "Статус",
+  "Ответственный",
+  "Регион",
+  "Истец",
+  "Ответчик",
+  "Третье лицо",
+  "Дата поступления",
+]);
+
+function canUseCaseCellFilters() {
+  return !state.responsibleEditEnabled && !state.deleteEditEnabled;
+}
+
+function caseFilterValue(field, value, html = null, className = "") {
+  const text = String(value ?? "").trim();
+  if (!text || !caseCellFilterFields.has(field)) return html ?? escapeHtml(text);
+  const active = canUseCaseCellFilters();
+  return `
+    <button
+      class="case-cell-filter ${className} ${active ? "" : "is-disabled"}"
+      type="button"
+      data-case-filter-field="${escapeHtml(field)}"
+      data-case-filter-value="${escapeHtml(text)}"
+      ${active ? "" : "tabindex=\"-1\""}
+      title="${active ? `Фильтр: ${field} = ${text}` : ""}"
+    >${html ?? escapeHtml(text)}</button>
+  `;
 }
 
 function yes(value) {
@@ -686,6 +718,21 @@ function caseMatchesResponsibleFilter(row) {
   return nameMatches(row["Ответственный"], state.casesResponsibleFilter);
 }
 
+function caseCellFilterLabel() {
+  const filter = state.casesCellFilter;
+  if (!filter?.field || !filter.value) return "";
+  const value = filter.field === "Ответственный" ? displayName(filter.value) : filter.value;
+  return `${filter.field}: ${value}`;
+}
+
+function caseMatchesCellFilter(row) {
+  const filter = state.casesCellFilter;
+  if (!filter?.field || !filter.value) return true;
+  const current = String(row[filter.field] ?? "").trim();
+  if (filter.field === "Ответственный") return nameMatches(current, filter.value);
+  return current === filter.value;
+}
+
 function renderCasesQuickFilter() {
   const node = $("#casesQuickFilterStrip");
   if (!node) return;
@@ -704,6 +751,15 @@ function renderCasesQuickFilter() {
       <span class="quick-filter-chip">
         Ответственный: ${escapeHtml(displayName(state.casesResponsibleFilter))}
         <button type="button" id="clearCasesResponsibleFilter" aria-label="Сбросить фильтр по ответственному">×</button>
+      </span>
+    `);
+  }
+  const cellFilterLabel = caseCellFilterLabel();
+  if (cellFilterLabel) {
+    chips.push(`
+      <span class="quick-filter-chip">
+        ${escapeHtml(cellFilterLabel)}
+        <button type="button" id="clearCasesCellFilter" aria-label="Сбросить фильтр по полю">×</button>
       </span>
     `);
   }
@@ -870,6 +926,9 @@ function renderRegionSelect(previousRegion = null) {
 
 function caseStatusSelect(row) {
   const current = state.statusDrafts[row.case_id] ?? row["Статус"];
+  if (!state.responsibleEditEnabled) {
+    return caseFilterValue("Статус", current, `<span class="case-filter-pill">${escapeHtml(current || "—")}</span>`);
+  }
   const options = statuses.includes(current) ? statuses : [...statuses, current];
   const disabled = !state.responsibleEditEnabled || isDeletedCase(row);
   return `<select class="inline-select case-status" data-id="${escapeHtml(row.case_id)}" ${disabled ? "disabled" : ""} title="${disabled ? "Для удалённого дела статус меняется через восстановление" : "Выберите новый статус"}">
@@ -903,6 +962,9 @@ function isCaseChanged(row) {
 
 function caseResponsibleCell(row) {
   const current = caseResponsibleValue(row);
+  if (!state.responsibleEditEnabled) {
+    return caseFilterValue("Ответственный", current, `<span class="case-filter-pill">${escapeHtml(displayName(current) || "—")}</span>`);
+  }
   const disabled = !state.responsibleEditEnabled || isDeletedCase(row);
   const employees = employeesForSelectedYuc();
   return `
@@ -963,6 +1025,19 @@ function draftFromCase(row) {
   };
 }
 
+function casePartyFilterItems(row) {
+  return ["Истец", "Ответчик", "Третье лицо"]
+    .map((field) => ({ field, value: String(row[field] ?? "").trim() }))
+    .filter((item) => item.value)
+    .map((item) => `
+      <span class="case-party-item">
+        <span>${escapeHtml(item.field)}:</span>
+        ${caseFilterValue(item.field, item.value)}
+      </span>
+    `)
+    .join("");
+}
+
 function renderCases() {
   renderCasesQuickFilter();
   const term = ($("#casesSearch")?.value ?? "").toLowerCase();
@@ -970,6 +1045,7 @@ function renderCases() {
     .filter((row) => state.showDeletedCases || !isDeletedCase(row))
     .filter(caseMatchesQuickFilter)
     .filter(caseMatchesResponsibleFilter)
+    .filter(caseMatchesCellFilter)
     .filter((row) => !term || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(term)))
     .slice()
     .reverse();
@@ -980,10 +1056,13 @@ function renderCases() {
   $("#casesTable").innerHTML = rows.map((row) => `
     <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
       <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
-      <td>${badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}</td>
-      <td><div class="cell-main">${escapeHtml(row["Предмет"])}</div></td>
-      <td>${escapeHtml(row["Регион"])}</td>
-      <td class="date-cell">${escapeHtml(row["Дата поступления"])}</td>
+      <td>${caseFilterValue("Тип дела", row["Тип дела"], badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange"))}</td>
+      <td>
+        <div class="cell-main">${escapeHtml(row["Предмет"])}</div>
+        <div class="case-party-filters">${casePartyFilterItems(row)}</div>
+      </td>
+      <td>${caseFilterValue("Регион", row["Регион"])}</td>
+      <td class="date-cell">${caseFilterValue("Дата поступления", row["Дата поступления"])}</td>
       <td>${badge(row["Актуально"], row["Актуально"] === "Да" ? "green" : "gray")}</td>
       <td>${caseResponsibleCell(row)}</td>
       <td>${caseStatusSelect(row)}</td>
@@ -1005,6 +1084,21 @@ function applyCasesResponsibleFilter(responsible) {
   state.casesQuickFilter = "";
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
+  renderCases();
+}
+
+function applyCasesCellFilter(field, value) {
+  const normalizedField = String(field ?? "").trim();
+  const normalizedValue = String(value ?? "").trim();
+  if (!caseCellFilterFields.has(normalizedField) || !normalizedValue) return;
+  state.casesCellFilter = { field: normalizedField, value: normalizedValue };
+  if ($("#casesSearch")) $("#casesSearch").value = "";
+  showView("cases");
+  renderCases();
+}
+
+function clearCasesCellFilter() {
+  state.casesCellFilter = null;
   renderCases();
 }
 
@@ -1826,7 +1920,6 @@ function queueRowHtml(row) {
         <div class="queue-preview-name">${escapeHtml(displayName(row.name))}</div>
         <div class="queue-preview-details">
           <span>нагрузка типа: ${Number(row.load) || 0}</span>
-          ${row.phase === "passed" && !row.recommended ? "<span>прошел в цикле</span>" : ""}
         </div>
       </div>
       <div class="queue-preview-markers">${markers || badge(row.available ? "доступен" : "недоступен", row.available ? "green" : "gray")}</div>
@@ -1883,10 +1976,6 @@ function renderQueuePreview(preview) {
         <h3>${escapeHtml(preview.title || "Очередь назначения")}</h3>
         <p>${escapeHtml(preview.note || "")}</p>
       </div>
-      <div class="queue-preview-state">
-        <span>цикл ${Number(preview.cycle) || 1}</span>
-        <span>посл. позиция ${Number(preview.lastPosition) || 0}</span>
-      </div>
     </div>
     ${queueSectionHtml("Уже прошли", passed)}
     ${queueSectionHtml("Следующие", next)}
@@ -1900,7 +1989,7 @@ function activeRuleItems(result) {
   const preview = result.queuePreview;
   const mode = preview?.mode;
   if (mode === "regional") items.push({ text: "региональная очередь", kind: "blue" });
-  if (mode === "substitution") items.push({ text: "замещение", kind: "orange" });
+  if (mode === "regional-substitution") items.push({ text: "замещение", kind: "orange" });
   if (mode === "outside-region") items.push({ text: "вне региона по перегрузу", kind: "orange" });
   if (mode === "general") items.push({ text: "общая очередь", kind: "gray" });
   const basis = String(result.basis ?? "").toLowerCase();
@@ -2792,6 +2881,9 @@ function bindEvents() {
       state.casesResponsibleFilter = "";
       renderCases();
     }
+    if (event.target.closest("#clearCasesCellFilter")) {
+      clearCasesCellFilter();
+    }
   });
   $("#caseResponsibleEditToggle").addEventListener("change", (event) => {
     setResponsibleEditEnabled(event.target.checked);
@@ -2876,6 +2968,13 @@ function bindEvents() {
     }
     const yucTab = event.target.closest(".yuc-tab");
     if (yucTab) setSelectedYuc(yucTab.dataset.yuc);
+    const caseCellFilterButton = event.target.closest(".case-cell-filter");
+    if (caseCellFilterButton) {
+      if (canUseCaseCellFilters()) {
+        applyCasesCellFilter(caseCellFilterButton.dataset.caseFilterField, caseCellFilterButton.dataset.caseFilterValue);
+      }
+      return;
+    }
     const caseIdButton = event.target.closest(".case-id-link");
     if (caseIdButton) openCaseModal(caseIdButton.dataset.id);
     const saveCaseChangesButton = event.target.closest(".save-case-changes");
