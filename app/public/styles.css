@@ -1820,8 +1820,8 @@ td .cell-main {
 
 .case-party-filters {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 4px 10px;
+  flex-direction: column;
+  gap: 3px;
   margin-top: 6px;
   color: var(--mts-gray-600);
   font-size: 12px;
@@ -1833,11 +1833,16 @@ td .cell-main {
   display: inline-flex;
   gap: 4px;
   min-width: 0;
-  max-width: 34%;
+  max-width: 100%;
+}
+
+.case-party-item > span:first-child {
+  flex: 0 0 auto;
 }
 
 .case-party-item .case-cell-filter {
   display: inline-block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
