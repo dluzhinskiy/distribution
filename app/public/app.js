@@ -12,6 +12,12 @@ const state = {
   casesQuickFilter: "",
   casesResponsibleFilter: "",
   casesCellFilter: null,
+  historicalDashboard: false,
+  historicalFrom: "",
+  historicalTo: "",
+  historicalAllTime: false,
+  historicalInitialized: false,
+  historicalDateMode: "assigned",
   completionControlExpanded: false,
   deleteModalCaseId: "",
   postponeCompletionCaseId: "",
@@ -808,6 +814,104 @@ function nameMatches(a, b) {
   return left === right || shortName(left) === right || left === shortName(right);
 }
 
+function ensureHistoricalDefaults() {
+  if (state.historicalAllTime) return;
+  if (state.historicalInitialized) return;
+  const now = new Date();
+  state.historicalFrom = dateISO(now.getFullYear(), 0, 1);
+  state.historicalTo = today();
+  state.historicalInitialized = true;
+}
+
+function historicalDateLabel() {
+  return state.historicalDateMode === "completed" ? "по дате завершения; в работе — по назначению" : "по дате назначения";
+}
+
+function historicalDateValue(row) {
+  if (state.historicalDateMode === "completed") {
+    return String(row["Дата завершения"] || row["Дата распределения"] || row["Дата поступления"] || "").trim();
+  }
+  return String(row["Дата распределения"] || row["Дата поступления"] || "").trim();
+}
+
+function caseWithinHistoricalPeriod(row) {
+  const value = historicalDateValue(row);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (state.historicalFrom && value < state.historicalFrom) return false;
+  if (state.historicalTo && value > state.historicalTo) return false;
+  return true;
+}
+
+function isHistoricalCase(row) {
+  const responsible = String(row["Ответственный"] ?? "").trim();
+  const status = String(row["Статус"] ?? "").trim();
+  if (!responsible || isDeletedCase(row) || status === "Ожидает распределения" || status === "Отменено") return false;
+  return status === "Завершено" || !completedStatuses.has(status);
+}
+
+function historicalCasesForSelectedYuc() {
+  ensureHistoricalDefaults();
+  return casesForSelectedYuc()
+    .filter(isHistoricalCase)
+    .filter(caseWithinHistoricalPeriod);
+}
+
+function historicalWorkloadByEmployee() {
+  const rows = historicalCasesForSelectedYuc();
+  return employeesForSelectedYuc().map((employee) => {
+    const employeeCases = rows.filter((caseRow) => nameMatches(caseRow["Ответственный"], employee["ФИО"]));
+    const byType = Object.fromEntries(caseTypes.map((type) => [
+      type,
+      employeeCases.filter((caseRow) => normalizeCaseType(caseRow["Тип дела"]) === type).length,
+    ]));
+    const completed = employeeCases.filter((caseRow) => caseRow["Статус"] === "Завершено").length;
+    const inWork = employeeCases.length - completed;
+    return {
+      employee,
+      byType,
+      total: employeeCases.length,
+      completed,
+      inWork,
+    };
+  }).sort((a, b) => b.total - a.total || a.employee["ФИО"].localeCompare(b.employee["ФИО"], "ru"));
+}
+
+function setHistoricalPreset(preset) {
+  const now = new Date();
+  const end = dateISO(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(now);
+  if (preset === "month") {
+    start.setMonth(start.getMonth() - 1);
+  } else if (preset === "quarter") {
+    start.setMonth(start.getMonth() - 3);
+  } else if (preset === "year") {
+    start.setFullYear(start.getFullYear() - 1);
+  } else if (preset === "current-year") {
+    start.setMonth(0, 1);
+  } else {
+    state.historicalAllTime = true;
+    state.historicalInitialized = true;
+    state.historicalFrom = "";
+    state.historicalTo = "";
+    renderWorkloadDashboard();
+    return;
+  }
+  state.historicalAllTime = false;
+  state.historicalInitialized = true;
+  state.historicalFrom = dateISO(start.getFullYear(), start.getMonth(), start.getDate());
+  state.historicalTo = end;
+  renderWorkloadDashboard();
+}
+
+function applyHistoricalCaseFilter(responsible, type = "") {
+  state.casesResponsibleFilter = responsible || "";
+  state.casesQuickFilter = "";
+  state.casesCellFilter = type ? { field: "Тип дела", value: type } : null;
+  if ($("#casesSearch")) $("#casesSearch").value = "";
+  showView("cases");
+  renderCases();
+}
+
 function workloadByEmployee() {
   const yucCases = casesForSelectedYuc();
   const includeInactive = includeInactiveInLoadForSelectedYuc();
@@ -835,7 +939,129 @@ function workloadByEmployee() {
   }).sort((a, b) => b.total - a.total || a.employee["ФИО"].localeCompare(b.employee["ФИО"], "ru"));
 }
 
+function historicalSegmentClass(type) {
+  if (type === "претензия") return "claim";
+  if (type === "административное") return "admin";
+  if (type === "судебное") return "court";
+  return "other";
+}
+
+function renderHistoricalWorkloadDashboard() {
+  ensureHistoricalDefaults();
+  const rows = historicalWorkloadByEmployee();
+  const maxTotal = Math.max(...rows.map((row) => row.total), 1);
+  const totalCases = rows.reduce((sum, row) => sum + row.total, 0);
+  const periodLabel = state.historicalFrom || state.historicalTo
+    ? `${state.historicalFrom ? formatRuDateDash(state.historicalFrom) : "начало"} — ${state.historicalTo ? formatRuDateDash(state.historicalTo) : "сегодня"}`
+    : "всё время";
+  $("#workloadDashboard").innerHTML = `
+    <div class="historical-controls">
+      <label class="field compact">
+        <span>С даты</span>
+        <input type="date" id="historicalFrom" value="${escapeHtml(state.historicalFrom)}" />
+      </label>
+      <label class="field compact">
+        <span>По дату</span>
+        <input type="date" id="historicalTo" value="${escapeHtml(state.historicalTo)}" />
+      </label>
+      <label class="field compact">
+        <span>Режим даты</span>
+        <select id="historicalDateMode">
+          <option value="assigned" ${state.historicalDateMode === "assigned" ? "selected" : ""}>По дате назначения</option>
+          <option value="completed" ${state.historicalDateMode === "completed" ? "selected" : ""}>По дате завершения</option>
+        </select>
+      </label>
+      <div class="historical-presets" aria-label="Быстрый выбор периода">
+        <button class="tiny-btn light historical-preset" type="button" data-preset="month">Месяц</button>
+        <button class="tiny-btn light historical-preset" type="button" data-preset="quarter">Квартал</button>
+        <button class="tiny-btn light historical-preset" type="button" data-preset="current-year">Текущий год</button>
+        <button class="tiny-btn light historical-preset" type="button" data-preset="year">Год</button>
+        <button class="tiny-btn light historical-preset" type="button" data-preset="all">Всё время</button>
+      </div>
+    </div>
+    <div class="historical-summary-line">
+      <span>${escapeHtml(periodLabel)}</span>
+      <span>${escapeHtml(historicalDateLabel())}</span>
+      <span>${totalCases} дел</span>
+    </div>
+    <div class="historical-legend">
+      <span><i class="historical-dot claim"></i>Претензии</span>
+      <span><i class="historical-dot admin"></i>Административные</span>
+      <span><i class="historical-dot court"></i>Судебные</span>
+    </div>
+    <div class="historical-chart">
+      ${rows.map((row) => {
+        const totalWidth = row.total ? Math.max(6, Math.round((row.total / maxTotal) * 100)) : 0;
+        return `
+          <div class="historical-row ${row.total ? "" : "empty"}">
+            <div class="historical-employee">
+              <div class="avatar avatar-sm">${escapeHtml(employeeInitials(row.employee["ФИО"]))}</div>
+              <div>
+                <button
+                  type="button"
+                  class="workload-employee-link historical-filter"
+                  data-responsible="${escapeHtml(row.employee["ФИО"])}"
+                  title="Показать дела сотрудника"
+                >${escapeHtml(displayName(row.employee["ФИО"]))}</button>
+                <span>${row.completed} завершено · ${row.inWork} в работе</span>
+              </div>
+            </div>
+            <div class="historical-bar-shell" title="${escapeHtml(displayName(row.employee["ФИО"]))}: ${row.total}">
+              <div class="historical-bar-stack" style="width:${totalWidth}%">
+                ${caseTypes.map((type) => {
+                  const count = row.byType[type] || 0;
+                  const width = row.total ? Math.round((count / row.total) * 100) : 0;
+                  if (!count) return "";
+                  return `
+                    <button
+                      type="button"
+                      class="historical-segment ${historicalSegmentClass(type)}"
+                      style="width:${width}%"
+                      data-responsible="${escapeHtml(row.employee["ФИО"])}"
+                      data-type="${escapeHtml(type)}"
+                      title="${escapeHtml(displayName(row.employee["ФИО"]))}: ${escapeHtml(type)} — ${count}"
+                    ><span>${count}</span></button>
+                  `;
+                }).join("")}
+              </div>
+            </div>
+            <div class="historical-total">
+              <strong>${row.total}</strong>
+              <span>${caseTypes.map((type) => `${row.byType[type] || 0}`).join(" / ")}</span>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderWorkloadDashboard() {
+  const title = $("#workloadCardTitle");
+  const subtitle = $("#workloadCardSubtitle");
+  const badgeNode = $("#workloadCardBadge");
+  const toggle = $("#toggleHistoricalDashboard");
+  if (title) title.textContent = state.historicalDashboard ? "Историческая нагрузка сотрудников" : "Нагрузка сотрудников в производстве";
+  if (subtitle) {
+    subtitle.textContent = state.historicalDashboard
+      ? "Назначенные дела за выбранный период: завершённые и те, которые ещё находятся в работе."
+      : "Ярким показаны активные дела, полупрозрачным — незавершённые дела, которые уже не активны по сроку актуальности.";
+  }
+  if (badgeNode) {
+    badgeNode.textContent = state.historicalDashboard ? "история" : "по типам нагрузки";
+    badgeNode.className = `badge ${state.historicalDashboard ? "badge-blue" : "badge-red"}`;
+  }
+  if (toggle) {
+    toggle.classList.toggle("active", state.historicalDashboard);
+    toggle.title = state.historicalDashboard ? "Вернуться к текущей нагрузке" : "Показать историческую нагрузку";
+    toggle.setAttribute("aria-label", toggle.title);
+  }
+  const card = $(".workload-card");
+  card?.classList.toggle("show-history", state.historicalDashboard);
+  if (state.historicalDashboard) {
+    renderHistoricalWorkloadDashboard();
+    return;
+  }
   const rows = workloadByEmployee();
   const includeInactive = includeInactiveInLoadForSelectedYuc();
   const loadModeText = includeInactive ? "активные + неактивные незавершённые" : "только активные";
@@ -896,6 +1122,29 @@ function renderWorkloadDashboard() {
       `).join("")}
     </div>
   `;
+}
+
+function toggleHistoricalDashboardWithFlip() {
+  const card = $(".workload-card");
+  const dashboard = $("#workloadDashboard");
+  const toggle = $("#toggleHistoricalDashboard");
+  const toHistory = !state.historicalDashboard;
+  if (!card || card.classList.contains("is-flipping")) return;
+  card.classList.remove("flip-to-history", "flip-to-current");
+  card.classList.add("is-flipping", toHistory ? "flip-to-history" : "flip-to-current");
+  dashboard?.classList.remove("flip-in", "flip-out");
+  dashboard?.classList.add("flip-out");
+  if (toggle) toggle.disabled = true;
+  window.setTimeout(() => {
+    state.historicalDashboard = toHistory;
+    renderWorkloadDashboard();
+    $("#workloadDashboard")?.classList.add("flip-in");
+  }, 190);
+  window.setTimeout(() => {
+    card.classList.remove("is-flipping", "flip-to-history", "flip-to-current");
+    $("#workloadDashboard")?.classList.remove("flip-in", "flip-out");
+    if (toggle) toggle.disabled = false;
+  }, 470);
 }
 
 function renderYucRegionSelects() {
@@ -3011,6 +3260,7 @@ function bindEvents() {
   });
   $("#refreshBtn").addEventListener("click", loadData);
   $("#exitBtn").addEventListener("click", () => exitApplication());
+  $("#toggleHistoricalDashboard")?.addEventListener("click", toggleHistoricalDashboardWithFlip);
   $("#themeToggle")?.addEventListener("change", (event) => {
     applyTheme(event.target.checked ? redTheme : blueTheme);
   });
@@ -3181,6 +3431,21 @@ function bindEvents() {
       applyCasesResponsibleFilter(dashboardResponsibleButton.dataset.dashboardResponsible);
       return;
     }
+    const historicalPresetButton = event.target.closest(".historical-preset");
+    if (historicalPresetButton) {
+      setHistoricalPreset(historicalPresetButton.dataset.preset);
+      return;
+    }
+    const historicalSegmentButton = event.target.closest(".historical-segment");
+    if (historicalSegmentButton) {
+      applyHistoricalCaseFilter(historicalSegmentButton.dataset.responsible, historicalSegmentButton.dataset.type);
+      return;
+    }
+    const historicalFilterButton = event.target.closest(".historical-filter");
+    if (historicalFilterButton) {
+      applyHistoricalCaseFilter(historicalFilterButton.dataset.responsible);
+      return;
+    }
     const queueAutoButton = event.target.closest(".queue-assign-auto");
     if (queueAutoButton) {
       autoAssign().catch((error) => {
@@ -3276,6 +3541,25 @@ function bindEvents() {
         else state.caseImportSelectedRows.delete(rowNumber);
       }
       updateCaseImportSelectionState();
+      return;
+    }
+    if (event.target.matches("#historicalFrom")) {
+      state.historicalAllTime = false;
+      state.historicalInitialized = true;
+      state.historicalFrom = event.target.value;
+      renderWorkloadDashboard();
+      return;
+    }
+    if (event.target.matches("#historicalTo")) {
+      state.historicalAllTime = false;
+      state.historicalInitialized = true;
+      state.historicalTo = event.target.value;
+      renderWorkloadDashboard();
+      return;
+    }
+    if (event.target.matches("#historicalDateMode")) {
+      state.historicalDateMode = event.target.value === "completed" ? "completed" : "assigned";
+      renderWorkloadDashboard();
       return;
     }
     if (event.target.matches("[data-case-modal-field]")) {

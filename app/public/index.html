@@ -96,10 +96,13 @@
           <section class="card workload-card">
             <div class="card-head">
               <div>
-                <h2>Нагрузка сотрудников в производстве</h2>
-                <p>Ярким показаны активные дела, полупрозрачным — незавершённые дела, которые уже не активны по сроку актуальности.</p>
+                <h2 id="workloadCardTitle">Нагрузка сотрудников в производстве</h2>
+                <p id="workloadCardSubtitle">Ярким показаны активные дела, полупрозрачным — незавершённые дела, которые уже не активны по сроку актуальности.</p>
               </div>
-              <span class="badge badge-red">по типам нагрузки</span>
+              <div class="card-head-actions">
+                <span class="badge badge-red" id="workloadCardBadge">по типам нагрузки</span>
+                <button class="icon-chip" id="toggleHistoricalDashboard" type="button" title="Показать историческую нагрузку" aria-label="Показать историческую нагрузку">↻</button>
+              </div>
             </div>
             <div id="workloadDashboard" class="workload-dashboard"></div>
           </section>
