@@ -1,11 +1,18 @@
 {
-  "name": "mts-load-distribution-render-tabs",
+  "name": "mts-load-distribution-local-regional-tabs-app",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "postinstall": "cd app && npm install",
-    "start": "cd app && npm start",
-    "test": "cd app && npm test",
-    "tabs:ensure-queues": "cd app && npm run tabs:ensure-queues"
-  }
+    "start": "node server.mjs",
+    "test:domain": "node scripts/domain-smoke-test.mjs",
+    "tabs:diagnostics": "node scripts/tabs-api-diagnostics.mjs",
+    "tabs:debug-queue": "node scripts/tabs-debug-queue.mjs",
+    "tabs:debug-regional-debt": "node scripts/tabs-debug-regional-debt.mjs",
+    "tabs:debug-responsibles": "node scripts/tabs-debug-responsibles.mjs",
+    "tabs:ensure-queues": "node scripts/tabs-ensure-queues.mjs",
+    "tabs:find-case": "node scripts/tabs-find-case.mjs",
+    "test": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {}
 }
