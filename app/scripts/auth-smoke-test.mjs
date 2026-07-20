@@ -37,4 +37,16 @@ const cookie = String(response.headers["Set-Cookie"]).split(";")[0];
 const current = await controller.currentUser({ headers: { cookie } });
 assert.equal(current?.employeeId, "EMP-000");
 
+response = null;
+await controller.handleAccess(
+  { method: "POST", headers: {} },
+  {},
+  new URL("http://localhost/api/access/users/EMP-000/password-reset"),
+  { employeeId: "EMP-000", role: "Администратор", yuc: "" },
+);
+assert.equal(response.status, 200);
+assert.equal(data.employees[0]["Хэш-пароля"], "");
+assert.ok(data.employees[0]["Хэш кода первичного входа"]);
+assert.ok(response.body.code);
+
 console.log("Auth smoke-test OK");

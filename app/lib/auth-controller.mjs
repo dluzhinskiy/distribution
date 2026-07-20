@@ -211,9 +211,24 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     }
 
     if (req.method === "POST" && parts.length === 5 && parts[4] === "first-access-code") {
+      if (cleanText(employee["Хэш-пароля"])) {
+        throw Object.assign(new Error("У сотрудника уже есть пароль. Для восстановления доступа используйте «Сбросить пароль»."), { status: 409 });
+      }
       const body = await readBody(req);
       const days = Math.max(1, Math.min(30, Math.floor(Number(body.days) || 7)));
       const code = generateFirstAccessCode();
+      employee["Хэш кода первичного входа"] = codeHashWithExpiry(await hashSecret(code), Date.now() + days * 24 * 60 * 60 * 1000);
+      employee["Срок действия кода"] = days;
+      const confirmed = await saveEmployee(data, employee);
+      sendJson(res, 200, { ok: true, code, expiresAt: firstAccessExpiresAt(confirmed), user: publicUser(confirmed) });
+      return true;
+    }
+
+    if (req.method === "POST" && parts.length === 5 && parts[4] === "password-reset") {
+      const body = await readBody(req);
+      const days = Math.max(1, Math.min(30, Math.floor(Number(body.days) || 7)));
+      const code = generateFirstAccessCode();
+      employee["Хэш-пароля"] = "";
       employee["Хэш кода первичного входа"] = codeHashWithExpiry(await hashSecret(code), Date.now() + days * 24 * 60 * 60 * 1000);
       employee["Срок действия кода"] = days;
       const confirmed = await saveEmployee(data, employee);

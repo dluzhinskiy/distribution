@@ -237,7 +237,9 @@ function renderAccessUsers() {
         : escapeHtml(user.role)}</td>
       <td>${user.hasPassword ? badge("установлен", "green") : badge("не задан", "gray")}</td>
       <td>${escapeHtml(formatAccessExpiry(user.firstAccessExpiresAt))}</td>
-      <td><div class="access-actions">${admin ? `<button class="tiny-btn light save-access-role" data-employee-id="${escapeHtml(user.employeeId)}">Сохранить роль</button>` : ""}<button class="tiny-btn issue-access-code" data-employee-id="${escapeHtml(user.employeeId)}">Новый код</button></div></td>
+      <td><div class="access-actions">${admin ? `<button class="tiny-btn light save-access-role" data-employee-id="${escapeHtml(user.employeeId)}">Сохранить роль</button>` : ""}${user.hasPassword
+        ? `<button class="tiny-btn red reset-access-password" data-employee-id="${escapeHtml(user.employeeId)}">Сбросить пароль</button>`
+        : `<button class="tiny-btn issue-access-code" data-employee-id="${escapeHtml(user.employeeId)}">Выдать код</button>`}</div></td>
     </tr>
   `).join("") || `<tr><td colspan="6" class="empty-cell">Сотрудники своего ЮЦ не найдены.</td></tr>`;
 }
@@ -259,6 +261,21 @@ async function issueAccessCode(employeeId) {
   const user = state.accessUsers.find((item) => item.employeeId === employeeId);
   if (!user) return;
   const payload = await api(`/api/access/users/${encodeURIComponent(employeeId)}/first-access-code`, {
+    method: "POST",
+    body: JSON.stringify({ days: 7 }),
+  });
+  await loadAccessUsers();
+  showAccessCodeModal(user, payload.code, payload.expiresAt);
+}
+
+async function resetAccessPassword(employeeId) {
+  const user = state.accessUsers.find((item) => item.employeeId === employeeId);
+  if (!user) return;
+  const confirmed = window.confirm(`Сбросить пароль сотрудника «${displayName(user.name)}»?
+
+Текущий пароль и все его активные сессии будут отключены. Система сформирует новый одноразовый код входа.`);
+  if (!confirmed) return;
+  const payload = await api(`/api/access/users/${encodeURIComponent(employeeId)}/password-reset`, {
     method: "POST",
     body: JSON.stringify({ days: 7 }),
   });
@@ -3735,6 +3752,8 @@ function bindEvents() {
     if (saveAccessRoleButton) { saveAccessRole(saveAccessRoleButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
     const issueAccessCodeButton = event.target.closest(".issue-access-code");
     if (issueAccessCodeButton) { issueAccessCode(issueAccessCodeButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
+    const resetAccessPasswordButton = event.target.closest(".reset-access-password");
+    if (resetAccessPasswordButton) { resetAccessPassword(resetAccessPasswordButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
     const queueAutoButton = event.target.closest(".queue-assign-auto");
     if (queueAutoButton) {
       autoAssign().catch((error) => {
