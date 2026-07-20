@@ -96,7 +96,10 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     if (!configured()) return null;
     const claims = verifySessionToken(parseCookies(req)[AUTH_SESSION_COOKIE], secret);
     if (!claims) return null;
-    const data = await readData(["employees"]);
+    // Сеанс действителен только пока в MTS Tabs существует хэш пароля.
+    // Принудительное чтение нужно, чтобы удаление или сброс пароля срабатывали сразу,
+    // а не после истечения серверного кэша сотрудников.
+    const data = await readData(["employees"], { force: true });
     const employee = data.employees.find((item) => cleanText(item.employee_id) === claims.employeeId);
     const hash = cleanText(employee?.["Хэш-пароля"]);
     if (!employee || cleanLogin(employee["Логин"]) !== claims.login || !hash) return null;
