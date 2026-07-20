@@ -2,7 +2,8 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FIELD, YUC_SETTING, allDatesInRange, assignAutomatically, assignExistingAutomatically, assignExistingManually, assignManually, changeCaseResponsible, cleanText, clearVacationYear, completeCaseByDeadline, deleteCase, enrichData, importCasesFromRows, normalizeDraft, normalizeType, normalizeYuc, postponeCaseCompletion, recommend, recommendWithPreview, replaceVacationDatesForEmployees, replaceVacationYear, restoreCase, setVacationDates, toISODate, yesNo } from "./lib/domain.mjs";
+import { createAuthController } from "./lib/auth-controller.mjs";
+import { FIELD, YUC_SETTING, allDatesInRange, assignAutomatically, assignExistingAutomatically, assignExistingManually, assignManually, changeCaseResponsible, cleanText, clearVacationYear, completeCaseByDeadline, deleteCase, enrichData, importCasesFromRows, normalizeDraft, normalizeType, normalizeYuc, nameMatches, postponeCaseCompletion, recommend, recommendWithPreview, replaceVacationDatesForEmployees, replaceVacationYear, restoreCase, setVacationDates, toISODate, yesNo } from "./lib/domain.mjs";
 import { readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { parseCaseWorkbook } from "./lib/xlsx-case-import.mjs";
@@ -57,9 +58,157 @@ const MIME = {
   ".ico": "image/x-icon",
 };
 
-function sendJson(res, status, payload) {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(payload));
+const PRIVATE_EMPLOYEE_FIELDS = new Set(["Хэш-пароля", "Хэш кода первичного входа"]);
+
+function sanitizeApiPayload(value, key = "") {
+  if (Array.isArray(value)) {
+    if (key === "employees") {
+      return value.map((employee) => {
+        const copy = { ...employee };
+        for (const field of PRIVATE_EMPLOYEE_FIELDS) delete copy[field];
+        return copy;
+      });
+    }
+    return value.map((item) => sanitizeApiPayload(item));
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, sanitizeApiPayload(childValue, childKey)]));
+}
+
+function sendJson(res, status, payload, headers = {}) {
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
+  res.end(JSON.stringify(sanitizeApiPayload(payload)));
+}
+
+
+const EMPLOYEE_SELF_EDIT_FIELDS = new Set(["Номер дела", "Ссылка", "Статус", "Истец", "Ответчик", "Третье лицо", "Предмет"]);
+const EMPLOYEE_EDITABLE_STATUSES = new Set(["В работе", "Приостановлено", "Завершено"]);
+
+function caseBelongsToEmployee(caseRow, employee) {
+  return Boolean(caseRow && employee && nameMatches(caseRow[FIELD.responsible], employee[FIELD.name]));
+}
+
+function employeeScopedData(rawData, employee) {
+  // Сотруднику доступны все дела для просмотра в чужих ЮЦ, но в его ЮЦ
+  // интерфейс дополнительно оставляет редактирование только собственных дел.
+  return enrichData({
+    cases: rawData.cases ?? [],
+    employees: [employee],
+    queues: [],
+    state: [],
+    vacations: [],
+    journal: [],
+    settings: [],
+    yucSettings: [],
+    regionalAssignments: [],
+  });
+}
+
+async function saveAuthEmployee(data, employee) {
+  // Авторизация работает только с таблицей сотрудников. Не пропускаем такой
+  // неполный набор данных через enrichData(), которому нужны все таблицы.
+  await saveData(data, ["employees"]);
+  let latest = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+    const fresh = await readData(["employees"], { force: true });
+    latest = fresh.employees.find((item) => cleanText(item.employee_id) === cleanText(employee.employee_id));
+    if (latest) return latest;
+  }
+  return latest ?? employee;
+}
+
+const auth = createAuthController({ readData, saveEmployee: saveAuthEmployee, sendJson, readBody });
+
+function ownYuc(user) {
+  return normalizeYuc(user?.yuc);
+}
+
+function canManageYuc(user, yuc) {
+  return auth.isAdmin(user) || (
+    cleanText(user?.role) === "Руководитель" &&
+    Boolean(ownYuc(user)) &&
+    normalizeYuc(yuc) === ownYuc(user)
+  );
+}
+
+function requireManageYuc(user, yuc) {
+  if (canManageYuc(user, yuc)) return;
+  const error = new Error("Изменение данных доступно руководителю только в его ЮЦ.");
+  error.status = 403;
+  throw error;
+}
+
+function requireManageCase(user, data, caseId) {
+  const caseRow = findCase(data, caseId);
+  if (!caseRow) {
+    const error = new Error("Дело не найдено.");
+    error.status = 404;
+    throw error;
+  }
+  requireManageYuc(user, caseRow[FIELD.yuc]);
+  return caseRow;
+}
+
+function requireManageEmployee(user, data, employeeId) {
+  const employee = data.employees.find((item) => cleanText(item.employee_id) === cleanText(employeeId));
+  if (!employee) {
+    const error = new Error("Сотрудник не найден.");
+    error.status = 404;
+    throw error;
+  }
+  requireManageYuc(user, employee[FIELD.yuc]);
+  return employee;
+}
+
+async function handleCasePatch(req, res, url, user) {
+  const id = decodeURIComponent(url.pathname.split("/").pop());
+  const patch = await readBody(req);
+  if (patch["Статус"] === "Удалено") {
+    const error = new Error("Для удаления дела используйте защищённое действие удаления.");
+    error.status = 400;
+    throw error;
+  }
+  const data = await readData();
+  const caseRow = data.cases.find((item) => item.case_id === id);
+  if (!caseRow) {
+    const error = new Error("Дело не найдено.");
+    error.status = 404;
+    throw error;
+  }
+  const manager = auth.isManager(user);
+  if (!manager) {
+    const employee = data.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
+    if (normalizeYuc(caseRow[FIELD.yuc]) !== ownYuc(user) || !caseBelongsToEmployee(caseRow, employee)) {
+      const error = new Error("Можно редактировать только собственные дела.");
+      error.status = 403;
+      throw error;
+    }
+    const unsupported = Object.keys(patch).filter((field) => !EMPLOYEE_SELF_EDIT_FIELDS.has(field));
+    if (unsupported.length) {
+      const error = new Error("Сотрудник не может изменять: " + unsupported.join(", ") + ".");
+      error.status = 403;
+      throw error;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "Статус") && !EMPLOYEE_EDITABLE_STATUSES.has(cleanText(patch["Статус"]))) {
+      const error = new Error("Этот статус сотрудник изменить не может.");
+      error.status = 403;
+      throw error;
+    }
+    Object.assign(caseRow, Object.fromEntries(Object.entries(patch).filter(([field]) => EMPLOYEE_SELF_EDIT_FIELDS.has(field))));
+    if (patch["Статус"] === "Завершено" && !caseRow["Дата завершения"]) {
+      caseRow["Дата завершения"] = new Date().toISOString().slice(0, 10);
+    }
+  } else {
+    requireManageYuc(user, caseRow[FIELD.yuc]);
+    Object.assign(caseRow, patch);
+  }
+  const confirmedData = await confirmedDataAfterSave(data, ["cases"], (freshData) => Boolean(findCase(freshData, id)));
+  const confirmedCase = assertConfirmedCase(confirmedData, id, "обновление дела");
+  const responseData = manager
+    ? confirmedData
+    : employeeScopedData(confirmedData, confirmedData.employees.find((item) => cleanText(item.employee_id) === user.employeeId));
+  sendJson(res, 200, { ok: true, case: confirmedCase, data: responseData });
 }
 
 function normalizeTableKeys(keys = BOOTSTRAP_TABLE_KEYS) {
@@ -310,6 +459,42 @@ function assertRegionalAssignment(row) {
 }
 
 async function api(req, res, url) {
+  if (await auth.handleAuth(req, res, url)) return;
+  const user = await auth.currentUser(req);
+  if (!user) {
+    const error = new Error(auth.configured() ? "Требуется вход в приложение." : "Авторизация ещё не настроена.");
+    error.status = 401;
+    throw error;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/data") {
+    const rawData = await readData();
+    if (auth.isManager(user)) {
+      const directories = await readDirectories(rawData);
+      const data = { ...enrichData(rawData), directories };
+      return sendJson(res, 200, { ok: true, user, data, journalLoaded: false, storagePath: storagePath(), tabsStorageStatus: tabsStorageStatus(), cacheStatus: cacheStatus(), directoriesPath: directoriesPath() });
+    }
+    const employee = rawData.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
+    if (!employee) {
+      const error = new Error("Учётная запись сотрудника не найдена.");
+      error.status = 401;
+      throw error;
+    }
+    const directories = await readDirectories(rawData);
+    return sendJson(res, 200, { ok: true, user, data: { ...employeeScopedData(rawData, employee), directories }, journalLoaded: false, storagePath: storagePath(), cacheStatus: cacheStatus() });
+  }
+
+  if (req.method === "PATCH" && url.pathname.startsWith("/api/cases/")) {
+    return handleCasePatch(req, res, url, user);
+  }
+
+  if (!auth.isManager(user)) {
+    const error = new Error("Сотруднику доступен только список собственных дел и их карточки.");
+    error.status = 403;
+    throw error;
+  }
+
+  if (await auth.handleAccess(req, res, url, user)) return;
   if (req.method === "POST" && url.pathname === "/api/shutdown") {
     sendJson(res, 200, { ok: true, message: "Сервер останавливается." });
     setTimeout(() => {
@@ -347,6 +532,7 @@ async function api(req, res, url) {
 
   if (req.method === "PATCH" && url.pathname.startsWith("/api/yuc-settings/")) {
     const yuc = normalizeYuc(decodeURIComponent(url.pathname.split("/").pop()));
+    requireManageYuc(user, yuc);
     const patch = await readBody(req);
     const data = await readData();
     let row = data.yucSettings.find((item) => normalizeYuc(item[FIELD.yuc]) === yuc);
@@ -380,6 +566,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/deadline-settings") {
     const body = await readBody(req);
     const yuc = normalizeYuc(body.yuc);
+    requireManageYuc(user, yuc);
     const rows = Array.isArray(body.rows) ? body.rows : [];
     const data = await readData();
     for (const raw of rows) {
@@ -425,6 +612,7 @@ async function api(req, res, url) {
     const body = await readBody(req);
     const data = await readData();
     const row = normalizeRegionalAssignment(body.row, body.yuc);
+    requireManageYuc(user, row[FIELD.yuc]);
     const originalKey = body.original ? regionalAssignmentKey(normalizeRegionalAssignment(body.original, body.yuc)) : "";
     assertRegionalAssignment(row);
     const nextKey = regionalAssignmentKey(row);
@@ -439,7 +627,9 @@ async function api(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/regional-assignments/delete") {
     const body = await readBody(req);
-    const key = regionalAssignmentKey(normalizeRegionalAssignment(body.row, body.yuc));
+    const scopedRow = normalizeRegionalAssignment(body.row, body.yuc);
+    requireManageYuc(user, scopedRow[FIELD.yuc]);
+    const key = regionalAssignmentKey(scopedRow);
     const data = await readData();
     data.regionalAssignments = data.regionalAssignments.filter((item) => regionalAssignmentKey(item) !== key);
     const confirmedData = await confirmedDataAfterSave(data, ["regionalAssignments"]);
@@ -450,6 +640,7 @@ async function api(req, res, url) {
     const body = await readBody(req);
     const data = await readData();
     const draft = normalizeDraft(body.draft ?? body);
+    requireManageYuc(user, draft[FIELD.yuc]);
     const result = recommendWithPreview(data, draft);
     return sendJson(res, 200, { ok: true, result });
   }
@@ -457,7 +648,9 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/assign-auto") {
     const body = await readBody(req);
     const data = await readData();
-    const created = assignAutomatically(data, body.draft ?? body);
+    const draft = normalizeDraft(body.draft ?? body);
+    requireManageYuc(user, draft[FIELD.yuc]);
+    const created = assignAutomatically(data, draft);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "queues", "state", "journal"], (freshData) => Boolean(findCase(freshData, created.case.case_id)));
     const confirmedCase = assertConfirmedCase(confirmedData, created.case.case_id, "автоназначение нового дела");
     return sendJson(res, 200, { ok: true, ...created, case: confirmedCase, data: confirmedData });
@@ -466,7 +659,9 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/assign-manual") {
     const body = await readBody(req);
     const data = await readData();
-    const created = assignManually(data, body.draft ?? body, body.responsible, body.comment);
+    const draft = normalizeDraft(body.draft ?? body);
+    requireManageYuc(user, draft[FIELD.yuc]);
+    const created = assignManually(data, draft, body.responsible, body.comment);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "state", "journal"], (freshData) => Boolean(findCase(freshData, created.case.case_id)));
     const confirmedCase = assertConfirmedCase(confirmedData, created.case.case_id, "ручное назначение нового дела");
     return sendJson(res, 200, { ok: true, ...created, case: confirmedCase, data: confirmedData });
@@ -476,6 +671,7 @@ async function api(req, res, url) {
     const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
     await readBody(req);
     const data = await readData();
+    requireManageCase(user, data, caseId);
     const assigned = assignExistingAutomatically(data, caseId);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "queues", "state", "journal"], (freshData) => Boolean(findCase(freshData, caseId)));
     const confirmedCase = assertConfirmedCase(confirmedData, caseId, "автоназначение существующего дела");
@@ -486,6 +682,7 @@ async function api(req, res, url) {
     const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
     const body = await readBody(req);
     const data = await readData();
+    requireManageCase(user, data, caseId);
     const assigned = assignExistingManually(data, caseId, body.responsible, body.comment);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "state", "journal"], (freshData) => Boolean(findCase(freshData, caseId)));
     const confirmedCase = assertConfirmedCase(confirmedData, caseId, "ручное назначение существующего дела");
@@ -496,6 +693,7 @@ async function api(req, res, url) {
     const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
     const body = await readBody(req);
     const data = await readData();
+    requireManageCase(user, data, caseId);
     const updated = changeCaseResponsible(data, caseId, body.responsible);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "journal"], (freshData) => Boolean(findCase(freshData, caseId)));
     const confirmedCase = assertConfirmedCase(confirmedData, caseId, "смена ответственного");
@@ -506,6 +704,7 @@ async function api(req, res, url) {
     const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
     const body = await readBody(req);
     const data = await readData();
+    requireManageCase(user, data, caseId);
     const deleted = deleteCase(data, caseId, body.confirmCaseId ?? body.case_id);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "journal"], (freshData) => Boolean(findCase(freshData, caseId)));
     const confirmedCase = assertConfirmedCase(confirmedData, caseId, "удаление дела");
@@ -516,6 +715,7 @@ async function api(req, res, url) {
     const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
     await readBody(req);
     const data = await readData();
+    requireManageCase(user, data, caseId);
     const restored = restoreCase(data, caseId);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "journal"], (freshData) => Boolean(findCase(freshData, caseId)));
     const confirmedCase = assertConfirmedCase(confirmedData, caseId, "восстановление дела");
@@ -526,6 +726,7 @@ async function api(req, res, url) {
     const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
     await readBody(req);
     const data = await readData();
+    requireManageCase(user, data, caseId);
     const completed = completeCaseByDeadline(data, caseId);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "journal"], (freshData) => Boolean(findCase(freshData, caseId)));
     const confirmedCase = assertConfirmedCase(confirmedData, caseId, "завершение по контрольному сроку");
@@ -536,6 +737,7 @@ async function api(req, res, url) {
     const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
     const body = await readBody(req);
     const data = await readData();
+    requireManageCase(user, data, caseId);
     const postponed = postponeCaseCompletion(data, caseId, body.postponeTo, body.reason);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "journal"], (freshData) => Boolean(findCase(freshData, caseId)));
     const confirmedCase = assertConfirmedCase(confirmedData, caseId, "отложение завершения");
@@ -548,6 +750,7 @@ async function api(req, res, url) {
     const data = await readData();
     const employee = data.employees.find((item) => item.employee_id === id);
     if (!employee) return sendJson(res, 404, { ok: false, error: "Сотрудник не найден." });
+    requireManageYuc(user, employee[FIELD.yuc]);
     Object.assign(employee, patch);
     const confirmedData = await confirmedDataAfterSave(data, ["employees"], (freshData) => Boolean(freshData.employees.find((item) => item.employee_id === id)));
     const confirmedEmployee = confirmedData.employees.find((item) => item.employee_id === id) ?? employee;
@@ -557,6 +760,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/vacations/toggle") {
     const body = await readBody(req);
     const data = await readData();
+    requireManageEmployee(user, data, body.employee_id);
     const day = toISODate(body.date);
     if (!body.employee_id || !day) return sendJson(res, 400, { ok: false, error: "Нужны employee_id и date." });
     const enriched = enrichData(data);
@@ -573,6 +777,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/vacations/range") {
     const body = await readBody(req);
     const data = await readData();
+    requireManageEmployee(user, data, body.employee_id);
     const dates = allDatesInRange(body.start, body.end);
     if (!body.employee_id || !dates.length) return sendJson(res, 400, { ok: false, error: "Нужны employee_id, start и end." });
     const enabled = body.action !== "clear";
@@ -584,6 +789,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/vacations/save-year") {
     const body = await readBody(req);
     const data = await readData();
+    requireManageEmployee(user, data, body.employee_id);
     if (!body.employee_id || !body.year) return sendJson(res, 400, { ok: false, error: "Нужны employee_id и year." });
     const dates = replaceVacationYear(data, body.employee_id, body.year, body.dates ?? []);
     const confirmedData = await confirmedDataAfterSave(data, ["vacations"]);
@@ -593,6 +799,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/vacations/clear-year") {
     const body = await readBody(req);
     const data = await readData();
+    requireManageEmployee(user, data, body.employee_id);
     if (!body.employee_id || !body.year) return sendJson(res, 400, { ok: false, error: "Нужны employee_id и year." });
     const dates = clearVacationYear(data, body.employee_id, body.year);
     const confirmedData = await confirmedDataAfterSave(data, ["vacations"]);
@@ -619,9 +826,11 @@ async function api(req, res, url) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/cases/import-preview") {
+    const importYuc = normalizeYuc(url.searchParams.get("yuc") || "Дальний Восток");
+    requireManageYuc(user, importYuc);
     const buffer = await readBinaryBody(req);
     const data = await readData(["cases"]);
-    const plan = parseCaseWorkbook(buffer, data.cases ?? [], { yuc: url.searchParams.get("yuc") || "Дальний Восток" });
+    const plan = parseCaseWorkbook(buffer, data.cases ?? [], { yuc: importYuc });
     return sendJson(res, 200, { ok: true, plan });
   }
 
@@ -632,6 +841,7 @@ async function api(req, res, url) {
       return sendJson(res, 400, { ok: false, error: "В плане импорта нет новых дел для добавления." });
     }
     const data = await readData();
+    for (const row of rows) requireManageYuc(user, row[FIELD.yuc]);
     const result = importCasesFromRows(data, rows);
     const confirmedData = await confirmedDataAfterSave(data, ["cases", "journal"], (freshData) => result.added.every((item) => Boolean(findCase(freshData, item.case_id))));
     return sendJson(res, 200, {
@@ -667,6 +877,7 @@ async function api(req, res, url) {
     const data = await readData();
     const row = data.queues.find((item) => item.queue_id === decodeURIComponent(queueId) && item.employee_id === decodeURIComponent(employeeId));
     if (!row) return sendJson(res, 404, { ok: false, error: "Строка очереди не найдена." });
+    requireManageYuc(user, row[FIELD.yuc]);
     Object.assign(row, patch);
     const confirmedData = await confirmedDataAfterSave(data, ["queues"], (freshData) => Boolean(freshData.queues.find((item) => item.queue_id === row.queue_id && item.employee_id === row.employee_id)));
     const confirmedQueue = confirmedData.queues.find((item) => item.queue_id === row.queue_id && item.employee_id === row.employee_id) ?? row;
@@ -679,6 +890,7 @@ async function api(req, res, url) {
     const data = await readData();
     const row = data.state.find((item) => item.queue_id === queueId);
     if (!row) return sendJson(res, 404, { ok: false, error: "Состояние очереди не найдено." });
+    requireManageYuc(user, row[FIELD.yuc]);
     Object.assign(row, patch);
     const confirmedData = await confirmedDataAfterSave(data, ["state"], (freshData) => Boolean(freshData.state.find((item) => item.queue_id === queueId)));
     const confirmedState = confirmedData.state.find((item) => item.queue_id === queueId) ?? row;
@@ -714,7 +926,7 @@ const server = http.createServer(async (req, res) => {
       await staticFile(req, res, url);
     }
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message });
+    sendJson(res, error.status || 500, { ok: false, error: error.message || "Ошибка сервера." });
   }
 });
 

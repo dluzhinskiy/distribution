@@ -1,5 +1,8 @@
 const state = {
   data: null,
+  authUser: null,
+  accessUsers: [],
+  authMode: "login",
   storagePath: "",
   lastRecommendation: null,
   employeeSection: "availability",
@@ -47,6 +50,7 @@ const titles = {
   employees: "Сотрудники",
   settings: "Настройки региональных правил",
   journal: "Журнал распределения",
+  access: "Доступы сотрудников",
   help: "Инструкция",
 };
 
@@ -74,6 +78,206 @@ function escapeHtml(value) {
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
+
+function currentRole() {
+  return state.authUser?.role || "";
+}
+
+function isEmployeeUser() {
+  return currentRole() === "Сотрудник";
+}
+
+function isAdminUser() {
+  return currentRole() === "Администратор";
+}
+
+function isManagerUser() {
+  return currentRole() === "Руководитель";
+}
+
+function userYuc() {
+  return normalizeYucName(state.authUser?.yuc || "");
+}
+
+function isExternalReadOnlyYuc() {
+  return !isAdminUser() && Boolean(state.authUser?.yuc) && selectedYuc() !== userYuc();
+}
+
+function setAuthMessage(message = "", type = "") {
+  const node = $("#authMessage");
+  if (!node) return;
+  node.textContent = message;
+  node.className = `auth-message ${type ? `is-${type}` : ""}`;
+}
+
+function setAuthMode(mode = "login") {
+  state.authMode = mode === "first" ? "first" : "login";
+  $$(".auth-mode").forEach((button) => button.classList.toggle("active", button.dataset.authMode === state.authMode));
+  $("#authLoginForm")?.classList.toggle("hidden", state.authMode !== "login");
+  $("#authFirstAccessForm")?.classList.toggle("hidden", state.authMode !== "first");
+  $("#authDescription").textContent = state.authMode === "first"
+    ? "Введите одноразовый код, затем задайте личный пароль."
+    : "Введите логин и пароль.";
+  setAuthMessage("");
+}
+
+function applyRoleUi() {
+  const employee = isEmployeeUser();
+  const readOnly = isExternalReadOnlyYuc();
+  document.body.classList.toggle("role-employee", employee);
+  document.body.classList.toggle("role-admin", isAdminUser());
+  document.body.classList.toggle("role-external-readonly", readOnly);
+  $$(".nav-link").forEach((link) => {
+    const view = link.dataset.view;
+    const hidden = (employee || readOnly) ? view !== "cases" : view === "access" && !isAdminUser() && !isManagerUser();
+    link.classList.toggle("hidden", hidden);
+  });
+  $(".yuc-switcher")?.classList.remove("hidden");
+  $("#caseImportBtn")?.classList.toggle("hidden", employee || readOnly);
+  $("#caseResponsibleEditToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
+  $("#caseDeleteEditToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
+  $("#showDeletedCasesToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
+  const accessDescription = $("#accessDescription");
+  if (accessDescription) accessDescription.textContent = isAdminUser()
+    ? "Выдавайте одноразовые коды первичного входа и назначайте роли. Код показывается один раз."
+    : "Выдавайте одноразовые коды первичного входа сотрудникам своего ЮЦ. Код показывается один раз.";
+  if (employee || readOnly) {
+    state.responsibleEditEnabled = false;
+    state.deleteEditEnabled = false;
+    state.showDeletedCases = false;
+    $$(".view").forEach((view) => view.classList.remove("active"));
+    $("#view-cases")?.classList.add("active");
+    $("#pageTitle").textContent = employee ? "Мои дела" : "Реестр дел";
+  }
+}
+
+function applyAuthUser(user) {
+  state.authUser = user || null;
+  if (user && !isAdminUser() && user.yuc) state.selectedYuc = normalizeYucName(user.yuc);
+  const node = $("#currentUser");
+  if (node) node.textContent = user ? `${displayName(user.name)} · ${user.role}` : "";
+  const exitButton = $("#exitBtn");
+  if (exitButton) exitButton.textContent = isEmployeeUser() ? "Выйти" : "Выход";
+  applyRoleUi();
+}
+
+function showAuthGate(message = "") {
+  state.authUser = null;
+  document.body.classList.add("auth-pending");
+  $("#authGate")?.classList.add("show");
+  setAuthMode("login");
+  if (message) setAuthMessage(message, "error");
+  setTimeout(() => $("#authLogin")?.focus(), 0);
+}
+
+function hideAuthGate() {
+  document.body.classList.remove("auth-pending");
+  $("#authGate")?.classList.remove("show");
+  setAuthMessage("");
+}
+
+async function logIn(event) {
+  event.preventDefault();
+  const payload = await api("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ login: $("#authLogin").value, password: $("#authPassword").value }),
+  });
+  applyAuthUser(payload.user);
+  hideAuthGate();
+  await loadData();
+}
+
+async function completeFirstAccess(event) {
+  event.preventDefault();
+  const password = $("#authFirstPassword").value;
+  if (password !== $("#authFirstPasswordConfirm").value) {
+    setAuthMessage("Пароли не совпадают.", "error");
+    return;
+  }
+  const payload = await api("/api/auth/first-access", {
+    method: "POST",
+    body: JSON.stringify({ login: $("#authFirstLogin").value, code: $("#authFirstCode").value, password }),
+  });
+  applyAuthUser(payload.user);
+  hideAuthGate();
+  await loadData();
+}
+
+async function logOut() {
+  await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  state.data = null;
+  state.accessUsers = [];
+  showAuthGate("Вы вышли из приложения.");
+}
+
+async function loadAccessUsers() {
+  if (!isAdminUser() && !isManagerUser()) return;
+  const payload = await api("/api/access/users");
+  state.accessUsers = payload.users ?? [];
+  renderAccessUsers();
+}
+
+function formatAccessExpiry(value) {
+  if (!value) return "нет активного кода";
+  const date = new Date(Number(value));
+  return Number.isNaN(date.getTime()) ? "нет активного кода" : `до ${date.toLocaleString("ru-RU")}`;
+}
+
+function renderAccessUsers() {
+  const target = $("#accessUsersTable");
+  if (!target || (!isAdminUser() && !isManagerUser())) return;
+  const admin = isAdminUser();
+  const roles = ["Сотрудник", "Руководитель", "Администратор"];
+  target.innerHTML = state.accessUsers.map((user) => `
+    <tr>
+      <td><strong>${escapeHtml(user.name || user.employeeId)}</strong><div class="muted">${escapeHtml(user.employeeId)}</div></td>
+      <td>${escapeHtml(user.login || "—")}</td>
+      <td>${admin
+        ? `<select class="inline-select access-role-select" data-employee-id="${escapeHtml(user.employeeId)}">${roles.map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}</select>`
+        : escapeHtml(user.role)}</td>
+      <td>${user.hasPassword ? badge("установлен", "green") : badge("не задан", "gray")}</td>
+      <td>${escapeHtml(formatAccessExpiry(user.firstAccessExpiresAt))}</td>
+      <td><div class="access-actions">${admin ? `<button class="tiny-btn light save-access-role" data-employee-id="${escapeHtml(user.employeeId)}">Сохранить роль</button>` : ""}<button class="tiny-btn issue-access-code" data-employee-id="${escapeHtml(user.employeeId)}">Новый код</button></div></td>
+    </tr>
+  `).join("") || `<tr><td colspan="6" class="empty-cell">Сотрудники своего ЮЦ не найдены.</td></tr>`;
+}
+
+function closeAccessCodeModal() {
+  $("#accessCodeModal")?.classList.remove("show");
+  $("#accessCodeModal")?.setAttribute("aria-hidden", "true");
+}
+
+function showAccessCodeModal(user, code, expiresAt) {
+  $("#accessCodeRecipient").textContent = `${user.name} · ${user.login}`;
+  $("#accessCodeValue").textContent = code;
+  $("#accessCodeExpiry").textContent = `Код действует ${formatAccessExpiry(expiresAt)}. Скопируйте и передайте его сотруднику — после закрытия окна увидеть код повторно нельзя.`;
+  $("#accessCodeModal")?.classList.add("show");
+  $("#accessCodeModal")?.setAttribute("aria-hidden", "false");
+}
+
+async function issueAccessCode(employeeId) {
+  const user = state.accessUsers.find((item) => item.employeeId === employeeId);
+  if (!user) return;
+  const payload = await api(`/api/access/users/${encodeURIComponent(employeeId)}/first-access-code`, {
+    method: "POST",
+    body: JSON.stringify({ days: 7 }),
+  });
+  await loadAccessUsers();
+  showAccessCodeModal(user, payload.code, payload.expiresAt);
+}
+
+async function saveAccessRole(employeeId) {
+  if (!isAdminUser()) return;
+  const select = $(`.access-role-select[data-employee-id="${CSS.escape(employeeId)}"]`);
+  if (!select) return;
+  await api(`/api/access/users/${encodeURIComponent(employeeId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role: select.value }),
+  });
+  await loadAccessUsers();
+  toast("Роль доступа сохранена.");
+}
+
 
 function toast(message, type = "ok") {
   const node = $("#toast");
@@ -199,7 +403,10 @@ async function api(path, options = {}) {
       ...options,
     });
     const payload = await response.json();
-    if (!payload.ok) throw new Error(payload.error || "Ошибка запроса");
+    if (!response.ok || !payload.ok) {
+      if (response.status === 401 && !path.startsWith("/api/auth/")) showAuthGate(payload.error || "Требуется вход в приложение.");
+      throw new Error(payload.error || "Ошибка запроса");
+    }
     return payload;
   } finally {
     if (shouldLock) endWriteLock();
@@ -264,6 +471,7 @@ function applyDataPayload(payload = {}) {
     journal: nextData.journal ?? [],
     directories: nextData.directories ?? state.data?.directories,
   };
+  if (payload.user) applyAuthUser(payload.user);
   state.storagePath = payload.storagePath || state.storagePath;
   if ($("#storagePath")) $("#storagePath").textContent = state.storagePath || "MTS Tabs API";
   renderAll();
@@ -321,6 +529,7 @@ function setDataFromPayload(payload) {
 }
 
 function showView(name) {
+  if (isEmployeeUser() && name !== "cases") name = "cases";
   $$(".view").forEach((view) => view.classList.remove("active"));
   $(`#view-${name}`).classList.add("active");
   $$(".nav-link").forEach((link) => link.classList.toggle("active", link.dataset.view === name));
@@ -330,6 +539,9 @@ function showView(name) {
   }
   if (name === "settings" && state.data) {
     renderSettings();
+  }
+  if (name === "access") {
+    loadAccessUsers().catch((error) => { setStatus("Ошибка"); toast(error.message, "error"); });
   }
   if (name === "journal") {
     loadJournal().catch((error) => {
@@ -434,7 +646,8 @@ function availableYucs() {
 function ensureSelectedYuc() {
   const yucs = availableYucs();
   const current = normalizeYucName(state.selectedYuc);
-  state.selectedYuc = yucs.includes(current) ? current : yucs[0];
+  const preferred = !isAdminUser() && state.authUser?.yuc ? userYuc() : "";
+  state.selectedYuc = yucs.includes(current) ? current : (yucs.find((yuc) => yuc === preferred) ?? yucs[0]);
   return state.selectedYuc;
 }
 
@@ -455,7 +668,11 @@ function employeesForSelectedYuc() {
 }
 
 function casesForSelectedYuc() {
-  return rowsForSelectedYuc(state.data?.cases);
+  const cases = rowsForSelectedYuc(state.data?.cases);
+  if (isEmployeeUser() && !isExternalReadOnlyYuc()) {
+    return cases.filter((row) => nameMatches(row["Ответственный"], state.authUser?.name));
+  }
+  return cases;
 }
 
 function queuesForSelectedYuc() {
@@ -604,6 +821,8 @@ function setSelectedYuc(yuc, options = {}) {
     state.statusDrafts = {};
     state.resetRegionOnRender = options.resetRegion !== false;
   }
+  if (isExternalReadOnlyYuc()) showView("cases");
+  applyRoleUi();
   renderAll();
   scheduleRecommendation();
 }
@@ -1291,6 +1510,14 @@ function casePartyFilterItems(row) {
 }
 
 function renderCases() {
+  const employeeView = isEmployeeUser();
+  const externalView = isExternalReadOnlyYuc();
+  const header = $("#casesTableHeader");
+  if (header) header.innerHTML = externalView
+    ? "<tr><th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Ответственный</th><th>Истец / заявитель</th><th>Ответчик</th><th>Третье лицо</th></tr>"
+    : employeeView
+      ? "<tr><th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Дата</th><th>Статус</th></tr>"
+      : "<tr><th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Дата</th><th>Актуально</th><th>Ответственный</th><th>Статус</th><th>Действие</th></tr>";
   renderCasesQuickFilter();
   const term = ($("#casesSearch")?.value ?? "").toLowerCase();
   const rows = casesForSelectedYuc()
@@ -1302,10 +1529,30 @@ function renderCases() {
     .slice()
     .reverse();
   if (!rows.length) {
-    $("#casesTable").innerHTML = `<tr><td colspan="9" class="empty-cell">Дела не найдены.</td></tr>`;
+    $("#casesTable").innerHTML = `<tr><td colspan="${externalView ? 8 : employeeView ? 6 : 9}" class="empty-cell">Дела не найдены.</td></tr>`;
     return;
   }
-  $("#casesTable").innerHTML = rows.map((row) => `
+  $("#casesTable").innerHTML = rows.map((row) => externalView ? `
+    <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
+      <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
+      <td>${badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}</td>
+      <td><div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div></td>
+      <td>${escapeHtml(row["Регион"] || "—")}</td>
+      <td>${escapeHtml(displayName(row["Ответственный"]) || "—")}</td>
+      <td>${escapeHtml(row["Истец"] || "—")}</td>
+      <td>${escapeHtml(row["Ответчик"] || "—")}</td>
+      <td>${escapeHtml(row["Третье лицо"] || "—")}</td>
+    </tr>
+  ` : employeeView ? `
+    <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
+      <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
+      <td>${badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}</td>
+      <td><div class="cell-main">${escapeHtml(row["Предмет"])}</div></td>
+      <td>${escapeHtml(row["Регион"] || "—")}</td>
+      <td class="date-cell">${escapeHtml(formatRuDateDash(row["Дата поступления"]) || "—")}</td>
+      <td>${badge(row["Статус"], row["Статус"] === "Завершено" ? "green" : row["Статус"] === "Приостановлено" ? "orange" : "blue")}</td>
+    </tr>
+  ` : `
     <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
       <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
       <td>${caseFilterValue("Тип дела", row["Тип дела"], badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange"))}</td>
@@ -2096,6 +2343,10 @@ function renderJournal() {
 function renderAll() {
   if (!state.data) return;
   renderYucTabs();
+  if (isEmployeeUser() || isExternalReadOnlyYuc()) {
+    renderCases();
+    return;
+  }
   renderSummary();
   renderCompletionControl();
   renderWorkloadDashboard();
@@ -2747,6 +2998,24 @@ const caseModalEditableFields = [
   "Предмет",
 ];
 
+function canEditCaseRow(row) {
+  if (!row || isExternalReadOnlyYuc()) return false;
+  if (!isEmployeeUser()) return true;
+  return nameMatches(row["Ответственный"], state.authUser?.name);
+}
+
+function editableCaseModalFields() {
+  const row = caseModalRow();
+  if (!canEditCaseRow(row)) return [];
+  return isEmployeeUser()
+    ? ["Номер дела", "Ссылка", "Статус", "Истец", "Ответчик", "Третье лицо", "Предмет"]
+    : caseModalEditableFields;
+}
+
+function caseModalFieldReadonlyForUser(field) {
+  return !editableCaseModalFields().includes(field);
+}
+
 function caseModalRow() {
   if (!state.caseModalCaseId) return null;
   return state.data?.cases?.find((item) => item.case_id === state.caseModalCaseId) ?? null;
@@ -2846,7 +3115,8 @@ function caseModalField({ field, label, type = "text", wide = false, rows = 3, r
     if (field === "Тип дела") {
       options = `<option value="">Выберите тип</option>${caseTypes.map((item) => caseModalOption(item, value, item[0].toUpperCase() + item.slice(1))).join("")}`;
     } else if (field === "Статус") {
-      const statusOptions = statuses.includes(value) || !value ? statuses : [value, ...statuses];
+      const allowed = isEmployeeUser() ? ["В работе", "Приостановлено", "Завершено"] : statuses;
+      const statusOptions = allowed.includes(value) || !value ? allowed : [value, ...allowed];
       options = statusOptions.map((item) => caseModalOption(item, value)).join("");
     } else if (field === "Ответственный") {
       options = caseModalResponsibleOptions(value);
@@ -2873,7 +3143,7 @@ function renderCaseModal() {
   if (!row) return;
   const draft = caseModalDraft();
   const isJudicial = normalizeCaseType(draft["Тип дела"]) === "судебное";
-  const canEdit = !isDeletedCase(row);
+  const canEdit = !isDeletedCase(row) && canEditCaseRow(row);
   $("#caseModalTitle").textContent = `Карточка ${row.case_id}`;
   $("#caseModalBody").innerHTML = `
     <div class="case-modal-form ${state.caseModalEditing ? "editing" : "readonly"}">
@@ -2882,23 +3152,23 @@ function renderCaseModal() {
           <span>ID</span>
           <strong>${escapeHtml(row.case_id)}</strong>
         </div>
-        ${caseModalField({ field: "Статус", label: "Статус", type: "select" })}
-        ${caseModalField({ field: "Ответственный", label: "Ответственный", type: "select" })}
+        ${caseModalField({ field: "Статус", label: "Статус", type: "select", readonly: caseModalFieldReadonlyForUser("Статус") })}
+        ${caseModalField({ field: "Ответственный", label: "Ответственный", type: "select", readonly: caseModalFieldReadonlyForUser("Ответственный") })}
       </div>
       <div class="case-modal-grid">
-        ${caseModalField({ field: "Тип дела", label: "Тип дела", type: "select" })}
-        ${caseModalField({ field: "Регион", label: "Регион", type: "select" })}
-        ${caseModalField({ field: "Дата поступления", label: "Дата поступления", type: "date" })}
-        ${caseModalField({ field: "Номер дела", label: "Номер дела" })}
-        ${caseModalField({ field: "Ссылка", label: "Ссылка на карточку в CasePRO", type: "url", wide: true })}
+        ${caseModalField({ field: "Тип дела", label: "Тип дела", type: "select", readonly: caseModalFieldReadonlyForUser("Тип дела") })}
+        ${caseModalField({ field: "Регион", label: "Регион", type: "select", readonly: caseModalFieldReadonlyForUser("Регион") })}
+        ${caseModalField({ field: "Дата поступления", label: "Дата поступления", type: "date", readonly: caseModalFieldReadonlyForUser("Дата поступления") })}
+        ${caseModalField({ field: "Номер дела", label: "Номер дела", readonly: caseModalFieldReadonlyForUser("Номер дела") })}
+        ${caseModalField({ field: "Ссылка", label: "Ссылка на карточку в CasePRO", type: "url", wide: true, readonly: caseModalFieldReadonlyForUser("Ссылка") })}
       </div>
       <div class="case-modal-party-grid ${isJudicial ? "has-third-party" : ""}">
-        ${caseModalField({ field: "Истец", label: "Истец / заявитель" })}
-        ${caseModalField({ field: "Ответчик", label: "Ответчик" })}
-        ${isJudicial ? caseModalField({ field: "Третье лицо", label: "Третье лицо" }) : ""}
+        ${caseModalField({ field: "Истец", label: "Истец / заявитель", readonly: caseModalFieldReadonlyForUser("Истец") })}
+        ${caseModalField({ field: "Ответчик", label: "Ответчик", readonly: caseModalFieldReadonlyForUser("Ответчик") })}
+        ${isJudicial ? caseModalField({ field: "Третье лицо", label: "Третье лицо", readonly: caseModalFieldReadonlyForUser("Третье лицо") }) : ""}
       </div>
       <div class="case-modal-grid">
-        ${caseModalField({ field: "Предмет", label: "Предмет", type: "textarea", wide: true, rows: 4 })}
+        ${caseModalField({ field: "Предмет", label: "Предмет", type: "textarea", wide: true, rows: 4, readonly: caseModalFieldReadonlyForUser("Предмет") })}
       </div>
     </div>
   `;
@@ -2937,6 +3207,10 @@ function startCaseModalEdit() {
     toast("Удалённое дело сначала нужно восстановить.", "error");
     return;
   }
+  if (!canEditCaseRow(row)) {
+    toast("В чужом ЮЦ карточка доступна только для просмотра.", "error");
+    return;
+  }
   state.caseModalEditing = true;
   state.caseModalDraft = caseModalInitialDraft(row);
   renderCaseModal();
@@ -2966,7 +3240,7 @@ function hasCaseModalChanges() {
   const row = caseModalRow();
   if (!row || !state.caseModalDraft) return false;
   const initial = caseModalInitialDraft(row);
-  return caseModalEditableFields.some((field) =>
+  return editableCaseModalFields().some((field) =>
     normalizedCaseModalValue(field, state.caseModalDraft[field]) !== normalizedCaseModalValue(field, initial[field])
   );
 }
@@ -2976,7 +3250,7 @@ async function saveCaseModal() {
   if (!row || !state.caseModalDraft) return;
   const initial = caseModalInitialDraft(row);
   const patch = {};
-  for (const field of caseModalEditableFields) {
+  for (const field of editableCaseModalFields()) {
     const nextValue = normalizedCaseModalValue(field, state.caseModalDraft[field]);
     const currentValue = normalizedCaseModalValue(field, initial[field]);
     if (nextValue !== currentValue) {
@@ -2987,7 +3261,7 @@ async function saveCaseModal() {
     cancelCaseModalEdit();
     return;
   }
-  if (patch["Статус"] && ["Завершено", "Отменено"].includes(patch["Статус"]) && !row["Дата завершения"]) {
+  if (!isEmployeeUser() && patch["Статус"] && ["Завершено", "Отменено"].includes(patch["Статус"]) && !row["Дата завершения"]) {
     patch["Дата завершения"] = today();
   }
   setStatus("Сохраняю карточку дела…");
@@ -3231,6 +3505,10 @@ function cancelVacationDraft() {
 }
 
 async function exitApplication() {
+  if (!isAdminUser()) {
+    await logOut();
+    return;
+  }
   const confirmed = window.confirm("Остановить сервер приложения и закрыть страницу?");
   if (!confirmed) return;
   setStatus("Останавливаю сервер…");
@@ -3259,6 +3537,13 @@ function bindEvents() {
     link.addEventListener("click", () => showView(link.dataset.view));
   });
   $("#refreshBtn").addEventListener("click", loadData);
+  $("#authLoginForm")?.addEventListener("submit", (event) => logIn(event).catch((error) => setAuthMessage(error.message, "error")));
+  $("#authFirstAccessForm")?.addEventListener("submit", (event) => completeFirstAccess(event).catch((error) => setAuthMessage(error.message, "error")));
+  $$(".auth-mode").forEach((button) => button.addEventListener("click", () => setAuthMode(button.dataset.authMode)));
+  $("#refreshAccessBtn")?.addEventListener("click", () => loadAccessUsers().catch((error) => toast(error.message, "error")));
+  $("#closeAccessCodeBtn")?.addEventListener("click", closeAccessCodeModal);
+  $("#copyAccessCodeBtn")?.addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#accessCodeValue").textContent || ""); toast("Код скопирован."); } catch { toast("Не удалось скопировать код. Скопируйте его вручную.", "error"); } });
+  $("#accessCodeModal")?.addEventListener("click", (event) => { if (event.target.id === "accessCodeModal") closeAccessCodeModal(); });
   $("#exitBtn").addEventListener("click", () => exitApplication());
   $("#toggleHistoricalDashboard")?.addEventListener("click", toggleHistoricalDashboardWithFlip);
   $("#themeToggle")?.addEventListener("change", (event) => {
@@ -3446,6 +3731,10 @@ function bindEvents() {
       applyHistoricalCaseFilter(historicalFilterButton.dataset.responsible);
       return;
     }
+    const saveAccessRoleButton = event.target.closest(".save-access-role");
+    if (saveAccessRoleButton) { saveAccessRole(saveAccessRoleButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
+    const issueAccessCodeButton = event.target.closest(".issue-access-code");
+    if (issueAccessCodeButton) { issueAccessCode(issueAccessCodeButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
     const queueAutoButton = event.target.closest(".queue-assign-auto");
     if (queueAutoButton) {
       autoAssign().catch((error) => {
@@ -3596,15 +3885,21 @@ function bindEvents() {
   });
 }
 
-function init() {
+async function init() {
   applyTheme(savedTheme(), false);
   $("#caseForm").elements["Дата поступления"].value = today();
   updateThirdPartyVisibility();
   bindEvents();
-  loadData().catch((error) => {
-    setStatus("Ошибка");
-    toast(error.message, "error");
-  });
+  try {
+    const session = await api("/api/auth/session");
+    if (!session.configured) { showAuthGate(session.message || "Авторизация ещё не настроена."); return; }
+    if (!session.authenticated) { showAuthGate(); return; }
+    applyAuthUser(session.user);
+    hideAuthGate();
+    await loadData();
+  } catch (error) {
+    showAuthGate(error.message || "Не удалось проверить вход в приложение.");
+  }
 }
 
 init();

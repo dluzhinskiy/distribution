@@ -35,6 +35,7 @@ const TABLES = {
     headers: EMPLOYEE_HEADERS,
     keyFields: ["employee_id"],
     dateFields: ["Отпуск с", "Отпуск по"],
+    numberFields: ["Срок действия кода"],
   },
   queues: {
     name: "Очереди",

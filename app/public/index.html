@@ -6,7 +6,32 @@
     <title>МТС · Распределение нагрузки</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body class="theme-apple theme-blue">
+  <body class="theme-apple theme-blue auth-pending">
+    <div class="auth-gate show" id="authGate" aria-live="polite">
+      <section class="auth-card" aria-labelledby="authTitle">
+        <img class="auth-logo" src="/apple_logo_blue_512.png" alt="" />
+        <div class="auth-eyebrow">Юридический центр</div>
+        <h1 id="authTitle">Вход в распределение нагрузки</h1>
+        <p id="authDescription">Введите логин и пароль.</p>
+        <div class="auth-mode-tabs" role="tablist">
+          <button class="auth-mode active" type="button" data-auth-mode="login">Вход</button>
+          <button class="auth-mode" type="button" data-auth-mode="first">Первый вход</button>
+        </div>
+        <form id="authLoginForm" class="auth-form">
+          <label class="field full"><span>Логин</span><input id="authLogin" autocomplete="username" required /></label>
+          <label class="field full"><span>Пароль</span><input id="authPassword" type="password" autocomplete="current-password" required /></label>
+          <button class="btn btn-primary auth-submit" type="submit">Войти</button>
+        </form>
+        <form id="authFirstAccessForm" class="auth-form hidden">
+          <label class="field full"><span>Логин</span><input id="authFirstLogin" autocomplete="username" required /></label>
+          <label class="field full"><span>Одноразовый код</span><input id="authFirstCode" autocomplete="one-time-code" required /></label>
+          <label class="field full"><span>Новый пароль</span><input id="authFirstPassword" type="password" autocomplete="new-password" minlength="10" required /></label>
+          <label class="field full"><span>Повторите пароль</span><input id="authFirstPasswordConfirm" type="password" autocomplete="new-password" minlength="10" required /></label>
+          <button class="btn btn-primary auth-submit" type="submit">Установить пароль</button>
+        </form>
+        <div class="auth-message" id="authMessage"></div>
+      </section>
+    </div>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -24,6 +49,7 @@
           <button class="nav-link" data-view="employees">Сотрудники</button>
           <button class="nav-link" data-view="settings">Настройки</button>
           <button class="nav-link" data-view="journal">Журнал</button>
+          <button class="nav-link admin-only" data-view="access">Доступы</button>
           <button class="nav-link" data-view="help">Инструкция</button>
         </nav>
 
@@ -54,6 +80,7 @@
             <h1 id="pageTitle">Панель управления</h1>
           </div>
           <div class="topbar-actions">
+            <span class="current-user" id="currentUser"></span>
             <button class="btn btn-secondary" id="refreshBtn">Обновить</button>
             <button class="btn btn-ghost" id="exitBtn">Выход</button>
             <span class="status-pill status-ready" id="saveStatus">
@@ -219,7 +246,7 @@
             <div class="case-filter-strip" id="casesQuickFilterStrip"></div>
             <div class="table-wrap">
               <table class="cases-table">
-                <thead>
+                <thead id="casesTableHeader">
                   <tr>
                     <th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Дата</th><th>Актуально</th><th>Ответственный</th><th>Статус</th><th>Действие</th>
                   </tr>
@@ -432,6 +459,24 @@
           </section>
         </section>
 
+        <section class="view" id="view-access">
+          <section class="card access-card">
+            <div class="card-head">
+              <div>
+                <h2>Доступы сотрудников</h2>
+                <p id="accessDescription">Выдавайте одноразовые коды первичного входа и назначайте роли. Код показывается один раз.</p>
+              </div>
+              <button class="btn btn-secondary" id="refreshAccessBtn" type="button">Обновить</button>
+            </div>
+            <div class="table-wrap">
+              <table class="access-table">
+                <thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Пароль</th><th>Код первичного входа</th><th></th></tr></thead>
+                <tbody id="accessUsersTable"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
         <section class="view" id="view-help">
           <section class="card help-card">
             <h2>Как пользоваться приложением</h2>
@@ -539,6 +584,20 @@
           <button class="btn btn-primary hidden" id="caseModalSave">Сохранить</button>
           <button class="btn btn-secondary" id="caseModalEdit">Редактировать</button>
           <button class="btn btn-primary" id="caseModalOk">Закрыть</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-overlay" id="accessCodeModal" aria-hidden="true">
+      <div class="modal-card access-code-modal-card" role="dialog" aria-modal="true" aria-labelledby="accessCodeTitle">
+        <div class="modal-head"><h2 id="accessCodeTitle">Код первичного входа</h2></div>
+        <div class="modal-body">
+          <p class="muted" id="accessCodeRecipient"></p>
+          <div class="access-code-value" id="accessCodeValue"></div>
+          <p class="muted" id="accessCodeExpiry"></p>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="copyAccessCodeBtn">Скопировать</button>
+          <button class="btn btn-primary" id="closeAccessCodeBtn">Готово</button>
         </div>
       </div>
     </div>

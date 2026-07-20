@@ -48,6 +48,11 @@ export const EMPLOYEE_HEADERS = [
   "Отпуск с",
   "Отпуск по",
   "Комментарий",
+  "Логин",
+  "Хэш-пароля",
+  "Роль доступа",
+  "Хэш кода первичного входа",
+  "Срок действия кода",
 ];
 
 export const QUEUE_HEADERS = [
@@ -416,6 +421,7 @@ export function isEmployeeOnVacation(employee, date = new Date(), vacations = []
 }
 
 export function employeeParticipates(employee, type) {
+  if (cleanText(employee?.employee_id) === "EMP-000") return false;
   const normalized = normalizeType(type);
   if (normalized === "судебное") return yes(employee["Судебные"]);
   if (normalized === "административное") return yes(employee["Административные"]);
@@ -436,7 +442,9 @@ export function enrichData(data, date = new Date()) {
   const vacations = (data.vacations ?? []).map(normalizeVacation).filter((item) => item.employee_id && item["Дата начала"]);
   const cases = data.cases.map((item) => caseDerived(item, data.settings, date));
   const activeRegisterCases = cases.filter((caseRow) => !isDeletedCase(caseRow));
-  const employees = data.employees.map((employee) => {
+  const employees = (data.employees ?? [])
+    .filter((employee) => cleanText(employee.employee_id) !== "EMP-000")
+    .map((employee) => {
     const name = cleanText(employee[FIELD.name]);
     const activeCases = activeRegisterCases.filter((caseRow) => nameMatches(caseRow[FIELD.responsible], name) && caseRow["Активное число"] === 1);
     return {
