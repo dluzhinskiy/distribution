@@ -1565,7 +1565,10 @@ function renderCases() {
     <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
       <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
       <td>${badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}</td>
-      <td><div class="cell-main">${escapeHtml(row["Предмет"])}</div></td>
+      <td>
+        <div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div>
+        <div class="case-party-filters">${casePartyFilterItems(row)}</div>
+      </td>
       <td>${escapeHtml(row["Регион"] || "—")}</td>
       <td class="date-cell">${escapeHtml(formatRuDateDash(row["Дата поступления"]) || "—")}</td>
       <td>${badge(row["Статус"], row["Статус"] === "Завершено" ? "green" : row["Статус"] === "Приостановлено" ? "orange" : "blue")}</td>
