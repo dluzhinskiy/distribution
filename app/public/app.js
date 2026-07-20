@@ -417,6 +417,7 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(path, {
       headers: { "Content-Type": "application/json" },
+      cache: "no-store",
       ...options,
     });
     const payload = await response.json();
@@ -3922,3 +3923,17 @@ async function init() {
 }
 
 init();
+
+
+// Safari может восстановить вкладку из back/forward cache без повторного запуска init().
+// В таком случае заново сверяем серверный сеанс: удалённый хэш пароля должен немедленно
+// закрывать доступ и после возвращения к уже открытой вкладке.
+window.addEventListener("pageshow", async (event) => {
+  if (!event.persisted) return;
+  try {
+    const session = await api("/api/auth/session");
+    if (!session.authenticated) showAuthGate();
+  } catch {
+    showAuthGate();
+  }
+});

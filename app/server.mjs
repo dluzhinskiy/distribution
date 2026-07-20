@@ -76,7 +76,15 @@ function sanitizeApiPayload(value, key = "") {
 }
 
 function sendJson(res, status, payload, headers = {}) {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
+  // API-ответы, особенно результат проверки сеанса, не должны попадать в HTTP-кэш.
+  // Иначе браузер может показать устаревший положительный ответ после сброса пароля.
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    ...headers,
+  });
   res.end(JSON.stringify(sanitizeApiPayload(payload)));
 }
 
@@ -909,7 +917,13 @@ async function staticFile(req, res, url) {
   }
   try {
     const data = await fs.readFile(filePath);
-    res.writeHead(200, { "Content-Type": MIME[path.extname(filePath)] ?? "application/octet-stream" });
+    const headers = { "Content-Type": MIME[path.extname(filePath)] ?? "application/octet-stream" };
+    if (requested === "/index.html") {
+      headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private";
+      headers.Pragma = "no-cache";
+      headers.Expires = "0";
+    }
+    res.writeHead(200, headers);
     res.end(data);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
