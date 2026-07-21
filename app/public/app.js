@@ -15,7 +15,7 @@ const state = {
   casesQuickFilter: "",
   casesResponsibleFilter: "",
   casesCellFilter: null,
-  caseColumnsPopoverOpen: false,
+  caseListScope: "yuc",
   historicalDashboard: false,
   historicalFrom: "",
   historicalTo: "",
@@ -79,14 +79,6 @@ const CASE_COLUMN_OPTIONS = [
   { key: "status", label: "Статус" },
   { key: "caseNumber", label: "Номер дела" },
   { key: "caseProLink", label: "Ссылка на CasePRO" },
-  { key: "distributionDate", label: "Дата распределения" },
-  { key: "completionDate", label: "Дата завершения" },
-  { key: "basis", label: "Основание" },
-  { key: "systemAssigned", label: "Распределено системой" },
-  { key: "manualAssigned", label: "Ручное назначение" },
-  { key: "comment", label: "Комментарий" },
-  { key: "plannedCompletion", label: "Плановая дата завершения" },
-  { key: "controlCompletion", label: "Контрольная дата завершения" },
 ];
 
 const $ = (selector) => document.querySelector(selector);
@@ -173,13 +165,14 @@ function applyRoleUi() {
     state.showDeletedCases = false;
     $$(".view").forEach((view) => view.classList.remove("active"));
     $("#view-cases")?.classList.add("active");
-    $("#pageTitle").textContent = employee ? "Мои дела" : "Реестр дел";
+    $("#pageTitle").textContent = employee && state.caseListScope === "mine" ? "Мои дела" : "Реестр дел";
   }
 }
 
 function applyAuthUser(user) {
   state.authUser = user || null;
   if (user && !isAdminUser() && user.yuc) state.selectedYuc = normalizeYucName(user.yuc);
+  state.caseListScope = user && isEmployeeUser() ? "mine" : "yuc";
   const node = $("#currentUser");
   if (node) node.textContent = user ? `${displayName(user.name)} · ${user.role}` : "";
   const exitButton = $("#exitBtn");
@@ -577,7 +570,7 @@ function showView(name) {
   $$(".view").forEach((view) => view.classList.remove("active"));
   $(`#view-${name}`).classList.add("active");
   $$(".nav-link").forEach((link) => link.classList.toggle("active", link.dataset.view === name));
-  $("#pageTitle").textContent = titles[name];
+  $("#pageTitle").textContent = name === "cases" && state.caseListScope === "mine" ? "Мои дела" : titles[name];
   if (name === "employees" && state.data) {
     resetEmployeeAvailabilityDrafts();
   }
@@ -719,6 +712,30 @@ function casesForSelectedYuc() {
   return cases;
 }
 
+function canUseMyCasesScope() {
+  return !isAdminUser() && Boolean(String(state.authUser?.name ?? "").trim());
+}
+
+function casesForRegistry() {
+  if (state.caseListScope === "mine" && canUseMyCasesScope()) {
+    return (state.data?.cases ?? []).filter((row) => nameMatches(row["Ответственный"], state.authUser?.name));
+  }
+  // Вкладки ЮЦ всегда показывают весь реестр выбранного ЮЦ, независимо от роли.
+  return rowsForSelectedYuc(state.data?.cases);
+}
+
+function selectCaseListScope(scope) {
+  if (scope === "mine" && canUseMyCasesScope()) state.caseListScope = "mine";
+  else state.caseListScope = "yuc";
+  state.casesQuickFilter = "";
+  state.casesResponsibleFilter = "";
+  state.casesCellFilter = null;
+  if ($("#casesSearch")) $("#casesSearch").value = "";
+  showView("cases");
+  renderYucTabs();
+  renderCases();
+}
+
 function queuesForSelectedYuc() {
   return rowsForSelectedYuc(state.data?.queues);
 }
@@ -855,6 +872,7 @@ function summaryForSelectedYuc() {
 }
 
 function setSelectedYuc(yuc, options = {}) {
+  state.caseListScope = "yuc";
   const next = normalizeYucName(yuc);
   const changed = next !== state.selectedYuc;
   state.selectedYuc = next;
@@ -875,9 +893,12 @@ function renderYucTabs() {
   const container = $("#yucTabs");
   if (!container) return;
   const current = selectedYuc();
-  container.innerHTML = availableYucs()
+  const mine = canUseMyCasesScope()
+    ? `<button class="yuc-tab yuc-tab-mine ${state.caseListScope === "mine" ? "active" : ""}" data-case-scope="mine" type="button">Мои дела</button>`
+    : "";
+  container.innerHTML = mine + availableYucs()
     .map((yuc) => `
-      <button class="yuc-tab ${yuc === current ? "active" : ""}" data-yuc="${escapeHtml(yuc)}" type="button">
+      <button class="yuc-tab ${state.caseListScope === "yuc" && yuc === current ? "active" : ""}" data-yuc="${escapeHtml(yuc)}" type="button">
         ${escapeHtml(yuc)}
       </button>
     `)
@@ -1541,6 +1562,7 @@ function draftFromCase(row) {
 }
 
 function caseColumnProfile() {
+  if (state.caseListScope === "mine") return "mine";
   if (isExternalReadOnlyYuc()) return "external";
   if (isEmployeeUser()) return "employee";
   return "manager";
@@ -1560,7 +1582,7 @@ function defaultCaseColumnVisibility(profile = caseColumnProfile()) {
     visibility.actual = true;
     visibility.responsible = true;
     visibility.status = true;
-  } else if (profile === "employee") {
+  } else if (profile === "employee" || profile === "mine") {
     visibility.receivedDate = true;
     visibility.status = true;
   } else {
@@ -1643,45 +1665,27 @@ function caseTableMinimumWidth(columns) {
     status: 160,
     caseNumber: 170,
     caseProLink: 150,
-    distributionDate: 148,
-    completionDate: 148,
-    basis: 220,
-    systemAssigned: 178,
-    manualAssigned: 168,
-    comment: 240,
-    plannedCompletion: 178,
-    controlCompletion: 190,
     action: 128,
   };
   return Math.max(560, columns.reduce((total, column) => total + (widths[column.key] || 160), 0));
 }
 
-function renderCaseColumnsControl(profile = caseColumnProfile(), visibility = caseColumnVisibility(profile)) {
-  const toggle = $("#caseColumnsToggle");
-  const panel = $("#caseColumnsPanel");
-  if (!toggle || !panel) return;
-  const visibleCount = CASE_COLUMN_OPTIONS.filter((option) => !option.detail && visibility[option.key]).length;
-  toggle.innerHTML = `Столбцы <span class="case-columns-count">${visibleCount}</span>`;
-  toggle.setAttribute("aria-expanded", String(state.caseColumnsPopoverOpen));
-  panel.classList.toggle("hidden", !state.caseColumnsPopoverOpen);
-  panel.innerHTML = `
-    <div class="case-columns-panel-head">
-      <strong>Поля реестра</strong>
-      <button class="link-btn" id="resetCaseColumns" type="button">Сбросить</button>
-    </div>
-    <p>Настройка сохраняется только для этого пользователя и режима просмотра.</p>
-    <div class="case-columns-options">
-      ${CASE_COLUMN_OPTIONS.map((option) => {
-        const disabled = option.locked || (option.detail && !visibility.subject);
-        return `
-          <label class="case-columns-option ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
-            <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
-            <span class="checkbox-ui"></span>
-            <span>${escapeHtml(option.label)}${option.locked ? " <small>обязательно</small>" : option.detail ? " <small>под предметом</small>" : ""}</span>
-          </label>
-        `;
-      }).join("")}
-    </div>
+function renderCaseColumnsToggles(profile = caseColumnProfile(), visibility = caseColumnVisibility(profile)) {
+  const target = $("#caseColumnsInline");
+  if (!target) return;
+  target.innerHTML = `
+    <span class="case-columns-label">Поля в таблице</span>
+    ${CASE_COLUMN_OPTIONS.map((option) => {
+      const disabled = option.locked || (option.detail && !visibility.subject);
+      return `
+        <label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
+          <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
+          <span class="switch-ui"></span>
+          <span>${escapeHtml(option.label)}${option.locked ? " <small>обязательно</small>" : option.detail ? " <small>под предметом</small>" : ""}</span>
+        </label>
+      `;
+    }).join("")}
+    <button class="link-btn reset-case-columns" type="button">Сбросить</button>
   `;
 }
 
@@ -1744,14 +1748,6 @@ function caseColumnCell(row, key, profile, visibility) {
       const link = caseLinkInfo(row["Ссылка"]);
       return link ? `<a class="case-pro-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(link.title)}">Открыть</a>` : "—";
     }
-    case "distributionDate": return caseDateColumn(row, "Дата распределения");
-    case "completionDate": return caseDateColumn(row, "Дата завершения");
-    case "basis": return escapeHtml(row["Основание"] || "—");
-    case "systemAssigned": return caseBooleanColumn(row["Распределено системой"]);
-    case "manualAssigned": return caseBooleanColumn(row["Ручное назначение"]);
-    case "comment": return escapeHtml(row["Комментарий"] || "—");
-    case "plannedCompletion": return caseDateColumn(row, "Плановая дата завершения");
-    case "controlCompletion": return caseDateColumn(row, "Контрольная дата завершения");
     case "action": return existingCaseActions(row);
     default: return "—";
   }
@@ -1768,10 +1764,10 @@ function renderCases() {
   }
   const header = $("#casesTableHeader");
   if (header) header.innerHTML = `<tr>${columns.map((column) => `<th class="case-column case-column-${column.key}">${escapeHtml(column.label)}</th>`).join("")}</tr>`;
-  renderCaseColumnsControl(profile, visibility);
+  renderCaseColumnsToggles(profile, visibility);
   renderCasesQuickFilter();
   const term = ($("#casesSearch")?.value ?? "").toLowerCase();
-  const rows = casesForSelectedYuc()
+  const rows = casesForRegistry()
     .filter((row) => state.showDeletedCases || !isDeletedCase(row))
     .filter(caseMatchesQuickFilter)
     .filter(caseMatchesResponsibleFilter)
@@ -3860,17 +3856,8 @@ function bindEvents() {
   }));
   $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
   $("#casesSearch").addEventListener("input", renderCases);
-  $("#caseColumnsToggle")?.addEventListener("click", () => {
-    state.caseColumnsPopoverOpen = !state.caseColumnsPopoverOpen;
-    renderCaseColumnsControl();
-  });
-  $("#caseColumnsControl")?.addEventListener("click", (event) => {
-    if (event.target.closest("#resetCaseColumns")) resetCaseColumnVisibility();
-  });
-  document.addEventListener("click", (event) => {
-    if (!state.caseColumnsPopoverOpen || event.target.closest("#caseColumnsControl")) return;
-    state.caseColumnsPopoverOpen = false;
-    renderCaseColumnsControl();
+  $("#caseColumnsInline")?.addEventListener("click", (event) => {
+    if (event.target.closest(".reset-case-columns")) resetCaseColumnVisibility();
   });
   $("#casesQuickFilterStrip")?.addEventListener("click", (event) => {
     if (event.target.closest("#clearCasesQuickFilter")) {
@@ -3988,6 +3975,10 @@ function bindEvents() {
       return;
     }
     const yucTab = event.target.closest(".yuc-tab");
+    if (yucTab?.dataset.caseScope === "mine") {
+      selectCaseListScope("mine");
+      return;
+    }
     if (yucTab) setSelectedYuc(yucTab.dataset.yuc);
     const caseCellFilterButton = event.target.closest(".case-cell-filter");
     if (caseCellFilterButton) {
