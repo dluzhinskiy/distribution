@@ -2991,7 +2991,7 @@ body.theme-apple .btn-ghost {
 
 body.theme-apple .btn-ghost:hover,
 body.theme-apple .btn-secondary:hover,
-body.theme-apple .yuc-tab:hover {
+body.theme-apple .yuc-tab:not(.active):hover {
   background: rgba(255, 255, 255, 0.86);
 }
 
