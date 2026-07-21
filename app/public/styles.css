@@ -1222,6 +1222,33 @@ body.write-pending button:not(:disabled) {
   min-width: 260px;
 }
 
+.case-search-field {
+  position: relative;
+  display: flex;
+}
+
+.case-search-field .search { padding-right: 42px; }
+
+.case-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--mts-gray-600);
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.case-search-clear:hover { background: var(--apple-accent-soft, var(--mts-gray-100)); }
+.case-search-clear[hidden] { display: none; }
+
 .case-columns-inline {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) max-content;
@@ -1297,10 +1324,6 @@ body.write-pending button:not(:disabled) {
   cursor: default;
 }
 
-.reset-case-columns {
-  align-self: center;
-  white-space: nowrap;
-}
 
 .edit-toggle {
   display: flex;

@@ -1686,7 +1686,6 @@ function renderCaseColumnsToggles(profile = caseColumnProfile(), visibility = ca
         `;
       }).join("")}
     </div>
-    <button class="btn btn-secondary reset-case-columns" type="button">Сбросить</button>
   `;
 }
 
@@ -1752,7 +1751,14 @@ function caseColumnCell(row, key, profile, visibility) {
   }
 }
 
+function renderCasesSearchClear() {
+  const input = $("#casesSearch");
+  const button = $("#casesSearchClear");
+  if (button) button.hidden = !String(input?.value ?? "").trim();
+}
+
 function renderCases() {
+  renderCasesSearchClear();
   const profile = caseColumnProfile();
   const visibility = caseColumnVisibility(profile);
   const columns = caseColumnsForTable(profile, visibility);
@@ -3855,8 +3861,12 @@ function bindEvents() {
   }));
   $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
   $("#casesSearch").addEventListener("input", renderCases);
-  $("#caseColumnsInline")?.addEventListener("click", (event) => {
-    if (event.target.closest(".reset-case-columns")) resetCaseColumnVisibility();
+  $("#casesSearchClear")?.addEventListener("click", () => {
+    const input = $("#casesSearch");
+    if (!input) return;
+    input.value = "";
+    renderCases();
+    input.focus();
   });
   $("#casesQuickFilterStrip")?.addEventListener("click", (event) => {
     if (event.target.closest("#clearCasesQuickFilter")) {

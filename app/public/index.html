@@ -238,7 +238,10 @@
                   <input type="checkbox" id="showDeletedCasesToggle">
                   <span>Показывать удалённые</span>
                 </label>
-                <input class="search" id="casesSearch" placeholder="Поиск по делам" />
+                <div class="case-search-field">
+                  <input class="search" id="casesSearch" placeholder="Поиск по делам" />
+                  <button class="case-search-clear" id="casesSearchClear" type="button" title="Очистить поиск" aria-label="Очистить поиск" hidden>×</button>
+                </div>
               </div>
             </div>
             <div class="case-columns-inline" id="caseColumnsInline"></div>
