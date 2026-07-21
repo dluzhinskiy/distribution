@@ -1299,9 +1299,7 @@ body.write-pending button:not(:disabled) {
 
 .reset-case-columns {
   align-self: center;
-  color: var(--apple-accent, #2f8df6);
-  font-size: 12px;
-  font-weight: 800;
+  white-space: nowrap;
 }
 
 .edit-toggle {
@@ -2582,7 +2580,7 @@ textarea:disabled {
 
 .case-filter-strip {
   min-height: 0;
-  margin: -4px 0 14px;
+  margin: 0 0 14px;
 }
 
 .quick-filter-chip {

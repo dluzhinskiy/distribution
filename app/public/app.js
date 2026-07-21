@@ -1686,7 +1686,7 @@ function renderCaseColumnsToggles(profile = caseColumnProfile(), visibility = ca
         `;
       }).join("")}
     </div>
-    <button class="link-btn reset-case-columns" type="button">Сбросить</button>
+    <button class="btn btn-secondary reset-case-columns" type="button">Сбросить</button>
   `;
 }
 
