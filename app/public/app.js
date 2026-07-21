@@ -15,6 +15,7 @@ const state = {
   casesQuickFilter: "",
   casesResponsibleFilter: "",
   casesCellFilter: null,
+  caseColumnsPopoverOpen: false,
   historicalDashboard: false,
   historicalFrom: "",
   historicalTo: "",
@@ -62,6 +63,31 @@ const completedStatuses = new Set(["Завершено", "Отменено", del
 const themeStorageKey = "mts-load-distribution-theme";
 const blueTheme = "blue";
 const redTheme = "red";
+const caseColumnsStoragePrefix = "mts-load-distribution-case-columns-v1";
+const CASE_COLUMN_OPTIONS = [
+  { key: "id", label: "ID", locked: true },
+  { key: "yuc", label: "ЮЦ" },
+  { key: "type", label: "Тип дела" },
+  { key: "subject", label: "Предмет" },
+  { key: "claimant", label: "Истец / заявитель", detail: true },
+  { key: "respondent", label: "Ответчик", detail: true },
+  { key: "thirdParty", label: "Третье лицо", detail: true },
+  { key: "region", label: "Регион" },
+  { key: "receivedDate", label: "Дата поступления" },
+  { key: "actual", label: "Актуально" },
+  { key: "responsible", label: "Ответственный" },
+  { key: "status", label: "Статус" },
+  { key: "caseNumber", label: "Номер дела" },
+  { key: "caseProLink", label: "Ссылка на CasePRO" },
+  { key: "distributionDate", label: "Дата распределения" },
+  { key: "completionDate", label: "Дата завершения" },
+  { key: "basis", label: "Основание" },
+  { key: "systemAssigned", label: "Распределено системой" },
+  { key: "manualAssigned", label: "Ручное назначение" },
+  { key: "comment", label: "Комментарий" },
+  { key: "plannedCompletion", label: "Плановая дата завершения" },
+  { key: "controlCompletion", label: "Контрольная дата завершения" },
+];
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -1514,9 +1540,160 @@ function draftFromCase(row) {
   };
 }
 
-function casePartyFilterItems(row) {
-  return ["Истец", "Ответчик", "Третье лицо"]
-    .map((field) => ({ field, value: String(row[field] ?? "").trim() }))
+function caseColumnProfile() {
+  if (isExternalReadOnlyYuc()) return "external";
+  if (isEmployeeUser()) return "employee";
+  return "manager";
+}
+
+function defaultCaseColumnVisibility(profile = caseColumnProfile()) {
+  const visibility = Object.fromEntries(CASE_COLUMN_OPTIONS.map((option) => [option.key, false]));
+  visibility.id = true;
+  visibility.type = true;
+  visibility.subject = true;
+  visibility.claimant = true;
+  visibility.respondent = true;
+  visibility.thirdParty = true;
+  visibility.region = true;
+  if (profile === "manager") {
+    visibility.receivedDate = true;
+    visibility.actual = true;
+    visibility.responsible = true;
+    visibility.status = true;
+  } else if (profile === "employee") {
+    visibility.receivedDate = true;
+    visibility.status = true;
+  } else {
+    visibility.responsible = true;
+  }
+  return visibility;
+}
+
+function caseColumnsStorageKey(profile = caseColumnProfile()) {
+  const employeeId = String(state.authUser?.employeeId || state.authUser?.login || "anonymous").trim() || "anonymous";
+  return `${caseColumnsStoragePrefix}:${employeeId}:${profile}`;
+}
+
+function caseColumnVisibility(profile = caseColumnProfile()) {
+  const visibility = defaultCaseColumnVisibility(profile);
+  try {
+    const saved = JSON.parse(localStorage.getItem(caseColumnsStorageKey(profile)) || "{}");
+    for (const option of CASE_COLUMN_OPTIONS) {
+      if (typeof saved?.[option.key] === "boolean") visibility[option.key] = saved[option.key];
+    }
+  } catch {
+    // При недоступном или повреждённом localStorage используем безопасный набор по умолчанию.
+  }
+  visibility.id = true;
+  if (!visibility.subject) {
+    visibility.claimant = false;
+    visibility.respondent = false;
+    visibility.thirdParty = false;
+  }
+  return visibility;
+}
+
+function saveCaseColumnVisibility(visibility, profile = caseColumnProfile()) {
+  const safe = { ...visibility, id: true };
+  try {
+    localStorage.setItem(caseColumnsStorageKey(profile), JSON.stringify(safe));
+  } catch {
+    // Настройка останется активной до перезагрузки страницы, если браузер запретил localStorage.
+  }
+}
+
+function setCaseColumnVisibility(key, enabled) {
+  const option = CASE_COLUMN_OPTIONS.find((item) => item.key === key);
+  if (!option || option.locked) return;
+  const profile = caseColumnProfile();
+  const visibility = caseColumnVisibility(profile);
+  visibility[key] = Boolean(enabled);
+  if (option.detail && enabled) visibility.subject = true;
+  if (key === "subject" && !enabled) {
+    visibility.claimant = false;
+    visibility.respondent = false;
+    visibility.thirdParty = false;
+  }
+  saveCaseColumnVisibility(visibility, profile);
+  renderCases();
+}
+
+function resetCaseColumnVisibility() {
+  const profile = caseColumnProfile();
+  try { localStorage.removeItem(caseColumnsStorageKey(profile)); } catch { /* noop */ }
+  renderCases();
+}
+
+function caseColumnsForTable(profile = caseColumnProfile(), visibility = caseColumnVisibility(profile)) {
+  const columns = CASE_COLUMN_OPTIONS.filter((option) => !option.detail && visibility[option.key]);
+  if (profile === "manager") columns.push({ key: "action", label: "Действие", technical: true });
+  return columns;
+}
+
+function caseTableMinimumWidth(columns) {
+  const widths = {
+    id: 112,
+    yuc: 160,
+    type: 148,
+    subject: 320,
+    region: 180,
+    receivedDate: 138,
+    actual: 118,
+    responsible: 205,
+    status: 160,
+    caseNumber: 170,
+    caseProLink: 150,
+    distributionDate: 148,
+    completionDate: 148,
+    basis: 220,
+    systemAssigned: 178,
+    manualAssigned: 168,
+    comment: 240,
+    plannedCompletion: 178,
+    controlCompletion: 190,
+    action: 128,
+  };
+  return Math.max(560, columns.reduce((total, column) => total + (widths[column.key] || 160), 0));
+}
+
+function renderCaseColumnsControl(profile = caseColumnProfile(), visibility = caseColumnVisibility(profile)) {
+  const toggle = $("#caseColumnsToggle");
+  const panel = $("#caseColumnsPanel");
+  if (!toggle || !panel) return;
+  const visibleCount = CASE_COLUMN_OPTIONS.filter((option) => !option.detail && visibility[option.key]).length;
+  toggle.innerHTML = `Столбцы <span class="case-columns-count">${visibleCount}</span>`;
+  toggle.setAttribute("aria-expanded", String(state.caseColumnsPopoverOpen));
+  panel.classList.toggle("hidden", !state.caseColumnsPopoverOpen);
+  panel.innerHTML = `
+    <div class="case-columns-panel-head">
+      <strong>Поля реестра</strong>
+      <button class="link-btn" id="resetCaseColumns" type="button">Сбросить</button>
+    </div>
+    <p>Настройка сохраняется только для этого пользователя и режима просмотра.</p>
+    <div class="case-columns-options">
+      ${CASE_COLUMN_OPTIONS.map((option) => {
+        const disabled = option.locked || (option.detail && !visibility.subject);
+        return `
+          <label class="case-columns-option ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
+            <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
+            <span class="checkbox-ui"></span>
+            <span>${escapeHtml(option.label)}${option.locked ? " <small>обязательно</small>" : option.detail ? " <small>под предметом</small>" : ""}</span>
+          </label>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function casePartyFilterItems(row, visibility = caseColumnVisibility()) {
+  const fields = [
+    { key: "claimant", field: "Истец" },
+    { key: "respondent", field: "Ответчик" },
+    { key: "thirdParty", field: "Третье лицо" },
+  ];
+  return fields
+    .filter((item) => visibility[item.key])
+    .map(({ field }) => ({ field, value: String(row[field] ?? "").trim() }))
     .filter((item) => item.value)
     .map((item) => `
       <span class="case-party-item">
@@ -1527,17 +1704,71 @@ function casePartyFilterItems(row) {
     .join("");
 }
 
+function caseDateColumn(row, field) {
+  return escapeHtml(formatRuDateDash(row[field]) || "—");
+}
+
+function caseBooleanColumn(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return "—";
+  return badge(yes(value) ? "Да" : "Нет", yes(value) ? "green" : "gray");
+}
+
+function caseColumnCell(row, key, profile, visibility) {
+  switch (key) {
+    case "id":
+      return `<button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button>`;
+    case "yuc": return escapeHtml(row["ЮЦ"] || "—");
+    case "type": {
+      const typeBadge = badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange");
+      return profile === "manager" ? caseFilterValue("Тип дела", row["Тип дела"], typeBadge) : typeBadge;
+    }
+    case "subject": return `
+      <div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div>
+      <div class="case-party-filters">${casePartyFilterItems(row, visibility)}</div>
+    `;
+    case "region": return profile === "manager" ? caseFilterValue("Регион", row["Регион"]) : escapeHtml(row["Регион"] || "—");
+    case "receivedDate": return profile === "manager"
+      ? caseFilterValue("Дата поступления", row["Дата поступления"], caseDateColumn(row, "Дата поступления"))
+      : caseDateColumn(row, "Дата поступления");
+    case "actual": return badge(row["Актуально"] || "—", row["Актуально"] === "Да" ? "green" : "gray");
+    case "responsible": return profile === "manager"
+      ? caseResponsibleCell(row)
+      : escapeHtml(displayName(row["Ответственный"]) || "—");
+    case "status": {
+      if (profile === "manager") return caseStatusSelect(row);
+      const kind = row["Статус"] === "Завершено" ? "green" : row["Статус"] === "Приостановлено" ? "orange" : "blue";
+      return badge(row["Статус"] || "—", kind);
+    }
+    case "caseNumber": return escapeHtml(row["Номер дела"] || "—");
+    case "caseProLink": {
+      const link = caseLinkInfo(row["Ссылка"]);
+      return link ? `<a class="case-pro-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(link.title)}">Открыть</a>` : "—";
+    }
+    case "distributionDate": return caseDateColumn(row, "Дата распределения");
+    case "completionDate": return caseDateColumn(row, "Дата завершения");
+    case "basis": return escapeHtml(row["Основание"] || "—");
+    case "systemAssigned": return caseBooleanColumn(row["Распределено системой"]);
+    case "manualAssigned": return caseBooleanColumn(row["Ручное назначение"]);
+    case "comment": return escapeHtml(row["Комментарий"] || "—");
+    case "plannedCompletion": return caseDateColumn(row, "Плановая дата завершения");
+    case "controlCompletion": return caseDateColumn(row, "Контрольная дата завершения");
+    case "action": return existingCaseActions(row);
+    default: return "—";
+  }
+}
+
 function renderCases() {
-  const employeeView = isEmployeeUser();
-  const externalView = isExternalReadOnlyYuc();
+  const profile = caseColumnProfile();
+  const visibility = caseColumnVisibility(profile);
+  const columns = caseColumnsForTable(profile, visibility);
   const casesTable = $(".cases-table");
-  if (casesTable) casesTable.dataset.caseLayout = externalView ? "external" : employeeView ? "employee" : "manager";
+  if (casesTable) {
+    casesTable.dataset.caseLayout = profile;
+    casesTable.style.setProperty("--cases-table-min-width", `${caseTableMinimumWidth(columns)}px`);
+  }
   const header = $("#casesTableHeader");
-  if (header) header.innerHTML = externalView
-    ? "<tr><th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Ответственный</th><th>Истец / заявитель</th><th>Ответчик</th><th>Третье лицо</th></tr>"
-    : employeeView
-      ? "<tr><th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Дата</th><th>Статус</th></tr>"
-      : "<tr><th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Дата</th><th>Актуально</th><th>Ответственный</th><th>Статус</th><th>Действие</th></tr>";
+  if (header) header.innerHTML = `<tr>${columns.map((column) => `<th class="case-column case-column-${column.key}">${escapeHtml(column.label)}</th>`).join("")}</tr>`;
+  renderCaseColumnsControl(profile, visibility);
   renderCasesQuickFilter();
   const term = ($("#casesSearch")?.value ?? "").toLowerCase();
   const rows = casesForSelectedYuc()
@@ -1549,46 +1780,12 @@ function renderCases() {
     .slice()
     .reverse();
   if (!rows.length) {
-    $("#casesTable").innerHTML = `<tr><td colspan="${externalView ? 8 : employeeView ? 6 : 9}" class="empty-cell">Дела не найдены.</td></tr>`;
+    $("#casesTable").innerHTML = `<tr><td colspan="${columns.length}" class="empty-cell">Дела не найдены.</td></tr>`;
     return;
   }
-  $("#casesTable").innerHTML = rows.map((row) => externalView ? `
+  $("#casesTable").innerHTML = rows.map((row) => `
     <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
-      <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
-      <td>${badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}</td>
-      <td><div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div></td>
-      <td>${escapeHtml(row["Регион"] || "—")}</td>
-      <td>${escapeHtml(displayName(row["Ответственный"]) || "—")}</td>
-      <td>${escapeHtml(row["Истец"] || "—")}</td>
-      <td>${escapeHtml(row["Ответчик"] || "—")}</td>
-      <td>${escapeHtml(row["Третье лицо"] || "—")}</td>
-    </tr>
-  ` : employeeView ? `
-    <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
-      <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
-      <td>${badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}</td>
-      <td>
-        <div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div>
-        <div class="case-party-filters">${casePartyFilterItems(row)}</div>
-      </td>
-      <td>${escapeHtml(row["Регион"] || "—")}</td>
-      <td class="date-cell">${escapeHtml(formatRuDateDash(row["Дата поступления"]) || "—")}</td>
-      <td>${badge(row["Статус"], row["Статус"] === "Завершено" ? "green" : row["Статус"] === "Приостановлено" ? "orange" : "blue")}</td>
-    </tr>
-  ` : `
-    <tr class="${isDeletedCase(row) ? "case-deleted-row" : ""}">
-      <td class="id-cell"><button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button></td>
-      <td>${caseFilterValue("Тип дела", row["Тип дела"], badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange"))}</td>
-      <td>
-        <div class="cell-main">${escapeHtml(row["Предмет"])}</div>
-        <div class="case-party-filters">${casePartyFilterItems(row)}</div>
-      </td>
-      <td>${caseFilterValue("Регион", row["Регион"])}</td>
-      <td class="date-cell">${caseFilterValue("Дата поступления", row["Дата поступления"])}</td>
-      <td>${badge(row["Актуально"], row["Актуально"] === "Да" ? "green" : "gray")}</td>
-      <td>${caseResponsibleCell(row)}</td>
-      <td>${caseStatusSelect(row)}</td>
-      <td>${existingCaseActions(row)}</td>
+      ${columns.map((column) => `<td class="case-column case-column-${column.key} ${column.key === "id" || column.key.endsWith("Date") ? "date-cell" : ""}">${caseColumnCell(row, column.key, profile, visibility)}</td>`).join("")}
     </tr>
   `).join("");
 }
@@ -3663,6 +3860,18 @@ function bindEvents() {
   }));
   $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
   $("#casesSearch").addEventListener("input", renderCases);
+  $("#caseColumnsToggle")?.addEventListener("click", () => {
+    state.caseColumnsPopoverOpen = !state.caseColumnsPopoverOpen;
+    renderCaseColumnsControl();
+  });
+  $("#caseColumnsControl")?.addEventListener("click", (event) => {
+    if (event.target.closest("#resetCaseColumns")) resetCaseColumnVisibility();
+  });
+  document.addEventListener("click", (event) => {
+    if (!state.caseColumnsPopoverOpen || event.target.closest("#caseColumnsControl")) return;
+    state.caseColumnsPopoverOpen = false;
+    renderCaseColumnsControl();
+  });
   $("#casesQuickFilterStrip")?.addEventListener("click", (event) => {
     if (event.target.closest("#clearCasesQuickFilter")) {
       state.casesQuickFilter = "";
@@ -3841,6 +4050,10 @@ function bindEvents() {
     if (vacationDay) handleVacationDateClick(vacationDay.dataset.date);
   });
   document.addEventListener("change", (event) => {
+    if (event.target.matches(".case-column-visibility")) {
+      setCaseColumnVisibility(event.target.dataset.columnKey, event.target.checked);
+      return;
+    }
     if (event.target.matches("#caseImportSelectAll")) {
       state.caseImportSelectedRows = event.target.checked
         ? new Set((state.caseImportPlan?.toAdd ?? []).map((item) => String(item.rowNumber)))

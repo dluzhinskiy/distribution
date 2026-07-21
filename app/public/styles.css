@@ -1222,6 +1222,112 @@ body.write-pending button:not(:disabled) {
   min-width: 260px;
 }
 
+.case-columns-control {
+  position: relative;
+}
+
+.case-columns-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.case-columns-count {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--apple-accent, #2f8df6);
+  background: var(--apple-accent-soft, rgba(47, 141, 246, 0.14));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.case-columns-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 15;
+  width: min(370px, calc(100vw - 40px));
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 18px;
+  color: #16304c;
+  background: rgba(248, 252, 255, 0.82);
+  box-shadow: 0 22px 52px rgba(25, 62, 102, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+
+.case-columns-panel.hidden {
+  display: none;
+}
+
+.case-columns-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.case-columns-panel-head .link-btn {
+  color: var(--apple-accent, #2f8df6);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.case-columns-panel > p {
+  margin: 7px 0 12px;
+  color: #607a96;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.case-columns-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 12px;
+}
+
+.case-columns-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  color: #284766;
+  font-size: 13px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.case-columns-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.case-columns-option .checkbox-ui {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+}
+
+.case-columns-option small {
+  color: #7890a7;
+  font-size: 11px;
+}
+
+.case-columns-option.is-detail {
+  padding-left: 10px;
+}
+
+.case-columns-option.is-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .edit-toggle {
   display: flex;
   align-items: center;
@@ -3405,5 +3511,61 @@ body.role-employee #view-cases .card-head > div:first-child h2::after {
 @media (max-width: 860px) {
   .table-wrap:has(.cases-table) {
     max-height: calc(100vh - 180px);
+  }
+}
+
+/* Настраиваемый набор столбцов: ширина растёт только до комфортного минимума,
+   после чего table-wrap включает горизонтальную прокрутку. */
+.cases-table[data-case-layout] {
+  width: 100% !important;
+  min-width: var(--cases-table-min-width, 860px) !important;
+  table-layout: fixed;
+}
+
+.cases-table[data-case-layout] .case-column-id { width: 112px !important; }
+.cases-table[data-case-layout] .case-column-yuc { width: 160px !important; }
+.cases-table[data-case-layout] .case-column-type { width: 148px !important; }
+.cases-table[data-case-layout] .case-column-subject { width: 320px !important; }
+.cases-table[data-case-layout] .case-column-region { width: 180px !important; }
+.cases-table[data-case-layout] .case-column-receivedDate { width: 138px !important; }
+.cases-table[data-case-layout] .case-column-actual { width: 118px !important; }
+.cases-table[data-case-layout] .case-column-responsible { width: 205px !important; }
+.cases-table[data-case-layout] .case-column-status { width: 160px !important; }
+.cases-table[data-case-layout] .case-column-caseNumber { width: 170px !important; }
+.cases-table[data-case-layout] .case-column-caseProLink { width: 150px !important; }
+.cases-table[data-case-layout] .case-column-distributionDate,
+.cases-table[data-case-layout] .case-column-completionDate { width: 148px !important; }
+.cases-table[data-case-layout] .case-column-basis { width: 220px !important; }
+.cases-table[data-case-layout] .case-column-systemAssigned { width: 178px !important; }
+.cases-table[data-case-layout] .case-column-manualAssigned { width: 168px !important; }
+.cases-table[data-case-layout] .case-column-comment { width: 240px !important; }
+.cases-table[data-case-layout] .case-column-plannedCompletion { width: 178px !important; }
+.cases-table[data-case-layout] .case-column-controlCompletion { width: 190px !important; }
+.cases-table[data-case-layout] .case-column-action { width: 128px !important; }
+
+.cases-table[data-case-layout] .case-column-subject .cell-main,
+.cases-table[data-case-layout] .case-column-basis,
+.cases-table[data-case-layout] .case-column-comment {
+  overflow-wrap: anywhere;
+}
+
+.case-pro-link {
+  color: var(--apple-accent, #2f8df6);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.case-pro-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 720px) {
+  .case-columns-panel {
+    right: auto;
+    left: 0;
+  }
+
+  .case-columns-options {
+    grid-template-columns: 1fr;
   }
 }
