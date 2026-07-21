@@ -205,6 +205,12 @@ p {
   box-shadow: var(--shadow-md);
 }
 
+.yuc-switcher-title {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
 .yuc-switcher-label {
   font-size: 12px;
   font-weight: 700;
@@ -3286,48 +3292,117 @@ body.role-employee #view-cases .card-head > div:first-child h2::after {
   }
 }
 
+/* Adaptive cases table: fits the available panel on wide screens and scrolls only below a readable width. */
+.table-wrap:has(.cases-table) {
+  container-type: inline-size;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: auto;
+}
 
-/* Readable responsive cases table */
 .cases-table {
-  width: max(100%, 1540px);
-  min-width: 1540px;
-  table-layout: auto;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .cases-table th,
 .cases-table td {
   white-space: normal;
+  overflow: hidden;
 }
 
-.cases-table th:nth-child(1),
-.cases-table td:nth-child(1) { width: 118px; min-width: 118px; }
-.cases-table th:nth-child(2),
-.cases-table td:nth-child(2) { width: 150px; min-width: 150px; }
-.cases-table th:nth-child(3),
-.cases-table td:nth-child(3) { width: 310px; min-width: 270px; }
-.cases-table th:nth-child(4),
-.cases-table td:nth-child(4) { width: 190px; min-width: 175px; }
-.cases-table th:nth-child(5),
-.cases-table td:nth-child(5) { width: 135px; min-width: 130px; }
-.cases-table th:nth-child(6),
-.cases-table td:nth-child(6) { width: 130px; min-width: 125px; }
-.cases-table th:nth-child(7),
-.cases-table td:nth-child(7) { width: 210px; min-width: 195px; }
-.cases-table th:nth-child(8),
-.cases-table td:nth-child(8) { width: 170px; min-width: 155px; }
-.cases-table th:nth-child(9),
-.cases-table td:nth-child(9) { width: 135px; min-width: 125px; }
+/* Руководитель: 9 столбцов. */
+.cases-table[data-case-layout="manager"] th:nth-child(1),
+.cases-table[data-case-layout="manager"] td:nth-child(1) { width: 7.5%; min-width: 0; }
+.cases-table[data-case-layout="manager"] th:nth-child(2),
+.cases-table[data-case-layout="manager"] td:nth-child(2) { width: 10%; min-width: 0; }
+.cases-table[data-case-layout="manager"] th:nth-child(3),
+.cases-table[data-case-layout="manager"] td:nth-child(3) { width: 22%; min-width: 0; max-width: none; }
+.cases-table[data-case-layout="manager"] th:nth-child(4),
+.cases-table[data-case-layout="manager"] td:nth-child(4) { width: 12%; min-width: 0; }
+.cases-table[data-case-layout="manager"] th:nth-child(5),
+.cases-table[data-case-layout="manager"] td:nth-child(5) { width: 8%; min-width: 0; }
+.cases-table[data-case-layout="manager"] th:nth-child(6),
+.cases-table[data-case-layout="manager"] td:nth-child(6) { width: 7.5%; min-width: 0; }
+.cases-table[data-case-layout="manager"] th:nth-child(7),
+.cases-table[data-case-layout="manager"] td:nth-child(7) { width: 14%; min-width: 0; }
+.cases-table[data-case-layout="manager"] th:nth-child(8),
+.cases-table[data-case-layout="manager"] td:nth-child(8) { width: 10%; min-width: 0; }
+.cases-table[data-case-layout="manager"] th:nth-child(9),
+.cases-table[data-case-layout="manager"] td:nth-child(9) { width: 9%; min-width: 0; }
 
-.table-wrap:has(.cases-table) {
-  overscroll-behavior-inline: contain;
-  scrollbar-gutter: stable both-edges;
+/* Сотрудник: 6 столбцов. */
+.cases-table[data-case-layout="employee"] th:nth-child(1),
+.cases-table[data-case-layout="employee"] td:nth-child(1) { width: 10%; min-width: 0; }
+.cases-table[data-case-layout="employee"] th:nth-child(2),
+.cases-table[data-case-layout="employee"] td:nth-child(2) { width: 13%; min-width: 0; }
+.cases-table[data-case-layout="employee"] th:nth-child(3),
+.cases-table[data-case-layout="employee"] td:nth-child(3) { width: 40%; min-width: 0; max-width: none; }
+.cases-table[data-case-layout="employee"] th:nth-child(4),
+.cases-table[data-case-layout="employee"] td:nth-child(4) { width: 16%; min-width: 0; }
+.cases-table[data-case-layout="employee"] th:nth-child(5),
+.cases-table[data-case-layout="employee"] td:nth-child(5) { width: 11%; min-width: 0; }
+.cases-table[data-case-layout="employee"] th:nth-child(6),
+.cases-table[data-case-layout="employee"] td:nth-child(6) { width: 10%; min-width: 0; }
+
+/* Чужой ЮЦ: 8 столбцов, только просмотр. */
+.cases-table[data-case-layout="external"] th:nth-child(1),
+.cases-table[data-case-layout="external"] td:nth-child(1) { width: 8%; min-width: 0; }
+.cases-table[data-case-layout="external"] th:nth-child(2),
+.cases-table[data-case-layout="external"] td:nth-child(2) { width: 10%; min-width: 0; }
+.cases-table[data-case-layout="external"] th:nth-child(3),
+.cases-table[data-case-layout="external"] td:nth-child(3) { width: 23%; min-width: 0; max-width: none; }
+.cases-table[data-case-layout="external"] th:nth-child(4),
+.cases-table[data-case-layout="external"] td:nth-child(4) { width: 13%; min-width: 0; }
+.cases-table[data-case-layout="external"] th:nth-child(5),
+.cases-table[data-case-layout="external"] td:nth-child(5) { width: 15%; min-width: 0; }
+.cases-table[data-case-layout="external"] th:nth-child(6),
+.cases-table[data-case-layout="external"] td:nth-child(6) { width: 11%; min-width: 0; }
+.cases-table[data-case-layout="external"] th:nth-child(7),
+.cases-table[data-case-layout="external"] td:nth-child(7) { width: 10%; min-width: 0; }
+.cases-table[data-case-layout="external"] th:nth-child(8),
+.cases-table[data-case-layout="external"] td:nth-child(8) { width: 10%; min-width: 0; }
+
+/* На широком поле элементы редактирования занимают ширину своих столбцов, а не растягивают таблицу. */
+.cases-table[data-case-layout="manager"] .responsible-select,
+.cases-table[data-case-layout="manager"] .case-status {
+  width: 100%;
+  min-width: 0;
+}
+
+.cases-table[data-case-layout="manager"] .case-actions {
+  flex-wrap: wrap;
+}
+
+.cases-table[data-case-layout="manager"] .case-actions .tiny-btn {
+  min-width: 0;
+  width: 100%;
+  padding-inline: 10px;
+}
+
+/* Если места действительно мало, сохраняем комфортные размеры и включаем обычную горизонтальную прокрутку. */
+@container (max-width: 1539px) {
+  .cases-table[data-case-layout="manager"] {
+    width: 1540px;
+    min-width: 1540px;
+  }
+}
+
+@container (max-width: 1239px) {
+  .cases-table[data-case-layout="external"] {
+    width: 1240px;
+    min-width: 1240px;
+  }
+}
+
+@container (max-width: 1039px) {
+  .cases-table[data-case-layout="employee"] {
+    width: 1040px;
+    min-width: 1040px;
+  }
 }
 
 @media (max-width: 860px) {
-  .cases-table {
-    min-width: 1420px;
-  }
-
   .table-wrap:has(.cases-table) {
     max-height: calc(100vh - 180px);
   }

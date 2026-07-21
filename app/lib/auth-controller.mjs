@@ -100,7 +100,10 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     // Принудительное чтение нужно, чтобы удаление или сброс пароля срабатывали сразу,
     // а не после истечения серверного кэша сотрудников.
     const data = await readData(["employees"], { force: true });
-    const employee = data.employees.find((item) => cleanText(item.employee_id) === claims.employeeId);
+    const employeesWithId = data.employees.filter((item) => cleanText(item.employee_id) === claims.employeeId);
+    // employee_id — ключ авторизации. При дубле невозможно безопасно определить владельца сеанса.
+    if (employeesWithId.length !== 1) return null;
+    const employee = employeesWithId[0];
     const hash = cleanText(employee?.["Хэш-пароля"]);
     if (!employee || cleanLogin(employee["Логин"]) !== claims.login || !hash) return null;
     if (passwordVersion(hash, secret) !== claims.passwordVersion) return null;
@@ -200,8 +203,13 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     const parts = url.pathname.split("/").filter(Boolean);
     const employeeId = decodeURIComponent(parts[3] ?? "");
     const data = await readData(["employees"], { force: true });
-    const employee = data.employees.find((item) => cleanText(item.employee_id) === employeeId);
-    if (!employee) throw Object.assign(new Error("Сотрудник не найден."), { status: 404 });
+    const employeesWithId = data.employees.filter((item) => cleanText(item.employee_id) === employeeId);
+    if (!employeesWithId.length) throw Object.assign(new Error("Сотрудник не найден."), { status: 404 });
+    if (employeesWithId.length > 1) {
+      const names = employeesWithId.map((item) => cleanText(item["ФИО"]) || "без ФИО").join("; ");
+      throw Object.assign(new Error(`Нельзя выполнить действие: employee_id ${employeeId} используется несколькими сотрудниками (${names}). Исправьте идентификатор в таблице «Сотрудники».`), { status: 409 });
+    }
+    const employee = employeesWithId[0];
     if (!canManageAccessForEmployee(user, employee)) throw Object.assign(new Error("Можно выдавать доступ только сотрудникам своего ЮЦ."), { status: 403 });
 
     if (req.method === "PATCH" && parts.length === 4) {

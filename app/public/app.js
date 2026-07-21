@@ -1530,6 +1530,8 @@ function casePartyFilterItems(row) {
 function renderCases() {
   const employeeView = isEmployeeUser();
   const externalView = isExternalReadOnlyYuc();
+  const casesTable = $(".cases-table");
+  if (casesTable) casesTable.dataset.caseLayout = externalView ? "external" : employeeView ? "employee" : "manager";
   const header = $("#casesTableHeader");
   if (header) header.innerHTML = externalView
     ? "<tr><th>ID</th><th>Тип</th><th>Предмет</th><th>Регион</th><th>Ответственный</th><th>Истец / заявитель</th><th>Ответчик</th><th>Третье лицо</th></tr>"
