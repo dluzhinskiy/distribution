@@ -66,7 +66,6 @@ const redTheme = "red";
 const caseColumnsStoragePrefix = "mts-load-distribution-case-columns-v1";
 const CASE_COLUMN_OPTIONS = [
   { key: "id", label: "ID", locked: true },
-  { key: "yuc", label: "ЮЦ" },
   { key: "type", label: "Тип дела" },
   { key: "subject", label: "Предмет" },
   { key: "claimant", label: "Истец / заявитель", detail: true },
@@ -1675,16 +1674,18 @@ function renderCaseColumnsToggles(profile = caseColumnProfile(), visibility = ca
   if (!target) return;
   target.innerHTML = `
     <span class="case-columns-label">Поля в таблице</span>
-    ${CASE_COLUMN_OPTIONS.filter((option) => !option.locked).map((option) => {
-      const disabled = option.locked || (option.detail && !visibility.subject);
-      return `
-        <label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
-          <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
-          <span class="switch-ui"></span>
-          <span>${escapeHtml(option.label)}</span>
-        </label>
-      `;
-    }).join("")}
+    <div class="case-columns-options">
+      ${CASE_COLUMN_OPTIONS.filter((option) => !option.locked).map((option) => {
+        const disabled = option.locked || (option.detail && !visibility.subject);
+        return `
+          <label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
+            <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
+            <span class="switch-ui"></span>
+            <span>${escapeHtml(option.label)}</span>
+          </label>
+        `;
+      }).join("")}
+    </div>
     <button class="link-btn reset-case-columns" type="button">Сбросить</button>
   `;
 }

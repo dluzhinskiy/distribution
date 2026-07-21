@@ -1223,10 +1223,10 @@ body.write-pending button:not(:disabled) {
 }
 
 .case-columns-inline {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 14px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: start;
+  column-gap: 14px;
   margin: 0 0 14px;
   padding: 12px 14px;
   border: 1px solid rgba(78, 122, 165, 0.18);
@@ -1235,10 +1235,18 @@ body.write-pending button:not(:disabled) {
 }
 
 .case-columns-label {
-  margin-right: 2px;
+  padding-top: 4px;
   color: #52708e;
   font-size: 13px;
   font-weight: 800;
+}
+
+.case-columns-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
 }
 
 .case-column-toggle {
@@ -1290,7 +1298,7 @@ body.write-pending button:not(:disabled) {
 }
 
 .reset-case-columns {
-  margin-left: auto;
+  align-self: center;
   color: var(--apple-accent, #2f8df6);
   font-size: 12px;
   font-weight: 800;
