@@ -1250,10 +1250,6 @@ body.write-pending button:not(:disabled) {
 .case-search-clear[hidden] { display: none; }
 
 .case-columns-inline {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) max-content;
-  align-items: start;
-  column-gap: 14px;
   margin: 0 0 14px;
   padding: 12px 14px;
   border: 1px solid rgba(78, 122, 165, 0.18);
@@ -1262,11 +1258,33 @@ body.write-pending button:not(:disabled) {
 }
 
 .case-columns-label {
-  padding-top: 4px;
   color: #52708e;
   font-size: 13px;
   font-weight: 800;
 }
+
+.case-columns-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 28px;
+}
+
+.case-columns-toggle {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(78, 122, 165, 0.28);
+  border-radius: 50%;
+  color: var(--apple-accent, #2f8df6);
+  background: rgba(255, 255, 255, 0.58);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.case-columns-toggle:hover { background: var(--apple-accent-soft, rgba(47, 141, 246, 0.1)); }
 
 .case-columns-options {
   display: flex;
@@ -1274,6 +1292,7 @@ body.write-pending button:not(:disabled) {
   align-items: center;
   gap: 8px 14px;
   min-width: 0;
+  margin-top: 10px;
 }
 
 .case-column-toggle {

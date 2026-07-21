@@ -16,6 +16,7 @@ const state = {
   casesResponsibleFilter: "",
   casesCellFilter: null,
   caseListScope: "yuc",
+  caseColumnsExpanded: false,
   historicalDashboard: false,
   historicalFrom: "",
   historicalTo: "",
@@ -1673,20 +1674,30 @@ function renderCaseColumnsToggles(profile = caseColumnProfile(), visibility = ca
   const target = $("#caseColumnsInline");
   if (!target) return;
   target.innerHTML = `
-    <span class="case-columns-label">Поля в таблице</span>
-    <div class="case-columns-options">
-      ${CASE_COLUMN_OPTIONS.filter((option) => !option.locked).map((option) => {
-        const disabled = option.locked || (option.detail && !visibility.subject);
-        return `
-          <label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
-            <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
-            <span class="switch-ui"></span>
-            <span>${escapeHtml(option.label)}</span>
-          </label>
-        `;
-      }).join("")}
+    <div class="case-columns-header">
+      <span class="case-columns-label">Поля в таблице</span>
+      <button class="case-columns-toggle" type="button" aria-expanded="${state.caseColumnsExpanded}" title="${state.caseColumnsExpanded ? "Свернуть поля" : "Настроить поля"}">${state.caseColumnsExpanded ? "−" : "+"}</button>
     </div>
+    ${state.caseColumnsExpanded ? `
+      <div class="case-columns-options">
+        ${CASE_COLUMN_OPTIONS.filter((option) => !option.locked).map((option) => {
+          const disabled = option.locked || (option.detail && !visibility.subject);
+          return `
+            <label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
+              <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
+              <span class="switch-ui"></span>
+              <span>${escapeHtml(option.label)}</span>
+            </label>
+          `;
+        }).join("")}
+      </div>
+    ` : ""}
   `;
+}
+
+function toggleCaseColumnsPanel() {
+  state.caseColumnsExpanded = !state.caseColumnsExpanded;
+  renderCaseColumnsToggles();
 }
 
 function casePartyFilterItems(row, visibility = caseColumnVisibility()) {
@@ -3867,6 +3878,9 @@ function bindEvents() {
     input.value = "";
     renderCases();
     input.focus();
+  });
+  $("#caseColumnsInline")?.addEventListener("click", (event) => {
+    if (event.target.closest(".case-columns-toggle")) toggleCaseColumnsPanel();
   });
   $("#casesQuickFilterStrip")?.addEventListener("click", (event) => {
     if (event.target.closest("#clearCasesQuickFilter")) {
