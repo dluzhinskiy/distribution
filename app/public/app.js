@@ -1675,13 +1675,13 @@ function renderCaseColumnsToggles(profile = caseColumnProfile(), visibility = ca
   if (!target) return;
   target.innerHTML = `
     <span class="case-columns-label">Поля в таблице</span>
-    ${CASE_COLUMN_OPTIONS.map((option) => {
+    ${CASE_COLUMN_OPTIONS.filter((option) => !option.locked).map((option) => {
       const disabled = option.locked || (option.detail && !visibility.subject);
       return `
         <label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
           <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
           <span class="switch-ui"></span>
-          <span>${escapeHtml(option.label)}${option.locked ? " <small>обязательно</small>" : option.detail ? " <small>под предметом</small>" : ""}</span>
+          <span>${escapeHtml(option.label)}</span>
         </label>
       `;
     }).join("")}
