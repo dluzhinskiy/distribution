@@ -1725,24 +1725,22 @@ function caseColumnCell(row, key, profile, visibility) {
     case "yuc": return escapeHtml(row["ЮЦ"] || "—");
     case "type": {
       const typeBadge = badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange");
-      return profile === "manager" ? caseFilterValue("Тип дела", row["Тип дела"], typeBadge) : typeBadge;
+      return caseFilterValue("Тип дела", row["Тип дела"], typeBadge);
     }
     case "subject": return `
       <div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div>
       <div class="case-party-filters">${casePartyFilterItems(row, visibility)}</div>
     `;
-    case "region": return profile === "manager" ? caseFilterValue("Регион", row["Регион"]) : escapeHtml(row["Регион"] || "—");
-    case "receivedDate": return profile === "manager"
-      ? caseFilterValue("Дата поступления", row["Дата поступления"], caseDateColumn(row, "Дата поступления"))
-      : caseDateColumn(row, "Дата поступления");
+    case "region": return caseFilterValue("Регион", row["Регион"]);
+    case "receivedDate": return caseFilterValue("Дата поступления", row["Дата поступления"], caseDateColumn(row, "Дата поступления"));
     case "actual": return badge(row["Актуально"] || "—", row["Актуально"] === "Да" ? "green" : "gray");
     case "responsible": return profile === "manager"
       ? caseResponsibleCell(row)
-      : escapeHtml(displayName(row["Ответственный"]) || "—");
+      : caseFilterValue("Ответственный", row["Ответственный"], `<span class="case-filter-pill">${escapeHtml(displayName(row["Ответственный"]) || "—")}</span>`);
     case "status": {
       if (profile === "manager") return caseStatusSelect(row);
       const kind = row["Статус"] === "Завершено" ? "green" : row["Статус"] === "Приостановлено" ? "orange" : "blue";
-      return badge(row["Статус"] || "—", kind);
+      return caseFilterValue("Статус", row["Статус"], badge(row["Статус"] || "—", kind));
     }
     case "caseNumber": return escapeHtml(row["Номер дела"] || "—");
     case "caseProLink": {
