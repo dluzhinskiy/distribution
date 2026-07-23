@@ -1458,6 +1458,34 @@ body.write-pending button:not(:disabled) {
   grid-template-columns: 1fr;
 }
 
+.settings-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-help-trigger {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(78, 122, 165, 0.3);
+  border-radius: 50%;
+  color: var(--apple-accent, #2f8df6);
+  background: rgba(255, 255, 255, 0.62);
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.settings-help-trigger:hover { background: var(--apple-accent-soft, rgba(47, 141, 246, 0.1)); }
+
+.settings-help-modal-card { width: min(640px, 100%); }
+.settings-help-body { line-height: 1.55; }
+.settings-help-body ul { margin: 12px 0 0; padding-left: 20px; }
+.settings-help-body li + li { margin-top: 8px; }
+
 .settings-form {
   margin-top: 4px;
 }

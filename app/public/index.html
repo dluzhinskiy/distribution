@@ -342,7 +342,10 @@
                   <h2>Сроки по типам нагрузки</h2>
                   <p>Настройки действуют отдельно для выбранного ЮЦ. Срок активности влияет на нагрузку, срок автозавершения — на предупреждения руководителю.</p>
                 </div>
-                <span class="badge badge-red">редактируемые сроки</span>
+                <div class="settings-card-actions">
+                  <span class="badge badge-red">редактируемые сроки</span>
+                  <button class="settings-help-trigger" type="button" data-settings-help="deadlines" aria-label="Справка по срокам" title="Справка">?</button>
+                </div>
               </div>
               <div class="table-wrap compact">
                 <table>
@@ -363,7 +366,10 @@
                   <h2>Правила ЮЦ</h2>
                   <p>Настройки применяются к выбранному сверху юридическому центру.</p>
                 </div>
-                <span class="badge badge-blue">региональная логика</span>
+                <div class="settings-card-actions">
+                  <span class="badge badge-blue">региональная логика</span>
+                  <button class="settings-help-trigger" type="button" data-settings-help="yucRules" aria-label="Справка по правилам ЮЦ" title="Справка">?</button>
+                </div>
               </div>
               <form id="yucSettingsForm" class="settings-form">
                 <label class="toggle-field">
@@ -428,7 +434,10 @@
                   <h2>Региональные закрепления</h2>
                   <p>Можно добавить несколько юристов на один регион и один юрист может обслуживать несколько регионов.</p>
                 </div>
-                <button class="btn btn-secondary" id="addRegionalAssignmentBtn">Добавить закрепление</button>
+                <div class="settings-card-actions">
+                  <button class="btn btn-secondary" id="addRegionalAssignmentBtn">Добавить закрепление</button>
+                  <button class="settings-help-trigger" type="button" data-settings-help="regionalAssignments" aria-label="Справка по региональным закреплениям" title="Справка">?</button>
+                </div>
               </div>
               <div class="table-wrap">
                 <table>
@@ -575,6 +584,13 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div class="modal-overlay" id="settingsHelpModal" aria-hidden="true">
+      <div class="modal-card settings-help-modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsHelpTitle">
+        <div class="modal-head"><h2 id="settingsHelpTitle">Справка</h2></div>
+        <div class="modal-body settings-help-body" id="settingsHelpBody"></div>
+        <div class="modal-actions"><button class="btn btn-primary" id="settingsHelpClose" type="button">Понятно</button></div>
+      </div>
+    </div>
     <div class="modal-overlay" id="caseModal" aria-hidden="true">
       <div class="modal-card case-modal-card" role="dialog" aria-modal="true" aria-labelledby="caseModalTitle">
         <div class="modal-head">

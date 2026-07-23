@@ -2549,6 +2549,35 @@ function renderSettings() {
   updateRegionalSettingsAvailability();
 }
 
+const settingsHelp = {
+  deadlines: {
+    title: "Сроки по типам нагрузки",
+    body: `<p>Значения задаются отдельно для выбранного ЮЦ и типа нагрузки.</p><ul><li><strong>Активность, дни</strong> — период, в течение которого дело считается активным для расчёта нагрузки.</li><li><strong>Автозавершение, дни</strong> — срок контроля: после его истечения дело попадает в список «К завершению», где руководитель принимает решение.</li><li><strong>Учитывать долг</strong> — включает приоритет сотрудника, который пропустил очередь из-за недоступности.</li><li><strong>Максимальный долг</strong> — ограничивает размер такого приоритета; после назначения долг погашается.</li></ul>`,
+  },
+  yucRules: {
+    title: "Правила ЮЦ",
+    body: `<p>Эти правила применяются только к выбранному сверху юридическому центру.</p><ul><li>Переключатель неактивных дел определяет, учитываются ли незавершённые, но уже неактивные дела при сравнении нагрузки сотрудников.</li><li>Региональные очереди сначала ищут кандидата среди сотрудников, закреплённых за регионом дела.</li><li>Порог перегруза определяет, когда вся региональная группа может уступить назначение общей очереди.</li><li>Нижние правила задают безопасный сценарий, если регион не настроен или его сотрудники недоступны.</li></ul>`,
+  },
+  regionalAssignments: {
+    title: "Региональные закрепления",
+    body: `<p>Каждая строка связывает регион, сотрудника и тип нагрузки. Для всех типов выберите «все».</p><ul><li>В одном регионе может быть несколько сотрудников, а один сотрудник может быть закреплён за несколькими регионами.</li><li>Заместитель используется, когда все доступные региональные сотрудники недоступны для нужного типа нагрузки.</li><li>Заместитель должен быть активен в соответствующей очереди; иначе применяется дальнейшее правило ЮЦ — обычно общая очередь.</li><li>Выключенное закрепление хранится в таблице, но в назначении не участвует.</li></ul>`,
+  },
+};
+
+function openSettingsHelp(key) {
+  const help = settingsHelp[key];
+  if (!help) return;
+  $("#settingsHelpTitle").textContent = help.title;
+  $("#settingsHelpBody").innerHTML = help.body;
+  $("#settingsHelpModal").classList.add("show");
+  $("#settingsHelpModal").setAttribute("aria-hidden", "false");
+}
+
+function closeSettingsHelp() {
+  $("#settingsHelpModal")?.classList.remove("show");
+  $("#settingsHelpModal")?.setAttribute("aria-hidden", "true");
+}
+
 function renderJournal() {
   if (state.journalLoading) {
     $("#journalTable").innerHTML = `<tr><td colspan="7" class="empty-cell">Журнал загружается из MTS Tabs…</td></tr>`;
@@ -3769,6 +3798,10 @@ function bindEvents() {
     link.addEventListener("click", () => showView(link.dataset.view));
   });
   $("#refreshBtn").addEventListener("click", loadData);
+  $("#settingsHelpClose")?.addEventListener("click", closeSettingsHelp);
+  $("#settingsHelpModal")?.addEventListener("click", (event) => {
+    if (event.target.id === "settingsHelpModal") closeSettingsHelp();
+  });
   $("#authLoginForm")?.addEventListener("submit", (event) => logIn(event).catch((error) => setAuthMessage(error.message, "error")));
   $("#authFirstAccessForm")?.addEventListener("submit", (event) => completeFirstAccess(event).catch((error) => setAuthMessage(error.message, "error")));
   $$(".auth-mode").forEach((button) => button.addEventListener("click", () => setAuthMode(button.dataset.authMode)));
@@ -3948,6 +3981,11 @@ function bindEvents() {
   }));
   $("#cancelVacationDraftBtn").addEventListener("click", cancelVacationDraft);
   document.addEventListener("click", (event) => {
+    const settingsHelpButton = event.target.closest("[data-settings-help]");
+    if (settingsHelpButton) {
+      openSettingsHelp(settingsHelpButton.dataset.settingsHelp);
+      return;
+    }
     const summaryButton = event.target.closest("[data-summary-action]");
     if (summaryButton) {
       handleSummaryAction(summaryButton.dataset.summaryAction);
