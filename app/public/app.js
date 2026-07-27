@@ -1,65 +1,26 @@
-const state = {
-  data: null,
-  authUser: null,
-  accessUsers: [],
-  authMode: "login",
-  storagePath: "",
-  lastRecommendation: null,
-  employeeSection: "availability",
-  vacationEdit: false,
-  vacationMode: "single",
-  vacationRangeStart: null,
-  responsibleEditEnabled: false,
-  deleteEditEnabled: false,
-  showDeletedCases: false,
-  casesQuickFilter: "",
-  casesResponsibleFilter: "",
-  casesCellFilter: null,
-  caseListScope: "yuc",
-  caseColumnsExpanded: false,
-  historicalDashboard: false,
-  historicalFrom: "",
-  historicalTo: "",
-  historicalAllTime: false,
-  historicalInitialized: false,
-  historicalDateMode: "assigned",
-  completionControlExpanded: false,
-  deleteModalCaseId: "",
-  postponeCompletionCaseId: "",
-  selectedYuc: "",
-  resetRegionOnRender: false,
-  recommendationTimer: null,
-  responsibleDrafts: {},
-  statusDrafts: {},
-  assignmentDraftOpen: false,
-  writeLockCount: 0,
-  vacationImportPlan: null,
-  caseImportPlan: null,
-  caseImportSelectedRows: new Set(),
-  caseModalCaseId: "",
-  caseModalEditing: false,
-  caseModalDraft: null,
-  caseDocumentUploading: false,
-  documentPreviewKey: "",
-  vacationDrafts: {},
-  queueManualCandidate: null,
-  journalLoaded: false,
-  journalLoading: false,
-};
+import {
+  displayName,
+  employeeInitials,
+  escapeHtml,
+  nameMatches,
+  normalizeCaseType,
+  normalizeYucName,
+  shortName,
+  today,
+  uniqueYucs as uniquePreserveOrder,
+  workloadCaseType,
+  yes,
+  yesNo,
+} from "./lib/ui-utils.js";
+import { ApiError, isWriteRequest, requestJson, requestMethod, uploadBinary } from "./lib/api-client.js";
+import { createAppState, viewTitles as titles } from "./lib/app-state.js";
+import { groupAccessUsers } from "./lib/access-utils.js";
 
-const titles = {
-  dashboard: "Панель управления",
-  distribution: "Распределение нового дела",
-  cases: "Реестр дел",
-  employees: "Сотрудники",
-  settings: "Настройки региональных правил",
-  journal: "Журнал распределения",
-  access: "Доступы сотрудников",
-  help: "Инструкция",
-};
+const state = createAppState();
 
-const caseTypes = ["претензия", "административное", "судебное"];
-const workloadTypes = ["все", ...caseTypes];
+const caseTypes = ["претензия", "административное", "судебное", "уголовное", "банкротное"];
+const workloadCaseTypes = ["претензия", "административное", "судебное"];
+const workloadTypes = ["все", ...workloadCaseTypes];
 const statuses = ["В работе", "Ожидает распределения", "Завершено", "Отменено", "Приостановлено"];
 const deletedStatus = "Удалено";
 const completedStatuses = new Set(["Завершено", "Отменено", deletedStatus]);
@@ -85,19 +46,6 @@ const CASE_COLUMN_OPTIONS = [
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function currentRole() {
   return state.authUser?.role || "";
@@ -228,6 +176,8 @@ async function logOut() {
   await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   state.data = null;
   state.accessUsers = [];
+  state.accessExpandedYucs.clear();
+  state.accessYucExpansionInitialized = false;
   showAuthGate("Вы вышли из приложения.");
 }
 
@@ -249,8 +199,18 @@ function renderAccessUsers() {
   if (!target || (!isAdminUser() && !isManagerUser())) return;
   const admin = isAdminUser();
   const roles = ["Сотрудник", "Руководитель", "Заместитель", "Администратор"];
-  target.innerHTML = state.accessUsers.map((user) => `
-    <tr>
+  const groups = groupAccessUsers(state.accessUsers);
+  if (!state.accessYucExpansionInitialized && groups.length) {
+    const ownYuc = userYuc();
+    const ownGroup = ownYuc ? groups.find((group) => normalizeYucName(group.yuc) === ownYuc) : null;
+    state.accessExpandedYucs.add(ownGroup?.yuc ?? groups[0].yuc);
+    state.accessYucExpansionInitialized = true;
+  }
+  target.innerHTML = groups.map((group) => {
+    const expanded = state.accessExpandedYucs.has(group.yuc);
+    const groupKey = encodeURIComponent(group.yuc);
+    const rows = group.users.map((user) => `
+    <tr class="access-user-row ${expanded ? "" : "is-collapsed"}" data-access-yuc="${escapeHtml(groupKey)}">
       <td><strong>${escapeHtml(user.name || user.employeeId)}</strong><div class="muted">${escapeHtml(user.employeeId)}</div></td>
       <td>${escapeHtml(user.login || "—")}</td>
       <td>${admin
@@ -261,8 +221,26 @@ function renderAccessUsers() {
       <td><div class="access-actions">${admin ? `<button class="tiny-btn light save-access-role" data-employee-id="${escapeHtml(user.employeeId)}">Сохранить роль</button>` : ""}${user.hasPassword
         ? `<button class="tiny-btn red reset-access-password" data-employee-id="${escapeHtml(user.employeeId)}">Сбросить пароль</button>`
         : `<button class="tiny-btn issue-access-code" data-employee-id="${escapeHtml(user.employeeId)}">Выдать код</button>`}</div></td>
-    </tr>
-  `).join("") || `<tr><td colspan="6" class="empty-cell">Сотрудники своего ЮЦ не найдены.</td></tr>`;
+    </tr>`).join("");
+    return `
+      <tr class="access-yuc-row">
+        <td colspan="6">
+          <button class="access-yuc-toggle" type="button" data-access-yuc="${escapeHtml(groupKey)}" aria-expanded="${expanded}">
+            <span class="access-yuc-chevron" aria-hidden="true">›</span>
+            <strong>${escapeHtml(group.label)}</strong>
+            <span class="access-yuc-count">${group.users.length}</span>
+          </button>
+        </td>
+      </tr>
+      ${rows}`;
+  }).join("") || `<tr><td colspan="6" class="empty-cell">Сотрудники не найдены.</td></tr>`;
+}
+
+function toggleAccessYuc(encodedYuc) {
+  const yuc = decodeURIComponent(encodedYuc || "");
+  if (state.accessExpandedYucs.has(yuc)) state.accessExpandedYucs.delete(yuc);
+  else state.accessExpandedYucs.add(yuc);
+  renderAccessUsers();
 }
 
 function closeAccessCodeModal() {
@@ -354,14 +332,43 @@ function setStatus(message) {
   } else {
     node.textContent = statusLabel(message);
   }
+  const canCopyError = kind === "error" && Boolean(state.lastApiError);
+  node.classList.toggle("status-copyable", canCopyError);
+  node.title = canCopyError ? "Нажмите, чтобы скопировать запись об ошибке" : "";
+  node.setAttribute("role", canCopyError ? "button" : "status");
+  node.tabIndex = canCopyError ? 0 : -1;
 }
 
-function requestMethod(options = {}) {
-  return String(options.method || "GET").toUpperCase();
+async function copyLastApiError() {
+  if (!state.lastApiError) return;
+  const text = JSON.stringify(state.lastApiError, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  toast("Запись об ошибке скопирована в буфер обмена.");
 }
 
-function isWriteRequest(options = {}) {
-  return !["GET", "HEAD"].includes(requestMethod(options));
+function recordClientError(error, context = "Клиентское действие") {
+  const message = error instanceof Error ? error.message : String(error ?? "Неизвестная ошибка");
+  // Ошибка API уже содержит HTTP-статус и идентификатор ошибки — не заменяем
+  // её менее подробной клиентской записью при обработке того же исключения.
+  if (state.lastApiError?.path && state.lastApiError?.message === message) return;
+  state.lastApiError = {
+    timestamp: new Date().toISOString(),
+    type: "client",
+    context,
+    message,
+    stack: error instanceof Error ? (error.stack || "") : "",
+  };
 }
 
 function applyWriteLockState() {
@@ -436,17 +443,22 @@ async function api(path, options = {}) {
   const shouldLock = isWriteRequest(options);
   if (shouldLock) beginWriteLock();
   try {
-    const response = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      ...options,
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) {
-      if (response.status === 401 && !path.startsWith("/api/auth/")) showAuthGate(payload.error || "Требуется вход в приложение.");
-      throw new Error(payload.error || "Ошибка запроса");
+    try {
+      return await requestJson(path, options);
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : new ApiError(error.message || "Ошибка запроса", { path, method: requestMethod(options) });
+      if (apiError.status === 401 && !path.startsWith("/api/auth/")) showAuthGate(apiError.message || "Требуется вход в приложение.");
+      state.lastApiError = {
+        timestamp: new Date().toISOString(),
+        method: apiError.method,
+        path: apiError.path,
+        status: apiError.status,
+        errorId: apiError.errorId,
+        code: apiError.code,
+        message: apiError.message,
+      };
+      throw apiError;
     }
-    return payload;
   } finally {
     if (shouldLock) endWriteLock();
   }
@@ -455,17 +467,7 @@ async function api(path, options = {}) {
 async function uploadVacationWorkbook(file) {
   beginWriteLock();
   try {
-    const response = await fetch("/api/vacations/import-preview", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-File-Name": encodeURIComponent(file.name),
-      },
-      body: file,
-    });
-    const payload = await response.json();
-    if (!payload.ok) throw new Error(payload.error || "Не удалось прочитать Excel.");
-    return payload;
+    return await uploadBinary("/api/vacations/import-preview", file);
   } finally {
     endWriteLock();
   }
@@ -474,17 +476,7 @@ async function uploadVacationWorkbook(file) {
 async function uploadCaseWorkbook(file) {
   beginWriteLock();
   try {
-    const response = await fetch(`/api/cases/import-preview?yuc=${encodeURIComponent(selectedYuc())}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-File-Name": encodeURIComponent(file.name),
-      },
-      body: file,
-    });
-    const payload = await response.json();
-    if (!payload.ok) throw new Error(payload.error || "Не удалось прочитать Excel.");
-    return payload;
+    return await uploadBinary(`/api/cases/import-preview?yuc=${encodeURIComponent(state.caseImportYuc)}`, file);
   } finally {
     endWriteLock();
   }
@@ -500,65 +492,14 @@ async function loadData() {
 function applyDataPayload(payload = {}) {
   if (!payload.data) return;
   const nextData = { ...payload.data };
-  if (payload.journalLoaded) {
-    state.journalLoaded = true;
-  } else if (state.journalLoaded && state.data?.journal) {
-    nextData.journal = mergeJournalRows(state.data.journal, nextData.journal);
-  }
   state.data = {
     ...nextData,
-    journal: nextData.journal ?? [],
     directories: nextData.directories ?? state.data?.directories,
   };
   if (payload.user) applyAuthUser(payload.user);
   state.storagePath = payload.storagePath || state.storagePath;
   if ($("#storagePath")) $("#storagePath").textContent = state.storagePath || "MTS Tabs API";
   renderAll();
-}
-
-function journalRowKey(row = {}) {
-  return [
-    row["Дата события"],
-    row.case_id,
-    row["Способ"],
-    row["Ответственный"],
-    row["Комментарий"],
-  ].map((value) => String(value ?? "")).join("::");
-}
-
-function mergeJournalRows(currentRows = [], incomingRows = []) {
-  const rows = [...currentRows];
-  const seen = new Set(rows.map(journalRowKey));
-  for (const row of incomingRows ?? []) {
-    const key = journalRowKey(row);
-    if (!seen.has(key)) {
-      rows.push(row);
-      seen.add(key);
-    }
-  }
-  return rows;
-}
-
-async function loadJournal(force = false) {
-  if (state.journalLoaded && !force || state.journalLoading) return;
-  state.journalLoading = true;
-  renderJournal();
-  setStatus("Читаю журнал…");
-  try {
-    const payload = await api(`/api/journal${force ? "?force=1" : ""}`);
-    state.data = {
-      ...state.data,
-      journal: payload.journal ?? [],
-    };
-    state.journalLoaded = true;
-    setStatus("Готово");
-  } catch (error) {
-    setStatus("Ошибка");
-    toast(error.message, "error");
-  } finally {
-    state.journalLoading = false;
-    renderJournal();
-  }
 }
 
 function setDataFromPayload(payload) {
@@ -581,12 +522,6 @@ function showView(name) {
   }
   if (name === "access") {
     loadAccessUsers().catch((error) => { setStatus("Ошибка"); toast(error.message, "error"); });
-  }
-  if (name === "journal") {
-    loadJournal().catch((error) => {
-      setStatus("Ошибка");
-      toast(error.message, "error");
-    });
   }
 }
 
@@ -625,15 +560,6 @@ function caseFilterValue(field, value, html = null, className = "") {
   `;
 }
 
-function yes(value) {
-  const text = String(value ?? "").trim().toLowerCase();
-  return text === "да" || text === "1" || text === "true";
-}
-
-function yesNo(value) {
-  return yes(value) ? "Да" : "Нет";
-}
-
 function yesNoToggle({ className = "", attrs = "", checked = false, disabled = false } = {}) {
   return `
     <label class="toggle-inline ${disabled ? "disabled" : ""}">
@@ -648,28 +574,6 @@ function isDeletedCase(row) {
   return row?.["Статус"] === deletedStatus;
 }
 
-function normalizeYucName(value) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  if (!text) return "Дальний Восток";
-  const aliases = new Map([
-    ["дв", "Дальний Восток"],
-    ["юц дв", "Дальний Восток"],
-    ["дальний восток", "Дальний Восток"],
-  ]);
-  return aliases.get(text.toLowerCase()) ?? text;
-}
-
-function uniquePreserveOrder(values) {
-  const seen = new Set();
-  return values
-    .map(normalizeYucName)
-    .filter((value) => {
-      if (!value || seen.has(value)) return false;
-      seen.add(value);
-      return true;
-    });
-}
-
 function availableYucs() {
   if (!state.data) return ["Дальний Восток"];
   const yucs = uniquePreserveOrder([
@@ -679,7 +583,10 @@ function availableYucs() {
     ...(state.data.queues ?? []).map((row) => row["ЮЦ"]),
     ...(state.data.state ?? []).map((row) => row["ЮЦ"]),
   ]);
-  return yucs.length ? yucs : ["Дальний Восток"];
+  // КЦ показываем после всех региональных ЮЦ, в том числе после «Юг».
+  return yucs.length
+    ? yucs.slice().sort((left, right) => (left === "КЦ") - (right === "КЦ"))
+    : ["Дальний Восток"];
 }
 
 function ensureSelectedYuc() {
@@ -727,8 +634,7 @@ function casesForRegistry() {
 }
 
 function selectCaseListScope(scope) {
-  if (scope === "mine" && canUseMyCasesScope()) state.caseListScope = "mine";
-  else state.caseListScope = "yuc";
+  state.caseListScope = scope === "mine" && canUseMyCasesScope() ? "mine" : "yuc";
   state.casesQuickFilter = "";
   state.casesResponsibleFilter = "";
   state.casesCellFilter = null;
@@ -789,8 +695,8 @@ function regionalAssignmentsForSelectedYuc() {
   return rowsForSelectedYuc(state.data?.regionalAssignments);
 }
 
-function journalRowsForSelectedYuc() {
-  return rowsForSelectedYuc(state.data?.journal);
+function regionalSubstitutionsForSelectedYuc() {
+  return rowsForSelectedYuc(state.data?.regionalSubstitutions);
 }
 
 function deadlineSettingForType(type) {
@@ -825,15 +731,8 @@ function maxDebtForType(type) {
   return Number(deadlineSettingForType(type)["Максимальный долг"]) || 0;
 }
 
-function normalizeCaseType(value) {
-  const text = String(value ?? "").trim().toLowerCase();
-  if (text === "админ") return "административное";
-  if (text === "суд") return "судебное";
-  return text;
-}
-
 function deadlineSettingsForSelectedYuc() {
-  return caseTypes.map(deadlineSettingForType);
+  return workloadCaseTypes.map(deadlineSettingForType);
 }
 
 function completionDueCases() {
@@ -857,8 +756,8 @@ function summaryForSelectedYuc() {
     unassignedCases: productionCases.filter((caseRow) => !String(caseRow["Ответственный"] ?? "").trim()).length,
     activeEmployees: employeesForSelectedYuc().filter((employee) => employee["Активен"] === "Да").length,
     completionDue: completionDueCases().length,
-    byType: caseTypes.map((type) => {
-      const typeRows = productionCases.filter((caseRow) => caseRow["Тип дела"] === type);
+    byType: workloadCaseTypes.map((type) => {
+      const typeRows = productionCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type);
       const active = typeRows.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length;
       const inactive = typeRows.length - active;
       return {
@@ -973,7 +872,7 @@ function renderCompletionControl() {
       <div>
         <strong>
           <button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}">${escapeHtml(row.case_id)}</button>
-          ${badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}
+          ${badge(row["Тип дела"], workloadCaseType(row["Тип дела"]) === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange")}
         </strong>
         <div class="completion-meta">
           Ответственный: ${escapeHtml(displayName(row["Ответственный"]))} ·
@@ -1061,43 +960,11 @@ function renderCasesQuickFilter() {
   node.innerHTML = chips.join("");
 }
 
-function employeeInitials(name) {
-  return String(name ?? "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
-}
-
-function shortName(name) {
-  const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
-  if (parts.length <= 1) return parts[0] ?? "";
-  const [surname, first = "", middle = ""] = parts;
-  const initials = [first, middle]
-    .filter(Boolean)
-    .map((part) => `${part[0]}.`)
-    .join("");
-  return initials ? `${surname} ${initials}` : surname;
-}
-
-function displayName(name) {
-  return shortName(name) || "—";
-}
-
 function employeeParticipatesInCaseType(employee, type) {
-  if (type === "судебное") return yes(employee["Судебные"]);
+  if (workloadCaseType(type) === "судебное") return yes(employee["Судебные"]);
   if (type === "административное") return yes(employee["Административные"]);
   if (type === "претензия") return yes(employee["Претензии"]);
   return false;
-}
-
-function nameMatches(a, b) {
-  const left = String(a ?? "").trim();
-  const right = String(b ?? "").trim();
-  if (!left || !right) return false;
-  return left === right || shortName(left) === right || left === shortName(right);
 }
 
 function ensureHistoricalDefaults() {
@@ -1146,9 +1013,9 @@ function historicalWorkloadByEmployee() {
   const rows = historicalCasesForSelectedYuc();
   return employeesForSelectedYuc().map((employee) => {
     const employeeCases = rows.filter((caseRow) => nameMatches(caseRow["Ответственный"], employee["ФИО"]));
-    const byType = Object.fromEntries(caseTypes.map((type) => [
+    const byType = Object.fromEntries(workloadCaseTypes.map((type) => [
       type,
-      employeeCases.filter((caseRow) => normalizeCaseType(caseRow["Тип дела"]) === type).length,
+      employeeCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type).length,
     ]));
     const completed = employeeCases.filter((caseRow) => caseRow["Статус"] === "Завершено").length;
     const inWork = employeeCases.length - completed;
@@ -1207,8 +1074,8 @@ function workloadByEmployee() {
       nameMatches(caseRow["Ответственный"], name) &&
       !completedStatuses.has(caseRow["Статус"])
     );
-    const byType = Object.fromEntries(caseTypes.map((type) => {
-      const rows = productionCases.filter((caseRow) => caseRow["Тип дела"] === type);
+    const byType = Object.fromEntries(workloadCaseTypes.map((type) => {
+      const rows = productionCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type);
       const active = rows.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length;
       const inactive = rows.length - active;
       return [type, { active, inactive, total: rows.length, load: includeInactive ? rows.length : active }];
@@ -1294,7 +1161,7 @@ function renderHistoricalWorkloadDashboard() {
             </div>
             <div class="historical-bar-shell" title="${escapeHtml(displayName(row.employee["ФИО"]))}: ${row.total}">
               <div class="historical-bar-stack" style="width:${totalWidth}%">
-                ${caseTypes.map((type) => {
+                ${workloadCaseTypes.map((type) => {
                   const count = row.byType[type] || 0;
                   const width = row.total ? Math.round((count / row.total) * 100) : 0;
                   if (!count) return "";
@@ -1313,7 +1180,7 @@ function renderHistoricalWorkloadDashboard() {
             </div>
             <div class="historical-total">
               <strong>${row.total}</strong>
-              <span>${caseTypes.map((type) => `${row.byType[type] || 0}`).join(" / ")}</span>
+              <span>${workloadCaseTypes.map((type) => `${row.byType[type] || 0}`).join(" / ")}</span>
             </div>
           </div>
         `;
@@ -1351,7 +1218,7 @@ function renderWorkloadDashboard() {
   const rows = workloadByEmployee();
   const includeInactive = includeInactiveInLoadForSelectedYuc();
   const loadModeText = includeInactive ? "активные + неактивные незавершённые" : "только активные";
-  const maxTotal = Math.max(...rows.flatMap((row) => caseTypes.map((type) => includeInactive ? row.byType[type].load : row.byType[type].total)), 1);
+  const maxTotal = Math.max(...rows.flatMap((row) => workloadCaseTypes.map((type) => includeInactive ? row.byType[type].load : row.byType[type].total)), 1);
   $("#workloadDashboard").innerHTML = `
     <div class="workload-legend">
       <span>Режим расчёта: ${escapeHtml(loadModeText)}</span>
@@ -1364,7 +1231,7 @@ function renderWorkloadDashboard() {
     </div>
     <div class="workload-table">
       <div class="workload-header employee-col">Сотрудник</div>
-      ${caseTypes.map((type) => `<div class="workload-header">${escapeHtml(type)}</div>`).join("")}
+      ${workloadCaseTypes.map((type) => `<div class="workload-header">${escapeHtml(type)}</div>`).join("")}
       <div class="workload-header total-col">Всего</div>
       ${rows.map((row) => `
         <div class="workload-employee">
@@ -1379,7 +1246,7 @@ function renderWorkloadDashboard() {
             <span>${includeInactive ? `${row.total} в расчёте` : `${row.activeTotal} активных · ${row.inactiveTotal} неактивных`}</span>
           </div>
         </div>
-        ${caseTypes.map((type) => {
+        ${workloadCaseTypes.map((type) => {
           const item = row.byType[type];
           const activeWidth = item.active ? Math.max(8, Math.round((item.active / maxTotal) * 100)) : 0;
           const inactiveWidth = item.inactive ? Math.max(8, Math.round((item.inactive / maxTotal) * 100)) : 0;
@@ -1618,9 +1485,8 @@ function caseColumnVisibility(profile = caseColumnProfile()) {
 }
 
 function saveCaseColumnVisibility(visibility, profile = caseColumnProfile()) {
-  const safe = { ...visibility, id: true };
   try {
-    localStorage.setItem(caseColumnsStorageKey(profile), JSON.stringify(safe));
+    localStorage.setItem(caseColumnsStorageKey(profile), JSON.stringify({ ...visibility, id: true }));
   } catch {
     // Настройка останется активной до перезагрузки страницы, если браузер запретил localStorage.
   }
@@ -1650,25 +1516,12 @@ function resetCaseColumnVisibility() {
 
 function caseColumnsForTable(profile = caseColumnProfile(), visibility = caseColumnVisibility(profile)) {
   const columns = CASE_COLUMN_OPTIONS.filter((option) => !option.detail && visibility[option.key]);
-  if (profile === "manager") columns.push({ key: "action", label: "Действие", technical: true });
+  if (profile === "manager") columns.push({ key: "action", label: "Действие" });
   return columns;
 }
 
 function caseTableMinimumWidth(columns) {
-  const widths = {
-    id: 112,
-    yuc: 160,
-    type: 148,
-    subject: 320,
-    region: 180,
-    receivedDate: 138,
-    actual: 118,
-    responsible: 205,
-    status: 160,
-    caseNumber: 170,
-    caseProLink: 150,
-    action: 128,
-  };
+  const widths = { id: 112, yuc: 160, type: 148, subject: 320, region: 180, receivedDate: 138, actual: 118, responsible: 205, status: 160, caseNumber: 170, caseProLink: 150, action: 128 };
   return Math.max(560, columns.reduce((total, column) => total + (widths[column.key] || 160), 0));
 }
 
@@ -1683,14 +1536,11 @@ function renderCaseColumnsToggles(profile = caseColumnProfile(), visibility = ca
     ${state.caseColumnsExpanded ? `
       <div class="case-columns-options">
         ${CASE_COLUMN_OPTIONS.filter((option) => !option.locked).map((option) => {
-          const disabled = option.locked || (option.detail && !visibility.subject);
-          return `
-            <label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
-              <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
-              <span class="switch-ui"></span>
-              <span>${escapeHtml(option.label)}</span>
-            </label>
-          `;
+          const disabled = option.detail && !visibility.subject;
+          return `<label class="case-column-toggle ${option.detail ? "is-detail" : ""} ${disabled ? "is-disabled" : ""}">
+            <input class="case-column-visibility" type="checkbox" data-column-key="${option.key}" ${visibility[option.key] ? "checked" : ""} ${disabled ? "disabled" : ""}>
+            <span class="switch-ui"></span><span>${escapeHtml(option.label)}</span>
+          </label>`;
         }).join("")}
       </div>
     ` : ""}
@@ -1703,12 +1553,11 @@ function toggleCaseColumnsPanel() {
 }
 
 function casePartyFilterItems(row, visibility = caseColumnVisibility()) {
-  const fields = [
+  return [
     { key: "claimant", field: "Истец" },
     { key: "respondent", field: "Ответчик" },
     { key: "thirdParty", field: "Третье лицо" },
-  ];
-  return fields
+  ]
     .filter((item) => visibility[item.key])
     .map(({ field }) => ({ field, value: String(row[field] ?? "").trim() }))
     .filter((item) => item.value)
@@ -1725,25 +1574,30 @@ function caseDateColumn(row, field) {
   return escapeHtml(formatRuDateDash(row[field]) || "—");
 }
 
-function caseBooleanColumn(value) {
-  if (value === undefined || value === null || String(value).trim() === "") return "—";
-  return badge(yes(value) ? "Да" : "Нет", yes(value) ? "green" : "gray");
+function isForeignCaseRegion(row) {
+  const yuc = normalizeYucName(row?.["ЮЦ"] || "");
+  const region = String(row?.["Регион"] || "").trim();
+  if (!region || !yuc) return false;
+  const ownRegions = state.data?.directories?.regionsByYuc?.[yuc] ?? [];
+  return !ownRegions.includes(region);
 }
 
 function caseColumnCell(row, key, profile, visibility) {
   switch (key) {
-    case "id":
-      return `<button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button>`;
+    case "id": return `<button class="link-btn case-id-link" data-id="${escapeHtml(row.case_id)}" title="Открыть карточку дела">${escapeHtml(row.case_id)}</button>`;
     case "yuc": return escapeHtml(row["ЮЦ"] || "—");
     case "type": {
-      const typeBadge = badge(row["Тип дела"], row["Тип дела"] === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange");
+      const typeBadge = badge(row["Тип дела"], workloadCaseType(row["Тип дела"]) === "судебное" ? "blue" : row["Тип дела"] === "претензия" ? "green" : "orange");
       return caseFilterValue("Тип дела", row["Тип дела"], typeBadge);
     }
-    case "subject": return `
-      <div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div>
-      <div class="case-party-filters">${casePartyFilterItems(row, visibility)}</div>
-    `;
-    case "region": return caseFilterValue("Регион", row["Регион"]);
+    case "subject": return `<div class="cell-main">${escapeHtml(row["Предмет"] || "—")}</div><div class="case-party-filters">${casePartyFilterItems(row, visibility)}</div>`;
+    case "region": {
+      const foreign = isForeignCaseRegion(row);
+      const label = foreign
+        ? `<span class="foreign-region-chip" title="Регион относится к другому ЮЦ; он сохранён при импорте и не влияет на очередь"><span>${escapeHtml(row["Регион"] || "—")}</span><small>другой ЮЦ</small></span>`
+        : null;
+      return caseFilterValue("Регион", row["Регион"], label);
+    }
     case "receivedDate": return caseFilterValue("Дата поступления", row["Дата поступления"], caseDateColumn(row, "Дата поступления"));
     case "actual": return badge(row["Актуально"] || "—", row["Актуально"] === "Да" ? "green" : "gray");
     case "responsible": return profile === "manager"
@@ -1841,36 +1695,106 @@ function closeCaseImportModal() {
   if ($("#caseImportInput")) $("#caseImportInput").value = "";
 }
 
+function cleanImportValue(value) {
+  return String(value ?? "").trim();
+}
+
+function caseImportItemReady(item) {
+  if (item.responsibleMode !== "manual") return true;
+  return Boolean(cleanImportValue(state.caseImportResponsibleOverrides?.[String(item.rowNumber)]));
+}
+
+function caseImportInvalidErrors(item) {
+  return item.errors ?? String(item.reason ?? "").split(", ").filter(Boolean);
+}
+
+function caseImportNeedsOnlyRegion(item) {
+  const errors = caseImportInvalidErrors(item);
+  return errors.length === 1 && errors[0] === "не удалось определить регион";
+}
+
+function caseImportRegions() {
+  const allRegions = Object.values(state.data?.directories?.regionsByYuc ?? {}).flat();
+  return [...new Set(allRegions.map((region) => cleanImportValue(region)).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, "ru"));
+}
+
+function caseImportResolvedInvalidRows() {
+  const plan = state.caseImportPlan;
+  if (!plan) return [];
+  return (plan.invalid ?? [])
+    .filter((item) => caseImportNeedsOnlyRegion(item))
+    .map((item) => {
+      const region = cleanImportValue(state.caseImportRegionOverrides?.[String(item.rowNumber)]);
+      if (!region) return null;
+      return {
+        ...item,
+        source: { ...item.source, "Регион": region },
+        responsibleMode: "matched",
+      };
+    })
+    .filter(Boolean);
+}
+
 function selectedCaseImportRows() {
   const plan = state.caseImportPlan;
   if (!plan) return [];
-  const selected = state.caseImportSelectedRows ?? new Set();
-  return (plan.toAdd ?? []).filter((item) => selected.has(String(item.rowNumber)));
+  return [...(plan.toAdd ?? []), ...caseImportResolvedInvalidRows()]
+    .filter(caseImportItemReady)
+    .map((item) => ({
+      ...item,
+      source: {
+        ...item.source,
+        "Ответственный": state.caseImportResponsibleOverrides?.[String(item.rowNumber)] || item.source["Ответственный"],
+      },
+    }));
+}
+
+function selectedCaseImportUpdates() {
+  const plan = state.caseImportPlan;
+  if (!plan) return [];
+  return (plan.existing ?? [])
+    .filter((item) => item.changes?.length)
+    .map((item) => ({ caseId: item.caseId, rowNumber: item.rowNumber, source: item.source }));
 }
 
 function updateCaseImportSelectionState() {
-  const plan = state.caseImportPlan;
-  const total = plan?.toAdd?.length ?? 0;
   const selectedCount = selectedCaseImportRows().length;
+  const selectedUpdates = selectedCaseImportUpdates().length;
   const applyButton = $("#caseImportApplyBtn");
-  const selectedNode = $("#caseImportSelectedCount");
-  const selectAll = $("#caseImportSelectAll");
   if (applyButton) {
-    applyButton.disabled = selectedCount === 0;
-    applyButton.textContent = selectedCount ? `Добавить выбранные (${selectedCount})` : "Добавить выбранные";
+    applyButton.disabled = selectedCount + selectedUpdates === 0;
+    applyButton.textContent = selectedCount + selectedUpdates
+      ? `Импортировать: добавить ${selectedCount} · обновить ${selectedUpdates}`
+      : "Нет подготовленных дел для импорта";
   }
-  if (selectedNode) {
-    selectedNode.textContent = `${selectedCount} из ${total} отмечены для добавления`;
-  }
-  if (selectAll) {
-    selectAll.checked = total > 0 && selectedCount === total;
-    selectAll.indeterminate = selectedCount > 0 && selectedCount < total;
-  }
+}
+
+function caseImportUpdateRow(item) {
+  const checked = state.caseImportSelectedUpdates.has(String(item.caseId)) ? "checked" : "";
+  const changes = item.changes ?? [];
+  return `
+    <li class="import-row import-update-row">
+      <label class="import-row-check">
+        <input type="checkbox" class="case-import-update-check" data-case-id="${escapeHtml(item.caseId)}" ${checked} />
+        <span class="checkbox-ui"></span>
+      </label>
+      <div class="import-row-body">
+        <div><strong>Строка ${item.rowNumber}: ${escapeHtml(item.source["Предмет"])}</strong></div>
+        <div class="muted">${escapeHtml(item.reason || "уже есть")} · изменений: ${changes.length}</div>
+        <ul class="import-change-list">
+          ${changes.map((change) => `<li><strong>${escapeHtml(change.field)}:</strong> <span>${escapeHtml(change.previous || "—")}</span> → <span>${escapeHtml(change.next || "—")}</span></li>`).join("")}
+        </ul>
+      </div>
+    </li>
+  `;
 }
 
 function caseImportRow(item, options = {}) {
   const checked = options.checked ? "checked" : "";
-  const disabled = options.disabled ? "disabled" : "";
+  const manualChoice = item.responsibleMode === "manual";
+  const rowReady = caseImportItemReady(item);
+  const disabled = options.disabled || (manualChoice && !rowReady) ? "disabled" : "";
   const mutedReason = options.reason || item.reason || "";
   return `
     <li class="import-row ${options.disabled ? "is-disabled" : ""}">
@@ -1894,7 +1818,43 @@ function caseImportRow(item, options = {}) {
           ${escapeHtml(item.source["Регион"] || "регион не указан")} ·
           ${escapeHtml(item.source["Ответственный"] ? displayName(item.source["Ответственный"]) : "без ответственного")}
         </div>
+        ${manualChoice && !options.disabled ? `
+          <label class="import-responsible-choice">
+            <span>Назначить руководителя</span>
+            <select class="case-import-responsible" data-row-number="${escapeHtml(item.rowNumber)}">
+              <option value="">Выберите сотрудника</option>
+              ${(item.responsibleOptions ?? []).map((name) => `<option value="${escapeHtml(name)}" ${state.caseImportResponsibleOverrides?.[String(item.rowNumber)] === name ? "selected" : ""}>${escapeHtml(displayName(name))}</option>`).join("")}
+            </select>
+          </label>
+        ` : ""}
       </div>
+    </li>
+  `;
+}
+
+function caseImportInvalidRow(item) {
+  const rawRegion = String(item.sourceRegion ?? "").trim();
+  const sourceResponsible = String(item.sourceResponsible ?? item.source?.["Ответственный"] ?? "").trim();
+  const regionInfo = item.reason?.includes("регион")
+    ? `<div class="import-invalid-detail"><strong>Исходное подразделение заказчика:</strong> ${escapeHtml(rawRegion || "не указано в выгрузке")}</div>`
+    : "";
+  const canChooseRegion = caseImportNeedsOnlyRegion(item);
+  const selectedRegion = state.caseImportRegionOverrides?.[String(item.rowNumber)] ?? "";
+  return `
+    <li class="import-invalid-row">
+      <div><strong>Строка ${item.rowNumber}:</strong> ${escapeHtml(item.reason)}</div>
+      <div class="import-invalid-subject">${escapeHtml(item.source?.["Предмет"] || "предмет не указан")}</div>
+      ${sourceResponsible ? `<div class="import-invalid-detail"><strong>Исполнитель:</strong> ${escapeHtml(sourceResponsible)}</div>` : ""}
+      ${regionInfo}
+      ${canChooseRegion ? `
+        <label class="import-responsible-choice import-region-choice">
+          <span>Назначить регион</span>
+          <select class="case-import-region" data-row-number="${escapeHtml(item.rowNumber)}">
+            <option value="">Выберите регион</option>
+            ${caseImportRegions().map((region) => `<option value="${escapeHtml(region)}" ${selectedRegion === region ? "selected" : ""}>${escapeHtml(region)}</option>`).join("")}
+          </select>
+        </label>
+      ` : ""}
     </li>
   `;
 }
@@ -1904,57 +1864,37 @@ function renderCaseImportModal() {
   const content = $("#caseImportContent");
   const applyButton = $("#caseImportApplyBtn");
   if (!content || !applyButton || !plan) return;
-  const hasWarnings = Boolean(plan.invalid?.length || plan.duplicateInFile?.length);
+  const pendingInvalid = (plan.invalid ?? []).filter((item) => !caseImportNeedsOnlyRegion(item) || !cleanImportValue(state.caseImportRegionOverrides?.[String(item.rowNumber)]));
+  const pendingResponsible = (plan.toAdd ?? []).filter((item) => !caseImportItemReady(item));
+  const issues = [
+    ...pendingInvalid.map((item) => ({ kind: "invalid", item })),
+    ...pendingResponsible.map((item) => ({ kind: "responsible", item })),
+    ...(plan.duplicateInFile ?? []).map((item) => ({ kind: "duplicate", item })),
+  ];
+  const updateCandidates = (plan.existing ?? []).filter((item) => item.changes?.length);
+  const preparedRows = selectedCaseImportRows().length;
   content.innerHTML = `
     <p class="muted">
-      Импорт добавит только отсутствующие дела. Проверка дублей выполняется по типу, дате поступления, региону,
-      предмету и сторонам. Очереди назначения при импорте не изменяются.
+      ЮЦ: <strong>${escapeHtml(state.caseImportYuc)}</strong>. Подготовленные дела будут импортированы автоматически; очередь назначения не изменяется.
     </p>
     <div class="import-summary-grid">
       <div class="import-summary-card"><span>Лист</span><strong>${escapeHtml(plan.sheetName || "—")}</strong></div>
       <div class="import-summary-card"><span>Строк в файле</span><strong>${plan.stats?.sourceRows ?? 0}</strong></div>
-      <div class="import-summary-card"><span>Новых дел</span><strong>${plan.stats?.newCases ?? 0}</strong></div>
-      <div class="import-summary-card"><span>Уже есть</span><strong>${plan.stats?.existingCases ?? 0}</strong></div>
+      <div class="import-summary-card"><span>Будет добавлено</span><strong>${preparedRows}</strong></div>
+      <div class="import-summary-card"><span>Будет обновлено</span><strong>${updateCandidates.length}</strong></div>
+      <div class="import-summary-card"><span>Требуют внимания</span><strong>${issues.length}</strong></div>
     </div>
-    ${hasWarnings ? `
-      <div class="import-warning">
-        Часть строк не будет добавлена: есть некорректные строки или повторы внутри файла.
-      </div>
-    ` : ""}
-    <div class="import-selection-head">
-      <h3>Новые дела</h3>
-      <div class="import-selection-controls">
-        <label class="import-select-all">
-          <input type="checkbox" id="caseImportSelectAll">
-          <span class="checkbox-ui"></span>
-          <span id="caseImportSelectedCount"></span>
-        </label>
-        <button class="tiny-btn light" id="caseImportSelectAllBtn" type="button">Отметить все</button>
-        <button class="tiny-btn light" id="caseImportClearAllBtn" type="button">Снять все</button>
-      </div>
-    </div>
-    <ul class="import-list case-import-list">
-      ${(plan.toAdd ?? []).map((item) => caseImportRow(item, {
-        checked: state.caseImportSelectedRows.has(String(item.rowNumber)),
-      })).join("") || `<li>Новых дел для добавления нет.</li>`}
-    </ul>
-    ${(plan.existing ?? []).length ? `
-      <h3>Уже есть в реестре</h3>
-      <ul class="import-list case-import-list secondary">
-        ${(plan.existing ?? []).map((item) => caseImportRow(item, {
-          disabled: true,
-          checked: false,
-          reason: item.reason || "уже есть",
-        })).join("")}
+    ${issues.length ? `
+      <h3>Требуют внимания</h3>
+      <p class="muted">Показаны только строки с недостатками. Выберите регион для строки без региона — она сразу станет подготовленной к импорту.</p>
+      <ul class="import-list import-invalid-list">
+        ${issues.map(({ kind, item }) => {
+          if (kind === "invalid") return caseImportInvalidRow(item);
+          if (kind === "responsible") return caseImportRow(item, { disabled: false, reason: "нужно назначить руководителя" });
+          return `<li class="import-invalid-row"><div><strong>Строка ${item.rowNumber}:</strong> повтор строки ${item.duplicateOfRow} в файле</div><div class="import-invalid-subject">${escapeHtml(item.source?.["Предмет"] || "предмет не указан")}</div></li>`;
+        }).join("")}
       </ul>
-    ` : ""}
-    ${(plan.invalid ?? []).length ? `
-      <h3>Не будут добавлены</h3>
-      <ul class="import-list">
-        ${(plan.invalid ?? []).slice(0, 8).map((item) => `<li>Строка ${item.rowNumber}: ${escapeHtml(item.reason)}</li>`).join("")}
-        ${(plan.invalid ?? []).length > 8 ? `<li>…и ещё ${(plan.invalid ?? []).length - 8}</li>` : ""}
-      </ul>
-    ` : ""}
+    ` : `<p class="import-success-note">Недостатков не найдено. Нажмите «Импортировать», чтобы применить подготовленные изменения.</p>`}
   `;
   updateCaseImportSelectionState();
   $("#caseImportModal")?.classList.add("show");
@@ -1971,7 +1911,11 @@ async function previewCaseImport(file) {
   setStatus("Читаю дела из Excel…");
   const payload = await uploadCaseWorkbook(file);
   state.caseImportPlan = payload.plan;
-  state.caseImportSelectedRows = new Set((payload.plan?.toAdd ?? []).map((item) => String(item.rowNumber)));
+  state.caseImportResponsibleOverrides = {};
+  state.caseImportRegionOverrides = {};
+  state.caseImportSelectedRows = new Set((payload.plan?.toAdd ?? []).filter(caseImportItemReady).map((item) => String(item.rowNumber)));
+  state.caseImportSelectedUpdates = new Set((payload.plan?.existing ?? []).filter((item) => item.changes?.length).map((item) => String(item.caseId)));
+  state.caseImportActiveTab = "new";
   renderCaseImportModal();
   setStatus("Готово");
 }
@@ -1979,20 +1923,24 @@ async function previewCaseImport(file) {
 async function applyCaseImport() {
   if (!state.caseImportPlan) return;
   const selectedRows = selectedCaseImportRows();
-  if (!selectedRows.length) {
-    toast("Выберите хотя бы одно новое дело для добавления.", "error");
+  const selectedUpdates = selectedCaseImportUpdates();
+  if (!selectedRows.length && !selectedUpdates.length) {
+    toast("Выберите хотя бы одно новое дело или обновление.", "error");
     return;
   }
-  setStatus("Добавляю новые дела в MTS Tabs…");
+  setStatus("Применяю импорт в MTS Tabs…");
   const payload = await api("/api/cases/import-apply", {
     method: "POST",
-    body: JSON.stringify({ rows: selectedRows }),
+    body: JSON.stringify({ rows: selectedRows, updates: selectedUpdates }),
   });
   setDataFromPayload(payload);
   state.caseImportPlan = null;
   state.caseImportSelectedRows = new Set();
+  state.caseImportSelectedUpdates = new Set();
+  state.caseImportResponsibleOverrides = {};
+  state.caseImportRegionOverrides = {};
   closeCaseImportModal();
-  toast(`Импорт завершён: добавлено ${payload.result?.added ?? 0} дел.`);
+  toast(`Импорт завершён: добавлено ${payload.result?.added ?? 0}, обновлено ${payload.result?.updated ?? 0}.`);
   setStatus("Готово");
 }
 
@@ -2444,10 +2392,6 @@ function settingsEmployeeOptions(current) {
   return optionList(employeesForSelectedYuc().map((employee) => employee["ФИО"]), current);
 }
 
-function settingsSubstituteOptions(current) {
-  return optionList(["нет", ...employeesForSelectedYuc().map((employee) => employee["ФИО"])], current || "нет");
-}
-
 function settingsRegionOptions(current) {
   return optionList(selectedYucRegions(), current);
 }
@@ -2500,7 +2444,9 @@ function updateRegionalSettingsAvailability() {
   });
   const addAssignment = $("#addRegionalAssignmentBtn");
   if (addAssignment) addAssignment.disabled = !enabled;
-  $$(".regional-assignment-field, .save-regional-assignment, .delete-regional-assignment").forEach((control) => {
+  const addSubstitution = $("#addRegionalSubstitutionBtn");
+  if (addSubstitution) addSubstitution.disabled = !enabled;
+  $$(".regional-assignment-field, .regional-substitution-field, .save-regional-assignment, .delete-regional-assignment, .save-regional-substitution, .delete-regional-substitution").forEach((control) => {
     control.disabled = !enabled;
     control.closest(".toggle-inline")?.classList.toggle("disabled", !enabled);
   });
@@ -2511,7 +2457,6 @@ function regionalAssignmentRow(row = {}, index = -1, isNew = false) {
     <tr data-regional-assignment-index="${index}" data-new="${isNew ? "1" : "0"}">
       <td><select class="inline-select regional-assignment-field" data-field="Регион">${settingsRegionOptions(row["Регион"])}</select></td>
       <td><select class="inline-select regional-assignment-field" data-field="Сотрудник">${settingsEmployeeOptions(row["Сотрудник"])}</select></td>
-      <td><select class="inline-select regional-assignment-field" data-field="Заместитель">${settingsSubstituteOptions(row["Заместитель"])}</select></td>
       <td><select class="inline-select regional-assignment-field" data-field="Тип нагрузки">${workloadTypeOptions(row["Тип нагрузки"])}</select></td>
       <td>${yesNoToggle({
         className: "regional-assignment-field",
@@ -2535,34 +2480,109 @@ function renderRegionalAssignments() {
     "ЮЦ": selectedYuc(),
     "Регион": selectedYucRegions()[0] ?? "",
     "Сотрудник": employeesForSelectedYuc()[0]?.["ФИО"] ?? "",
-    "Заместитель": "нет",
     "Тип нагрузки": "все",
     "Активно": "Да",
   }, -1, true) : "";
   $("#regionalAssignmentsTable").innerHTML = html || draft
     ? `${draft}${html}`
-    : `<tr><td colspan="6" class="empty-cell">Закрепления выбранного ЮЦ пока не настроены.</td></tr>`;
+    : `<tr><td colspan="5" class="empty-cell">Закрепления выбранного ЮЦ пока не настроены.</td></tr>`;
+}
+
+function regionalSubstitutionRow(row = {}, index = -1, isNew = false) {
+  return `
+    <tr data-regional-substitution-index="${index}" data-new="${isNew ? "1" : "0"}">
+      <td><select class="inline-select regional-substitution-field" data-field="Регион">${settingsRegionOptions(row["Регион"])}</select></td>
+      <td><select class="inline-select regional-substitution-field" data-field="Основной сотрудник">${settingsEmployeeOptions(row["Основной сотрудник"])}</select></td>
+      <td><select class="inline-select regional-substitution-field" data-field="Замещающий сотрудник">${settingsEmployeeOptions(row["Замещающий сотрудник"])}</select></td>
+      <td><select class="inline-select regional-substitution-field" data-field="Тип нагрузки">${workloadTypeOptions(row["Тип нагрузки"])}</select></td>
+      <td>${yesNoToggle({
+        className: "regional-substitution-field",
+        attrs: `data-field="Активно"`,
+        checked: row["Активно"] ? yes(row["Активно"]) : true,
+      })}</td>
+      <td><input class="inline-input regional-substitution-field" data-field="Комментарий" value="${escapeHtml(row["Комментарий"] || "")}" /></td>
+      <td>
+        <div class="case-actions">
+          <button class="icon-btn confirm save-regional-substitution" title="Сохранить замещение">✓</button>
+          <button class="icon-btn cancel ${isNew ? "cancel-new-regional-substitution" : "delete-regional-substitution"}" title="${isNew ? "Отменить" : "Удалить"}">${isNew ? "×" : "🗑"}</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderRegionalSubstitutions() {
+  const rows = regionalSubstitutionsForSelectedYuc();
+  const html = rows.map((row, index) => regionalSubstitutionRow(row, index, false)).join("");
+  const employees = employeesForSelectedYuc();
+  const draft = state.substitutionDraftOpen ? regionalSubstitutionRow({
+    "ЮЦ": selectedYuc(),
+    "Регион": selectedYucRegions()[0] ?? "",
+    "Основной сотрудник": employees[0]?.["ФИО"] ?? "",
+    "Замещающий сотрудник": employees[1]?.["ФИО"] ?? employees[0]?.["ФИО"] ?? "",
+    "Тип нагрузки": "все",
+    "Активно": "Да",
+    "Комментарий": "",
+  }, -1, true) : "";
+  $("#regionalSubstitutionsTable").innerHTML = html || draft
+    ? `${draft}${html}`
+    : `<tr><td colspan="7" class="empty-cell">Замещения выбранного ЮЦ пока не настроены.</td></tr>`;
 }
 
 function renderSettings() {
   renderDeadlineSettings();
   renderYucSettingsForm();
   renderRegionalAssignments();
+  renderRegionalSubstitutions();
   updateRegionalSettingsAvailability();
 }
 
 const settingsHelp = {
   deadlines: {
     title: "Сроки по типам нагрузки",
-    body: `<p>Значения задаются отдельно для выбранного ЮЦ и типа нагрузки.</p><ul><li><strong>Активность, дни</strong> — период, в течение которого дело считается активным для расчёта нагрузки.</li><li><strong>Автозавершение, дни</strong> — срок контроля: после его истечения дело попадает в список «К завершению», где руководитель принимает решение.</li><li><strong>Учитывать долг</strong> — включает приоритет сотрудника, который пропустил очередь из-за недоступности.</li><li><strong>Максимальный долг</strong> — ограничивает размер такого приоритета; после назначения долг погашается.</li></ul>`,
+    body: `
+      <p>Значения задаются отдельно для выбранного ЮЦ и типа нагрузки.</p>
+      <ul>
+        <li><strong>Активность, дни</strong> — период, в течение которого дело считается активным для расчёта нагрузки.</li>
+        <li><strong>Автозавершение, дни</strong> — срок контроля: после его истечения дело попадает в список «К завершению», где руководитель принимает решение.</li>
+        <li><strong>Учитывать долг</strong> — включает приоритет сотрудника, который пропустил очередь из-за недоступности.</li>
+        <li><strong>Максимальный долг</strong> — ограничивает размер такого приоритета; после назначения долг погашается.</li>
+      </ul>
+    `,
   },
   yucRules: {
     title: "Правила ЮЦ",
-    body: `<p>Эти правила применяются только к выбранному сверху юридическому центру.</p><ul><li>Переключатель неактивных дел определяет, учитываются ли незавершённые, но уже неактивные дела при сравнении нагрузки сотрудников.</li><li>Региональные очереди сначала ищут кандидата среди сотрудников, закреплённых за регионом дела.</li><li>Порог перегруза определяет, когда вся региональная группа может уступить назначение общей очереди.</li><li>Нижние правила задают безопасный сценарий, если регион не настроен или его сотрудники недоступны.</li></ul>`,
+    body: `
+      <p>Эти правила применяются только к выбранному сверху юридическому центру.</p>
+      <ul>
+        <li>Переключатель неактивных дел определяет, учитываются ли незавершённые, но уже неактивные дела при сравнении нагрузки сотрудников.</li>
+        <li>Региональные очереди сначала ищут кандидата среди сотрудников, закреплённых за регионом дела.</li>
+        <li>Порог перегруза определяет, когда вся региональная группа может уступить назначение общей очереди.</li>
+        <li>Нижние правила задают безопасный сценарий, если регион не настроен или его сотрудники недоступны.</li>
+      </ul>
+    `,
   },
   regionalAssignments: {
     title: "Региональные закрепления",
-    body: `<p>Каждая строка связывает регион, сотрудника и тип нагрузки. Для всех типов выберите «все».</p><ul><li>В одном регионе может быть несколько сотрудников, а один сотрудник может быть закреплён за несколькими регионами.</li><li>Заместитель используется, когда все доступные региональные сотрудники недоступны для нужного типа нагрузки.</li><li>Заместитель должен быть активен в соответствующей очереди; иначе применяется дальнейшее правило ЮЦ — обычно общая очередь.</li><li>Выключенное закрепление хранится в таблице, но в назначении не участвует.</li></ul>`,
+    body: `
+      <p>Каждая строка связывает регион, сотрудника и тип нагрузки. Для всех типов выберите «все».</p>
+      <ul>
+        <li>В одном регионе может быть несколько сотрудников, а один сотрудник может быть закреплён за несколькими регионами.</li>
+        <li>Выключенное закрепление хранится в таблице, но в назначении не участвует.</li>
+      </ul>
+    `,
+  },
+  regionalSubstitutions: {
+    title: "Региональные замещения",
+    body: `
+      <p>Это правила резервной очереди назначения, а не роли доступа пользователей.</p>
+      <ul>
+        <li>Замещения применяются только когда недоступна вся основная региональная группа.</li>
+        <li>Для одного основного сотрудника можно настроить несколько замещающих; повторяющиеся кандидаты исключаются.</li>
+        <li>Замещающий должен быть активен и участвовать в очереди соответствующего типа.</li>
+        <li>Роль доступа «Заместитель» настраивается отдельно в разделе «Доступы».</li>
+      </ul>
+    `,
   },
 };
 
@@ -2580,29 +2600,6 @@ function closeSettingsHelp() {
   $("#settingsHelpModal")?.setAttribute("aria-hidden", "true");
 }
 
-function renderJournal() {
-  if (state.journalLoading) {
-    $("#journalTable").innerHTML = `<tr><td colspan="7" class="empty-cell">Журнал загружается из MTS Tabs…</td></tr>`;
-    return;
-  }
-  if (!state.journalLoaded) {
-    $("#journalTable").innerHTML = `<tr><td colspan="7" class="empty-cell">Откройте вкладку «Журнал», чтобы загрузить события из MTS Tabs.</td></tr>`;
-    return;
-  }
-  const rows = journalRowsForSelectedYuc().slice().reverse().slice(0, 250);
-  $("#journalTable").innerHTML = rows.length ? rows.map((row) => `
-    <tr>
-      <td>${escapeHtml(row["Дата события"])}</td>
-      <td>${escapeHtml(row.case_id)}</td>
-      <td>${escapeHtml(row["Тип дела"])}</td>
-      <td title="${escapeHtml(row["Ответственный"] || "")}">${escapeHtml(displayName(row["Ответственный"]))}</td>
-      <td>${badge(row["Способ"], row["Способ"] === "ручное" ? "orange" : row["Способ"] === "авто" ? "green" : "gray")}</td>
-      <td>${escapeHtml(row["Основание"])}</td>
-      <td><div class="cell-main">${escapeHtml(row["Комментарий"])}</div></td>
-    </tr>
-  `).join("") : `<tr><td colspan="7" class="empty-cell">События выбранного ЮЦ не найдены.</td></tr>`;
-}
-
 function renderAll() {
   if (!state.data) return;
   renderYucTabs();
@@ -2618,7 +2615,6 @@ function renderAll() {
   renderEmployees();
   renderVacations();
   renderSettings();
-  renderJournal();
 }
 
 function formDraft() {
@@ -2657,7 +2653,7 @@ function updateThirdPartyVisibility() {
   const field = $("#thirdPartyField");
   const grid = $("#partyGrid");
   const input = form.elements["Третье лицо"];
-  const visible = type === "судебное";
+  const visible = workloadCaseType(type) === "судебное";
   field?.classList.toggle("hidden", !visible);
   grid?.classList.toggle("has-third-party", visible);
   if (!visible && input) input.value = "";
@@ -3049,6 +3045,42 @@ async function deleteRegionalAssignment(button) {
   toast("Региональное закрепление удалено.");
 }
 
+async function saveRegionalSubstitution(button) {
+  if (!regionalQueuesCurrentlyEnabled()) {
+    toast("Сначала включите региональные очереди для выбранного ЮЦ.", "error");
+    return;
+  }
+  const tr = button.closest("tr");
+  const index = Number(tr.dataset.regionalSubstitutionIndex);
+  const original = index >= 0 ? regionalSubstitutionsForSelectedYuc()[index] : null;
+  const row = collectRegionalRow(tr, ".regional-substitution-field");
+  setStatus("Сохраняю замещение…");
+  const payload = await api("/api/regional-substitutions/upsert", {
+    method: "POST",
+    body: JSON.stringify({ yuc: selectedYuc(), original, row }),
+  });
+  state.substitutionDraftOpen = false;
+  setDataFromPayload(payload);
+  setStatus("Сохранено");
+  toast("Региональное замещение сохранено.");
+}
+
+async function deleteRegionalSubstitution(button) {
+  if (!regionalQueuesCurrentlyEnabled()) return;
+  const tr = button.closest("tr");
+  const index = Number(tr.dataset.regionalSubstitutionIndex);
+  const row = regionalSubstitutionsForSelectedYuc()[index];
+  if (!row || !window.confirm("Удалить региональное замещение?")) return;
+  setStatus("Удаляю замещение…");
+  const payload = await api("/api/regional-substitutions/delete", {
+    method: "POST",
+    body: JSON.stringify({ yuc: selectedYuc(), row }),
+  });
+  setDataFromPayload(payload);
+  setStatus("Сохранено");
+  toast("Региональное замещение удалено.");
+}
+
 async function saveCaseStatus(caseId, status) {
   setStatus("Сохраняю статус…");
   const patch = { "Статус": status };
@@ -3259,6 +3291,7 @@ const caseModalEditableFields = [
   "Ответчик",
   "Третье лицо",
   "Предмет",
+  "Движение дела",
 ];
 
 function canEditCaseRow(row) {
@@ -3301,6 +3334,7 @@ function caseModalInitialDraft(row) {
     "Ответчик": row["Ответчик"] ?? "",
     "Третье лицо": row["Третье лицо"] ?? "",
     "Предмет": row["Предмет"] ?? "",
+    "Движение дела": row["Движение дела"] ?? "",
   };
 }
 
@@ -3592,9 +3626,9 @@ function renderCaseModal() {
   const row = caseModalRow();
   if (!row) return;
   const draft = caseModalDraft();
-  const isJudicial = normalizeCaseType(draft["Тип дела"]) === "судебное";
+  const isJudicial = workloadCaseType(draft["Тип дела"]) === "судебное";
   const canEdit = !isDeletedCase(row) && canEditCaseRow(row);
-  $("#caseModalTitle").textContent = `Карточка ${row.case_id}`;
+  $("#caseModalTitle").textContent = `Карточка ${row.case_id}${state.caseModalLoading ? " · обновляю…" : ""}`;
   $("#caseModalBody").innerHTML = `
     <div class="case-modal-form ${state.caseModalEditing ? "editing" : "readonly"}">
       <div class="case-modal-status-row">
@@ -3619,6 +3653,7 @@ function renderCaseModal() {
       </div>
       <div class="case-modal-grid">
         ${caseModalField({ field: "Предмет", label: "Предмет", type: "textarea", wide: true, rows: 4, readonly: caseModalFieldReadonlyForUser("Предмет") })}
+        ${caseModalField({ field: "Движение дела", label: "Движение дела", type: "textarea", wide: true, rows: 5, readonly: caseModalFieldReadonlyForUser("Движение дела") })}
       </div>
       ${caseDocumentsSection(row, canEdit)}
     </div>
@@ -3636,9 +3671,30 @@ function openCaseModal(caseId) {
   state.caseModalEditing = false;
   state.caseModalDraft = null;
   state.caseDocumentUploading = false;
+  state.caseModalLoading = true;
   renderCaseModal();
   $("#caseModal").classList.add("show");
   $("#caseModalEdit").focus();
+  refreshCaseModal(caseId);
+}
+
+async function refreshCaseModal(caseId) {
+  try {
+    const payload = await api(`/api/cases/${encodeURIComponent(caseId)}`);
+    // Пользователь мог закрыть одну карточку и открыть другую до ответа API.
+    if (state.caseModalCaseId !== caseId || !payload.case) return;
+    const index = state.data?.cases?.findIndex((item) => item.case_id === caseId) ?? -1;
+    if (index >= 0) state.data.cases[index] = payload.case;
+  } catch (error) {
+    if (state.caseModalCaseId === caseId) {
+      toast(`Не удалось обновить карточку: ${error.message}`, "error");
+    }
+  } finally {
+    if (state.caseModalCaseId === caseId) {
+      state.caseModalLoading = false;
+      renderCaseModal();
+    }
+  }
 }
 
 function closeCaseModal() {
@@ -3651,6 +3707,7 @@ function closeCaseModal() {
   state.caseModalEditing = false;
   state.caseModalDraft = null;
   state.caseDocumentUploading = false;
+  state.caseModalLoading = false;
 }
 
 function startCaseModalEdit() {
@@ -3678,7 +3735,7 @@ function cancelCaseModalEdit() {
 function updateCaseModalDraft(field, value) {
   if (!state.caseModalEditing || !state.caseModalDraft) return;
   state.caseModalDraft[field] = value;
-  if (field === "Тип дела" && normalizeCaseType(value) !== "судебное") {
+  if (field === "Тип дела" && workloadCaseType(value) !== "судебное") {
     state.caseModalDraft["Третье лицо"] = "";
   }
   renderCaseModal();
@@ -3958,30 +4015,7 @@ function cancelVacationDraft() {
 }
 
 async function exitApplication() {
-  if (!isAdminUser()) {
-    await logOut();
-    return;
-  }
-  const confirmed = window.confirm("Остановить сервер приложения и закрыть страницу?");
-  if (!confirmed) return;
-  setStatus("Останавливаю сервер…");
-  try {
-    await api("/api/shutdown", { method: "POST", body: JSON.stringify({}) });
-  } catch {
-    // The server may close the connection quickly; the next step is still safe.
-  }
-  document.body.innerHTML = `
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:var(--font);background:#f7f7f8;color:#1a1a1a;padding:24px;">
-      <div style="max-width:560px;background:white;border-radius:16px;padding:28px;box-shadow:0 8px 24px rgba(0,0,0,.12);">
-        <h1 style="margin:0 0 12px;font-size:28px;">Приложение остановлено</h1>
-        <p style="margin:0;color:#666;line-height:1.55;">Сервер получил команду завершения. Если вкладка не закрылась автоматически, её можно закрыть вручную.</p>
-      </div>
-    </div>
-  `;
-  setTimeout(() => {
-    window.open("", "_self");
-    window.close();
-  }, 250);
+  await logOut();
 }
 
 function bindEvents() {
@@ -4019,6 +4053,11 @@ function bindEvents() {
     if (!regionalQueuesCurrentlyEnabled()) return;
     state.assignmentDraftOpen = true;
     renderRegionalAssignments();
+  });
+  $("#addRegionalSubstitutionBtn")?.addEventListener("click", () => {
+    if (!regionalQueuesCurrentlyEnabled()) return;
+    state.substitutionDraftOpen = true;
+    renderRegionalSubstitutions();
   });
   $("#caseModalOk").addEventListener("click", closeCaseModal);
   $("#caseModalEdit")?.addEventListener("click", startCaseModalEdit);
@@ -4095,9 +4134,17 @@ function bindEvents() {
     setStatus("Ошибка");
     toast(error.message, "error");
   }));
-  $("#caseImportBtn")?.addEventListener("click", () => $("#caseImportInput")?.click());
+  $("#caseImportBtn")?.addEventListener("click", () => {
+    state.caseImportYuc = selectedYuc();
+    if (!state.caseImportYuc || isExternalReadOnlyYuc()) {
+      toast("Выберите доступную вкладку юридического центра для импорта.", "error");
+      return;
+    }
+    $("#caseImportInput")?.click();
+  });
   $("#caseImportInput")?.addEventListener("change", (event) => {
     previewCaseImport(event.target.files?.[0]).catch((error) => {
+      recordClientError(error, "Предварительная проверка Excel-импорта");
       setStatus("Ошибка");
       toast(error.message, "error");
     });
@@ -4105,6 +4152,12 @@ function bindEvents() {
   $("#caseImportCancelBtn")?.addEventListener("click", closeCaseImportModal);
   $("#caseImportModal")?.addEventListener("click", (event) => {
     if (event.target.id === "caseImportModal") closeCaseImportModal();
+    const tab = event.target.closest("[data-import-tab]");
+    if (tab) {
+      state.caseImportActiveTab = tab.dataset.importTab === "updates" ? "updates" : "new";
+      renderCaseImportModal();
+      return;
+    }
     if (event.target.closest("#caseImportSelectAllBtn")) {
       state.caseImportSelectedRows = new Set((state.caseImportPlan?.toAdd ?? []).map((item) => String(item.rowNumber)));
       renderCaseImportModal();
@@ -4113,11 +4166,27 @@ function bindEvents() {
       state.caseImportSelectedRows = new Set();
       renderCaseImportModal();
     }
+    if (event.target.closest("#caseImportUpdateSelectAllBtn")) {
+      state.caseImportSelectedUpdates = new Set((state.caseImportPlan?.existing ?? []).filter((item) => item.changes?.length).map((item) => String(item.caseId)));
+      renderCaseImportModal();
+    }
+    if (event.target.closest("#caseImportUpdateClearAllBtn")) {
+      state.caseImportSelectedUpdates = new Set();
+      renderCaseImportModal();
+    }
   });
   $("#caseImportApplyBtn")?.addEventListener("click", () => applyCaseImport().catch((error) => {
+    recordClientError(error, "Применение Excel-импорта");
     setStatus("Ошибка");
     toast(error.message, "error");
   }));
+  $("#saveStatus")?.addEventListener("click", () => copyLastApiError().catch((error) => toast(error.message, "error")));
+  $("#saveStatus")?.addEventListener("keydown", (event) => {
+    if ((event.key === "Enter" || event.key === " ") && state.lastApiError) {
+      event.preventDefault();
+      copyLastApiError().catch((error) => toast(error.message, "error"));
+    }
+  });
   $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
   $("#casesSearch").addEventListener("input", renderCases);
   $("#casesSearchClear")?.addEventListener("click", () => {
@@ -4232,6 +4301,8 @@ function bindEvents() {
     if (issueAccessCodeButton) { issueAccessCode(issueAccessCodeButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
     const resetAccessPasswordButton = event.target.closest(".reset-access-password");
     if (resetAccessPasswordButton) { resetAccessPassword(resetAccessPasswordButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
+    const accessYucToggle = event.target.closest(".access-yuc-toggle");
+    if (accessYucToggle) { toggleAccessYuc(accessYucToggle.dataset.accessYuc); return; }
     const queueAutoButton = event.target.closest(".queue-assign-auto");
     if (queueAutoButton) {
       autoAssign().catch((error) => {
@@ -4299,6 +4370,21 @@ function bindEvents() {
       state.assignmentDraftOpen = false;
       renderRegionalAssignments();
     }
+    const saveRegionalSubstitutionButton = event.target.closest(".save-regional-substitution");
+    if (saveRegionalSubstitutionButton) saveRegionalSubstitution(saveRegionalSubstitutionButton).catch((error) => {
+      setStatus("Ошибка");
+      toast(error.message, "error");
+    });
+    const deleteRegionalSubstitutionButton = event.target.closest(".delete-regional-substitution");
+    if (deleteRegionalSubstitutionButton) deleteRegionalSubstitution(deleteRegionalSubstitutionButton).catch((error) => {
+      setStatus("Ошибка");
+      toast(error.message, "error");
+    });
+    const cancelNewRegionalSubstitutionButton = event.target.closest(".cancel-new-regional-substitution");
+    if (cancelNewRegionalSubstitutionButton) {
+      state.substitutionDraftOpen = false;
+      renderRegionalSubstitutions();
+    }
     const existingAutoButton = event.target.closest(".assign-existing-auto");
     if (existingAutoButton) assignExistingAuto(existingAutoButton.dataset.id).catch((error) => {
       setStatus("Ошибка");
@@ -4327,15 +4413,6 @@ function bindEvents() {
     if (vacationDay) handleVacationDateClick(vacationDay.dataset.date);
   });
   document.addEventListener("change", (event) => {
-    if (event.target.matches("#caseDocumentInput")) {
-      const files = [...(event.target.files ?? [])];
-      event.target.value = "";
-      uploadCaseDocuments(files).catch((error) => {
-        setStatus("Ошибка");
-        toast(error.message, "error");
-      });
-      return;
-    }
     if (event.target.matches(".case-column-visibility")) {
       setCaseColumnVisibility(event.target.dataset.columnKey, event.target.checked);
       return;
@@ -4356,6 +4433,47 @@ function bindEvents() {
       updateCaseImportSelectionState();
       return;
     }
+    if (event.target.matches("#caseImportUpdateSelectAll")) {
+      state.caseImportSelectedUpdates = event.target.checked
+        ? new Set((state.caseImportPlan?.existing ?? []).filter((item) => item.changes?.length).map((item) => String(item.caseId)))
+        : new Set();
+      renderCaseImportModal();
+      return;
+    }
+    if (event.target.matches(".case-import-update-check")) {
+      const caseId = String(event.target.dataset.caseId ?? "");
+      if (caseId) {
+        if (event.target.checked) state.caseImportSelectedUpdates.add(caseId);
+        else state.caseImportSelectedUpdates.delete(caseId);
+      }
+      updateCaseImportSelectionState();
+      return;
+    }
+    if (event.target.matches(".case-import-responsible")) {
+      const rowNumber = String(event.target.dataset.rowNumber ?? "");
+      if (rowNumber) {
+        const value = event.target.value;
+        if (value) {
+          state.caseImportResponsibleOverrides[rowNumber] = value;
+          state.caseImportSelectedRows.add(rowNumber);
+        } else {
+          delete state.caseImportResponsibleOverrides[rowNumber];
+          state.caseImportSelectedRows.delete(rowNumber);
+        }
+      }
+      renderCaseImportModal();
+      return;
+    }
+    if (event.target.matches(".case-import-region")) {
+      const rowNumber = String(event.target.dataset.rowNumber ?? "");
+      if (rowNumber) {
+        const region = cleanImportValue(event.target.value);
+        if (region) state.caseImportRegionOverrides[rowNumber] = region;
+        else delete state.caseImportRegionOverrides[rowNumber];
+      }
+      renderCaseImportModal();
+      return;
+    }
     if (event.target.matches("#historicalFrom")) {
       state.historicalAllTime = false;
       state.historicalInitialized = true;
@@ -4373,6 +4491,15 @@ function bindEvents() {
     if (event.target.matches("#historicalDateMode")) {
       state.historicalDateMode = event.target.value === "completed" ? "completed" : "assigned";
       renderWorkloadDashboard();
+      return;
+    }
+    if (event.target.matches("#caseDocumentInput")) {
+      const files = [...(event.target.files ?? [])];
+      event.target.value = "";
+      uploadCaseDocuments(files).catch((error) => {
+        setStatus("Ошибка");
+        toast(error.message, "error");
+      });
       return;
     }
     if (event.target.matches("[data-case-modal-field]")) {
@@ -4405,6 +4532,7 @@ function bindEvents() {
       closeVacationImportModal();
       closeCaseImportModal();
       closeQueueManualAssignModal();
+      closeDocumentPreview();
     }
   });
 }
@@ -4427,6 +4555,15 @@ async function init() {
 }
 
 init();
+
+window.addEventListener("error", (event) => {
+  recordClientError(event.error ?? event.message, "Необработанная ошибка интерфейса");
+  setStatus("Ошибка");
+});
+window.addEventListener("unhandledrejection", (event) => {
+  recordClientError(event.reason, "Необработанная ошибка операции");
+  setStatus("Ошибка");
+});
 
 
 // Safari может восстановить вкладку из back/forward cache без повторного запуска init().

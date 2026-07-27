@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { loadRuntimeConfig } from "../lib/runtime-config.mjs";
+
+test("local runtime binds only to loopback and allows file logs", () => {
+  const config = loadRuntimeConfig({});
+  assert.equal(config.host, "127.0.0.1");
+  assert.equal(config.port, 8766);
+  assert.equal(config.fileLogging, true);
+});
+
+test("Render runtime is stateless and listens on the platform interface", () => {
+  const config = loadRuntimeConfig({ RENDER: "true", PORT: "10000" });
+  assert.equal(config.host, "0.0.0.0");
+  assert.equal(config.port, 10000);
+  assert.equal(config.fileLogging, false);
+});
+
+test("invalid numeric settings fall back to safe defaults", () => {
+  const config = loadRuntimeConfig({ PORT: "invalid", CASE_DOCUMENT_MAX_BYTES: "-1" });
+  assert.equal(config.port, 8766);
+  assert.equal(config.caseDocumentMaxBytes, 12_000_000);
+});

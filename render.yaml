@@ -1,45 +1,24 @@
 services:
   - type: web
-    name: mts-load-distribution-tabs
+    name: mts-load-distribution
     runtime: node
     plan: free
-    rootDir: app
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /
+    buildCommand: cd app && npm ci
+    startCommand: cd app && npm start
+    healthCheckPath: /api/health
     autoDeployTrigger: commit
     envVars:
-      - key: NODE_ENV
-        value: production
-      - key: HOST
-        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: "22"
+      - key: RENDER
+        value: "true"
+      - key: FILE_LOGGING
+        value: "false"
       - key: TABS_API_TOKEN
         sync: false
       - key: AUTH_SESSION_SECRET
-        sync: false
-      - key: AUTH_SESSION_TTL_SECONDS
-        value: "1209600"
+        generateValue: true
       - key: BOOTSTRAP_ADMIN_LOGIN
-        value: sdluzhi
+        sync: false
       - key: BOOTSTRAP_ADMIN_CODE
         sync: false
-      - key: TABS_DIRECTORIES_DATASHEET_ID
-        value: dstUTQd5tp5sCU7mLv
-      - key: TABS_DIRECTORIES_VIEW_ID
-        value: viwV8x7vx4jzL
-      - key: TABS_YUC_SETTINGS_DATASHEET_ID
-        value: dstGXdrV1Mb3Rkc57E
-      - key: TABS_YUC_SETTINGS_VIEW_ID
-        value: viwzMFn8hWD2U
-      - key: TABS_REGIONAL_ASSIGNMENTS_DATASHEET_ID
-        value: dstPFbxwoPH7YfCRAz
-      - key: TABS_REGIONAL_ASSIGNMENTS_VIEW_ID
-        value: viwrYdxBbj4UD
-      - key: TABS_REGIONAL_SUBSTITUTIONS_DATASHEET_ID
-        value: dstZng9NVviKd5PhnZ
-      - key: TABS_REGIONAL_SUBSTITUTIONS_VIEW_ID
-        value: viwMkyAsobxjs
-      - key: TABS_REQUEST_TIMEOUT_MS
-        value: "30000"
-      - key: TABS_REQUEST_RETRIES
-        value: "3"

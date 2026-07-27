@@ -150,7 +150,7 @@ console.table(changedDebt.map(({ row, before, after }) => ({
 })));
 
 if (write) {
-  await saveData(simulation, ["cases", "queues", "state", "journal"]);
+  await saveData(simulation, ["cases", "queues", "state"]);
   const confirmed = await readData(["queues", "state", "cases"]);
   const lastAssignment = assignmentsLog.at(-1);
   const confirmedCase = confirmed.cases.find((row) => cleanText(row.case_id) === cleanText(lastAssignment.case_id));

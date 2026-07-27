@@ -1,9 +1,9 @@
 import {
   CASE_HEADERS,
   EMPLOYEE_HEADERS,
-  JOURNAL_HEADERS,
   QUEUE_HEADERS,
   REGIONAL_ASSIGNMENT_HEADERS,
+  REGIONAL_SUBSTITUTION_HEADERS,
   SETTINGS_HEADERS,
   STATE_HEADERS,
   VACATION_HEADERS,
@@ -67,15 +67,6 @@ const TABLES = {
     keyFields: ["employee_id", "Дата начала"],
     dateFields: ["Дата начала", "Дата окончания"],
   },
-  journal: {
-    name: "Журнал",
-    datasheetId: process.env.TABS_JOURNAL_DATASHEET_ID || "dstpntgUBUkCe8Jvv9",
-    viewId: process.env.TABS_JOURNAL_VIEW_ID || "viwuyr7QieusY",
-    headers: JOURNAL_HEADERS,
-    keyFields: [],
-    dateFields: ["Дата события"],
-    appendOnly: true,
-  },
   settings: {
     name: "Настройки",
     datasheetId: process.env.TABS_SETTINGS_DATASHEET_ID || "dstS9sVx6XlxNASvuh",
@@ -101,6 +92,15 @@ const TABLES = {
     viewId: process.env.TABS_REGIONAL_ASSIGNMENTS_VIEW_ID || "viwrYdxBbj4UD",
     headers: REGIONAL_ASSIGNMENT_HEADERS,
     keyFields: ["ЮЦ", "Регион", "Сотрудник", "Тип нагрузки"],
+    dateFields: [],
+    readOnlyFields: ["Название"],
+  },
+  regionalSubstitutions: {
+    name: "Региональные замещения",
+    datasheetId: process.env.TABS_REGIONAL_SUBSTITUTIONS_DATASHEET_ID || "dstZng9NVviKd5PhnZ",
+    viewId: process.env.TABS_REGIONAL_SUBSTITUTIONS_VIEW_ID || "viwMkyAsobxjs",
+    headers: REGIONAL_SUBSTITUTION_HEADERS,
+    keyFields: ["ЮЦ", "Регион", "Основной сотрудник", "Замещающий сотрудник", "Тип нагрузки"],
     dateFields: [],
     readOnlyFields: ["Название"],
   },
@@ -280,13 +280,23 @@ function toTabsUrl(value) {
   };
 }
 
+function normalizeAttachments(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({ ...item }));
+}
+
 function normalizeFromTabs(table, fields = {}) {
   const dateSet = new Set(table.dateFields);
+  const attachmentSet = new Set(table.attachmentFields ?? []);
   const row = {};
   for (const header of table.headers) {
     const value = fields[header];
     if (table.name === "Дела" && header === "Ссылка") {
       row[header] = fromTabsUrl(value);
+    } else if (attachmentSet.has(header)) {
+      row[header] = normalizeAttachments(value);
     } else {
       row[header] = dateSet.has(header)
         ? fromTabsDate(value, header === "Дата события")
@@ -299,6 +309,7 @@ function normalizeFromTabs(table, fields = {}) {
 function normalizeToTabs(table, row = {}) {
   const dateSet = new Set(table.dateFields);
   const numberSet = new Set(table.numberFields ?? []);
+  const attachmentSet = new Set(table.attachmentFields ?? []);
   const readOnlySet = new Set(table.readOnlyFields ?? []);
   const fields = {};
   for (const header of table.headers) {
@@ -306,6 +317,8 @@ function normalizeToTabs(table, row = {}) {
     const value = row[header];
     if (table.name === "Дела" && header === "Ссылка") {
       fields[header] = toTabsUrl(value);
+    } else if (attachmentSet.has(header)) {
+      fields[header] = normalizeAttachments(value);
     } else {
       fields[header] = dateSet.has(header)
         ? toTabsDate(value, header === "Дата события")

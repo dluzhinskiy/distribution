@@ -392,6 +392,10 @@ body.write-pending button:not(:disabled) {
   box-shadow: 0 0 0 4px rgba(227, 6, 17, 0.12);
 }
 
+.status-copyable {
+  cursor: copy;
+}
+
 .status-draft {
   color: #8a4a00;
   border-color: rgba(255, 149, 0, 0.28);
@@ -1218,6 +1222,19 @@ body.write-pending button:not(:disabled) {
   justify-content: flex-end;
 }
 
+.import-responsible-choice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.import-responsible-choice select {
+  min-width: 220px;
+}
+
 .case-toolbar .search {
   min-width: 260px;
 }
@@ -1306,43 +1323,13 @@ body.write-pending button:not(:disabled) {
   cursor: pointer;
 }
 
-.case-column-toggle input {
-  display: none;
-}
-
-.case-column-toggle .switch-ui {
-  width: 34px;
-  height: 20px;
-}
-
-.case-column-toggle .switch-ui::after {
-  width: 14px;
-  height: 14px;
-}
-
-.case-column-toggle input:checked + .switch-ui {
-  background: var(--apple-accent, var(--mts-red));
-}
-
-.case-column-toggle input:checked + .switch-ui::after {
-  transform: translateX(14px);
-}
-
-.case-column-toggle small {
-  color: #7890a7;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.case-column-toggle.is-detail {
-  padding-left: 8px;
-}
-
-.case-column-toggle.is-disabled {
-  opacity: 0.48;
-  cursor: default;
-}
-
+.case-column-toggle input { display: none; }
+.case-column-toggle .switch-ui { width: 34px; height: 20px; }
+.case-column-toggle .switch-ui::after { width: 14px; height: 14px; }
+.case-column-toggle input:checked + .switch-ui { background: var(--apple-accent, var(--mts-red)); }
+.case-column-toggle input:checked + .switch-ui::after { transform: translateX(14px); }
+.case-column-toggle.is-detail { padding-left: 8px; }
+.case-column-toggle.is-disabled { opacity: 0.48; cursor: default; }
 
 .edit-toggle {
   display: flex;
@@ -1709,6 +1696,65 @@ body.write-pending button:not(:disabled) {
 
 .import-row.is-disabled .import-row-check {
   cursor: default;
+}
+
+.import-invalid-list {
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.import-invalid-row {
+  display: grid;
+  gap: 4px;
+}
+
+.import-invalid-subject {
+  color: var(--mts-gray-800);
+  font-size: 13px;
+}
+
+.import-invalid-detail {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.import-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0 12px;
+}
+
+.import-tab {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.import-tab.active {
+  border-color: var(--mts-red);
+  background: var(--mts-red);
+  color: #fff;
+}
+
+.import-change-list {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.import-change-list span {
+  overflow-wrap: anywhere;
 }
 
 .import-warning {
@@ -2239,6 +2285,26 @@ td .cell-main {
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.12);
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.28);
+}
+
+.foreign-region-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: #8a4a00;
+  background: rgba(255, 149, 0, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(255, 149, 0, 0.34);
+  line-height: 1.15;
+}
+
+.foreign-region-chip small {
+  color: #9a5500;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .case-party-filters {
@@ -3718,6 +3784,60 @@ body.auth-pending .app-shell {
   gap: 7px;
 }
 
+.access-yuc-row td {
+  padding: 8px 10px;
+  background: rgba(224, 239, 252, 0.62);
+}
+
+.access-yuc-row:not(:first-child) td {
+  border-top: 12px solid transparent;
+}
+
+.access-yuc-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 9px;
+  border: 0;
+  padding: 8px 10px;
+  color: var(--mts-gray-900);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.access-yuc-toggle:hover {
+  color: var(--mts-blue, #1474bd);
+}
+
+.access-yuc-chevron {
+  display: inline-block;
+  font-size: 23px;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.access-yuc-toggle[aria-expanded="true"] .access-yuc-chevron {
+  transform: rotate(90deg);
+}
+
+.access-yuc-count {
+  min-width: 25px;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #486985;
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.access-user-row.is-collapsed {
+  display: none;
+}
+
 .access-code-value {
   margin: 16px 0 10px;
   padding: 16px;
@@ -3881,8 +4001,8 @@ body.role-employee #view-cases .card-head > div:first-child h2::after {
   }
 }
 
-/* Настраиваемый набор столбцов: ширина растёт только до комфортного минимума,
-   после чего table-wrap включает горизонтальную прокрутку. */
+/* Настраиваемый набор столбцов: таблица занимает всю доступную ширину, а
+   горизонтальная прокрутка появляется только ниже безопасной ширины полей. */
 .cases-table[data-case-layout] {
   width: 100% !important;
   min-width: var(--cases-table-min-width, 860px) !important;
@@ -3901,23 +4021,7 @@ body.role-employee #view-cases .card-head > div:first-child h2::after {
 .cases-table[data-case-layout] .case-column-caseNumber { width: 170px !important; }
 .cases-table[data-case-layout] .case-column-caseProLink { width: 150px !important; }
 .cases-table[data-case-layout] .case-column-action { width: 128px !important; }
+.cases-table[data-case-layout] .case-column-subject .cell-main { overflow-wrap: anywhere; }
 
-.cases-table[data-case-layout] .case-column-subject .cell-main {
-  overflow-wrap: anywhere;
-}
-
-.case-pro-link {
-  color: var(--apple-accent, #2f8df6);
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.case-pro-link:hover {
-  text-decoration: underline;
-}
-
-@media (max-width: 720px) {
-  .case-columns-inline {
-    align-items: flex-start;
-  }
-}
+.case-pro-link { color: var(--apple-accent, #2f8df6); font-weight: 700; text-decoration: none; }
+.case-pro-link:hover { text-decoration: underline; }

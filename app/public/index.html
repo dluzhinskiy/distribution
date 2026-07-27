@@ -48,7 +48,6 @@
           <button class="nav-link" data-view="cases">Дела</button>
           <button class="nav-link" data-view="employees">Сотрудники</button>
           <button class="nav-link" data-view="settings">Настройки</button>
-          <button class="nav-link" data-view="journal">Журнал</button>
           <button class="nav-link admin-only" data-view="access">Доступы</button>
           <button class="nav-link" data-view="help">Инструкция</button>
         </nav>
@@ -155,6 +154,8 @@
                     <option value="претензия">Претензия</option>
                     <option value="административное">Административное</option>
                     <option value="судебное">Судебное</option>
+                    <option value="уголовное">Уголовное</option>
+                    <option value="банкротное">Банкротное</option>
                   </select>
                 </label>
                 <label class="field wide distribution-subject">
@@ -442,32 +443,34 @@
               <div class="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Регион</th><th>Сотрудник</th><th>Заместитель</th><th>Тип нагрузки</th><th>Активно</th><th>Действие</th></tr>
+                    <tr><th>Регион</th><th>Сотрудник</th><th>Тип нагрузки</th><th>Активно</th><th>Действие</th></tr>
                   </thead>
                   <tbody id="regionalAssignmentsTable"></tbody>
                 </table>
               </div>
             </section>
-          </div>
-        </section>
 
-        <section class="view" id="view-journal">
-          <section class="card">
-            <div class="card-head">
-              <div>
-                <h2>Журнал</h2>
-                <p>Автоназначения, ручные назначения, остановки и миграция данных.</p>
+            <section class="card">
+              <div class="card-head">
+                <div>
+                  <h2>Региональные замещения</h2>
+                  <p>Резервные сотрудники подключаются только при недоступности всей основной региональной группы.</p>
+                </div>
+                <div class="settings-card-actions">
+                  <button class="btn btn-secondary" id="addRegionalSubstitutionBtn">Добавить замещение</button>
+                  <button class="settings-help-trigger" type="button" data-settings-help="regionalSubstitutions" aria-label="Справка по региональным замещениям" title="Справка">?</button>
+                </div>
               </div>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>Дата</th><th>case_id</th><th>Тип</th><th>Ответственный</th><th>Способ</th><th>Основание</th><th>Комментарий</th></tr>
-                </thead>
-                <tbody id="journalTable"></tbody>
-              </table>
-            </div>
-          </section>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Регион</th><th>Основной сотрудник</th><th>Замещающий сотрудник</th><th>Тип нагрузки</th><th>Активно</th><th>Комментарий</th><th>Действие</th></tr>
+                  </thead>
+                  <tbody id="regionalSubstitutionsTable"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="view" id="view-access">
@@ -494,14 +497,14 @@
             <ol>
               <li>На вкладке «Распределение» заполните новое дело.</li>
               <li>Выберите тип дела — приложение сразу покажет очередь назначения и выделит рекомендованного кандидата.</li>
-              <li>Если рекомендация подходит — нажмите «Назначить» напротив выделенного кандидата. Приложение запишет дело, журнал и состояние очереди в MTS Tabs.</li>
+              <li>Если рекомендация подходит — нажмите «Назначить» напротив выделенного кандидата. Приложение запишет дело и состояние очереди в MTS Tabs.</li>
               <li>Если нужно отступить от очереди — нажмите «Вне очереди» напротив доступного сотрудника и укажите комментарий руководителя в модальном окне.</li>
               <li>Если дело уже есть в статусе «Ожидает распределения», откройте вкладку «Дела» и используйте кнопки «Авто» или «Вручную» в колонке «Действие».</li>
               <li>На вкладке «Дела» клик по <code>CASE-XXXX</code> открывает карточку дела. Для смены ответственного или статуса включите тумблер «Редактирование дел».</li>
               <li>Для удаления дела включите «Разрешить удаление», нажмите корзину и подтвердите действие вводом точного <code>CASE-XXXX</code>. Удалённые дела можно увидеть через фильтр «Показывать удалённые» и восстановить.</li>
               <li>Отпуска и участие в типах дел редактируются на вкладке «Сотрудники».</li>
               <li>Долг по типу нагрузки настраивается в «Настройках» и вручную корректируется числом на вкладке «Сотрудники».</li>
-              <li>Региональные правила и закрепления настраиваются на вкладке «Настройки». Заместитель указывается прямо в строке закрепления.</li>
+              <li>Региональные закрепления и правила резервного замещения настраиваются отдельными таблицами на вкладке «Настройки».</li>
               <li>Регионы в делах приводятся к названиям из справочника, например «Хабаровск» сохраняется как «Хабаровский край».</li>
             </ol>
             <div class="rule-box">
@@ -511,7 +514,7 @@
               <h3>Правила автоматического назначения</h3>
               <p>
                 Алгоритм всегда работает внутри выбранного сверху ЮЦ. Тип нагрузки берётся из карточки дела:
-                претензия, административное или судебное. Ручное назначение руководителем имеет приоритет над
+                претензия, административное, судебное, уголовное или банкротное. Ручное назначение руководителем имеет приоритет над
                 автоматическим расчётом и фиксируется отдельно.
               </p>
               <div class="help-grid">
@@ -554,7 +557,7 @@
               </div>
             </div>
             <div class="help-section">
-              <h3>Роль заместителей</h3>
+              <h3>Региональные замещения при назначении</h3>
               <ul>
                 <li>Заместитель не конкурирует с основными региональными юристами, пока хотя бы один из них доступен для этого типа нагрузки.</li>
                 <li>Заместитель подключается только если все юристы, закреплённые за регионом и типом нагрузки, недоступны.</li>
@@ -564,7 +567,7 @@
               </ul>
               <div class="help-example">
                 <strong>Пример.</strong> За Иркутской областью закреплён Иванов, но он выключен из судебной нагрузки.
-                Других доступных региональных юристов по этому региону нет. Если для Иванова указан доступный заместитель
+                Других доступных региональных юристов по этому региону нет. Если в таблице замещений для Иванова указан доступный сотрудник
                 Петров и порядок стоит «заместитель затем общая очередь», приложение будет считать Петрова региональным
                 кандидатом для этого назначения.
               </div>
@@ -605,17 +608,23 @@
         </div>
       </div>
     </div>
-
     <div class="modal-overlay" id="documentPreviewModal" aria-hidden="true">
       <div class="modal-card document-preview-card" role="dialog" aria-modal="true" aria-labelledby="documentPreviewTitle">
         <div class="modal-head document-preview-head">
-          <div><span class="modal-eyebrow">Документ по делу</span><h2 id="documentPreviewTitle">Предпросмотр</h2></div>
+          <div>
+            <span class="modal-eyebrow">Документ по делу</span>
+            <h2 id="documentPreviewTitle">Предпросмотр</h2>
+          </div>
           <button class="icon-btn document-preview-close" id="documentPreviewClose" type="button" aria-label="Закрыть просмотр">×</button>
         </div>
         <div class="document-preview-body" id="documentPreviewBody"></div>
-        <div class="modal-actions"><a class="btn btn-primary" id="documentPreviewDownload" href="#">Скачать</a><button class="btn btn-secondary" id="documentPreviewOk" type="button">Закрыть</button></div>
+        <div class="modal-actions">
+          <a class="btn btn-primary" id="documentPreviewDownload" href="#">Скачать</a>
+          <button class="btn btn-secondary" id="documentPreviewOk" type="button">Закрыть</button>
+        </div>
       </div>
     </div>
+
     <div class="modal-overlay" id="accessCodeModal" aria-hidden="true">
       <div class="modal-card access-code-modal-card" role="dialog" aria-modal="true" aria-labelledby="accessCodeTitle">
         <div class="modal-head"><h2 id="accessCodeTitle">Код первичного входа</h2></div>

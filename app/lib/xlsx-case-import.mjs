@@ -1,6 +1,7 @@
 import path from "node:path";
 import zlib from "node:zlib";
-import { caseDuplicateReason, caseImportKey as domainCaseImportKey, cleanText, normalizeType, normalizeYuc, toISODate } from "./domain.mjs";
+import { caseImportDuplicateReason, caseImportKey as domainCaseImportKey, cleanMultilineText, cleanText, nameMatches, normalizeType, normalizeYuc, toISODate } from "./domain.mjs";
+import { caseproBranchKey } from "./directories.mjs";
 import { normalizeRegionName } from "./regions.mjs";
 
 function readUInt16(buffer, offset) {
@@ -181,16 +182,20 @@ function headerKey(value) {
 }
 
 const HEADER_ALIASES = {
-  responsible: ["ответственный"],
+  responsible: ["ответственный", "фиоисполнителя"],
   subject: ["предметспора", "предмет"],
-  region: ["регион"],
-  plaintiff: ["наименованиефиоистцазаявителякредитора", "истец", "заявитель", "истецзаявитель"],
-  defendant: ["наименованиефиоответчикадолжникабанкрота", "ответчик", "должник"],
-  thirdParty: ["наименованиефио3голица", "третьелицо", "3елицо"],
-  type: ["судебноеадминистративноетретьилица", "типдела", "судебноеадминистративное3лица"],
-  date: ["датапоступлениявработу", "датапоступления"],
-  caseNumber: ["номердела"],
-  link: ["ссылка"],
+  region: ["регион", "наименованиеюпрегионаотделакц"],
+  customerUnit: ["подразделениезаказчика"],
+  plaintiff: ["наименованиефиоистцазаявителякредитора", "заявительистецпоосновномуиску", "истец", "заявитель", "истецзаявитель"],
+  defendant: ["наименованиефиоответчикадолжникабанкрота", "лицопривлекаемоекотвтиответчикпоосновномуиску", "ответчик", "должник"],
+  thirdParty: ["наименованиефио3голица", "3илица", "третьелицо", "3елицо"],
+  type: ["судебноеадминистративноетретьилица", "типдела", "судебноеадминистративное3лица", "направлениеработысудадмилиуголовноедело"],
+  date: ["датапоступлениявработу", "датапоступления", "датасозданиякарточки"],
+  caseNumber: ["номердела", "номерделавсуде"],
+  caseNumberFallback: ["номерделадосуддляадмиуголдел"],
+  link: ["ссылка", "ссылканакарточкуделаскрыть"],
+  yuc: ["юц", "наименованиеюцдептакц"],
+  movement: ["движениедела"],
 };
 
 function buildHeaderMap(header = []) {
@@ -209,30 +214,92 @@ function cell(row, index) {
   return index >= 0 ? row[index] : "";
 }
 
+function findHeaderRow(rows) {
+  return rows.findIndex((row) => {
+    const keys = new Set((row ?? []).map(headerKey).filter(Boolean));
+    return keys.has("предметспора") || (keys.has("типдела") && keys.has("датапоступления")) ||
+      (keys.has("наименованиеюцдептакц") && keys.has("направлениеработысудадмилиуголовноедело"));
+  });
+}
+
 function parseDate(value) {
   return toISODate(value);
 }
 
-function sourceCaseFromRow(row, headerMap, rowNumber, defaultYuc) {
-  const type = normalizeType(cell(row, headerMap.type));
+function reportType(value) {
+  const text = cleanText(value).toLowerCase();
+  if (text.includes("банкрот")) return "банкротное";
+  if (text.includes("уголов")) return "уголовное";
+  if (text.includes("админ")) return "административное";
+  if (text.includes("судеб")) return "судебное";
+  return normalizeType(value);
+}
+
+function reportYuc(value) {
+  const text = cleanText(value).replace(/^юц\s+/i, "");
+  return text ? normalizeYuc(text) : "";
+}
+
+function reportEmployeeName(value) {
+  return cleanText(value).replace(/\s*тел(?:ефон)?\s*:?\s*\d+[\s\S]*$/i, "").trim();
+}
+
+function resolveReportRegion(value, directories, yuc) {
+  // При импорте регион может относиться к другому ЮЦ: это информационное
+  // свойство карточки и не меняет правила очередей выбранного ЮЦ.
+  return directories?.regionByCaseproBranch?.[caseproBranchKey(value)] ?? "";
+}
+
+function resolveResponsible(sourceName, employees, yuc) {
+  const normalized = reportEmployeeName(sourceName);
+  const matchingEmployees = (employees ?? []).filter((employee) => nameMatches(employee["ФИО"], normalized));
+  if (matchingEmployees.length === 1) return { responsible: cleanText(matchingEmployees[0]["ФИО"]), mode: "matched" };
+  if (matchingEmployees.length > 1) {
+    return { responsible: "", mode: "manual", options: matchingEmployees.map((employee) => cleanText(employee["ФИО"])) };
+  }
+  const managers = (employees ?? []).filter((employee) =>
+    normalizeYuc(employee["ЮЦ"]) === normalizeYuc(yuc) && cleanText(employee["Роль доступа"]).toLowerCase() === "руководитель"
+  );
+  if (managers.length === 1) return { responsible: cleanText(managers[0]["ФИО"]), mode: "leader-fallback" };
+  if (managers.length > 1) return { responsible: "", mode: "manual", options: managers.map((employee) => cleanText(employee["ФИО"])), fallback: true };
+  return { responsible: "", mode: "missing" };
+}
+
+function sourceCaseFromRow(row, headerMap, rowNumber, options = {}) {
+  const importYuc = normalizeYuc(options.yuc || "Дальний Восток");
+  const isReport = headerMap.yuc >= 0;
+  const sourceYuc = isReport ? reportYuc(cell(row, headerMap.yuc)) : importYuc;
+  // Для отчёта CasePRO регион определяется по «Подразделению заказчика».
+  // Колонка ЮП/региона служит только информационным полем и не участвует в
+  // сопоставлении со справочником.
+  const rawRegion = isReport ? cell(row, headerMap.customerUnit) : cell(row, headerMap.region);
+  const originalResponsible = cell(row, headerMap.responsible);
+  const responsibleInfo = isReport ? resolveResponsible(originalResponsible, options.employees, importYuc) : {
+    responsible: cleanText(originalResponsible), mode: "legacy",
+  };
+  const type = isReport ? reportType(cell(row, headerMap.type)) : normalizeType(cell(row, headerMap.type));
   const source = {
-    "Номер дела": cleanText(cell(row, headerMap.caseNumber)),
+    "Номер дела": cleanText(cell(row, headerMap.caseNumber)) || cleanText(cell(row, headerMap.caseNumberFallback)),
     "Предмет": cleanText(cell(row, headerMap.subject)),
-    "ЮЦ": normalizeYuc(defaultYuc),
-    "Регион": normalizeRegionName(cell(row, headerMap.region)),
+    "ЮЦ": importYuc,
+    "Регион": isReport ? resolveReportRegion(rawRegion, options.directories, importYuc) : normalizeRegionName(rawRegion),
     "Истец": cleanText(cell(row, headerMap.plaintiff)),
     "Ответчик": cleanText(cell(row, headerMap.defendant)),
     "Третье лицо": cleanText(cell(row, headerMap.thirdParty)),
     "Тип дела": type,
     "Дата поступления": parseDate(cell(row, headerMap.date)),
-    "Ответственный": cleanText(cell(row, headerMap.responsible)),
+    "Ответственный": responsibleInfo.responsible,
     "Ссылка": cleanText(cell(row, headerMap.link)),
+    "Движение дела": cleanMultilineText(cell(row, headerMap.movement)),
   };
   const errors = [];
   if (!source["Предмет"]) errors.push("нет предмета");
   if (!source["Тип дела"]) errors.push("нет типа дела");
   if (!source["Дата поступления"]) errors.push("нет даты поступления");
-  return { rowNumber, source, errors };
+  if (isReport && sourceYuc !== importYuc) errors.push("не относится к выбранному ЮЦ");
+  if (!source["Регион"]) errors.push("не удалось определить регион");
+  if (responsibleInfo.mode === "missing") errors.push("исполнитель не найден и в ЮЦ нет руководителя для назначения");
+  return { rowNumber, source, errors, sourceYuc, isReport, responsibleInfo, rawRegion, rawResponsible: reportEmployeeName(originalResponsible) };
 }
 
 function hasMeaningfulSourceData(source) {
@@ -247,11 +314,57 @@ function hasMeaningfulSourceData(source) {
     "Дата поступления",
     "Ответственный",
     "Ссылка",
+    "Движение дела",
   ].some((field) => cleanText(source[field]));
 }
 
 function comparableText(value) {
   return cleanText(value).toLowerCase().replaceAll("ё", "е");
+}
+
+export const CASE_IMPORT_UPDATE_FIELDS = [
+  "Движение дела",
+];
+
+function comparableImportValue(field, value) {
+  if (field === "Дата поступления") return toISODate(value);
+  if (field === "Тип дела") return normalizeType(value);
+  if (field === "Движение дела") return cleanMultilineText(value).toLowerCase().replaceAll("ё", "е");
+  return comparableText(value);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sameMovementValue(existing, source) {
+  const current = cleanMultilineText(existing).toLowerCase().replaceAll("ё", "е");
+  const imported = cleanMultilineText(source).toLowerCase().replaceAll("ё", "е");
+  if (current === imported) return true;
+
+  // MTS Tabs иногда возвращает пару U+FFFD вместо одного символа исходного
+  // текста. Считаем такой фрагмент одним неизвестным символом, но только при
+  // сравнении уже сохранённого значения с импортом. Остальной текст обязан
+  // совпадать полностью.
+  if (!current.includes("\uFFFD")) return false;
+  const pattern = current
+    .split(/\uFFFD+/u)
+    .map(escapeRegExp)
+    .join("[\\s\\S]");
+  return new RegExp(`^${pattern}$`, "u").test(imported);
+}
+
+export function caseImportChanges(existing = {}, source = {}) {
+  return CASE_IMPORT_UPDATE_FIELDS
+    .filter((field) => cleanText(source[field]))
+    .filter((field) => field === "Движение дела"
+      ? !sameMovementValue(existing[field], source[field])
+      : comparableImportValue(field, existing[field]) !== comparableImportValue(field, source[field]))
+    .map((field) => ({
+      field,
+      previous: field === "Движение дела" ? cleanMultilineText(existing[field]) : cleanText(existing[field]),
+      next: field === "Движение дела" ? cleanMultilineText(source[field]) : cleanText(source[field]),
+    }));
 }
 
 export function caseImportKey(row) {
@@ -260,7 +373,7 @@ export function caseImportKey(row) {
 
 function findDuplicate(source, rows, options = {}) {
   for (const row of rows ?? []) {
-    const reason = caseDuplicateReason(source, row.source ?? row, options);
+    const reason = caseImportDuplicateReason(source, row.source ?? row, options);
     if (reason) return { row, reason };
   }
   return null;
@@ -282,7 +395,9 @@ export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
   const rows = parseSheetRows(xmlText(entries, sheet.path), sharedStrings).filter(Boolean);
   if (!rows.length) throw new Error("Лист с делами пуст.");
 
-  const header = rows[0] ?? [];
+  const headerIndex = findHeaderRow(rows);
+  if (headerIndex < 0) throw new Error("Не найдена строка заголовков в Excel-файле.");
+  const header = rows[headerIndex] ?? [];
   const headerMap = buildHeaderMap(header);
   if (headerMap.subject < 0 || headerMap.type < 0 || headerMap.date < 0) {
     throw new Error("Не найдены обязательные колонки: предмет, тип дела и дата поступления.");
@@ -293,16 +408,34 @@ export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
   const invalid = [];
   const duplicateInFile = [];
 
-  rows.slice(1).forEach((row, offset) => {
-    const parsed = sourceCaseFromRow(row, headerMap, offset + 2, options.yuc || "Дальний Восток");
+  const excluded = [];
+  rows.slice(headerIndex + 1).forEach((row, offset) => {
+    const parsed = sourceCaseFromRow(row, headerMap, headerIndex + offset + 2, options);
     if (!hasMeaningfulSourceData(parsed.source)) return;
+    if (parsed.isReport && parsed.sourceYuc !== normalizeYuc(options.yuc || "Дальний Восток")) {
+      excluded.push({ rowNumber: parsed.rowNumber, reason: !cleanText(parsed.sourceYuc) ? "ЮЦ не указан" : `другой ЮЦ: ${parsed.sourceYuc}`, source: parsed.source });
+      return;
+    }
     if (parsed.errors.length) {
-      invalid.push({ rowNumber: parsed.rowNumber, reason: parsed.errors.join(", "), source: parsed.source });
+      invalid.push({
+        rowNumber: parsed.rowNumber,
+        reason: parsed.errors.join(", "),
+        errors: parsed.errors,
+        source: parsed.source,
+        sourceRegion: cleanText(parsed.rawRegion),
+        sourceResponsible: parsed.rawResponsible,
+      });
       return;
     }
     const existingDuplicate = findDuplicate(parsed.source, existingCases);
     if (existingDuplicate) {
-      existing.push({ rowNumber: parsed.rowNumber, reason: existingDuplicate.reason, source: parsed.source });
+      existing.push({
+        rowNumber: parsed.rowNumber,
+        reason: existingDuplicate.reason,
+        source: parsed.source,
+        caseId: cleanText(existingDuplicate.row.case_id),
+        changes: caseImportChanges(existingDuplicate.row, parsed.source),
+      });
       return;
     }
     const fileDuplicate = findDuplicate(parsed.source, toAdd, { strictOnly: true });
@@ -310,10 +443,16 @@ export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
       duplicateInFile.push({ rowNumber: parsed.rowNumber, duplicateOfRow: fileDuplicate.row.rowNumber, reason: fileDuplicate.reason, source: parsed.source });
       return;
     }
-    toAdd.push({ rowNumber: parsed.rowNumber, source: parsed.source });
+    toAdd.push({
+      rowNumber: parsed.rowNumber,
+      source: parsed.source,
+      responsibleMode: parsed.responsibleInfo.mode,
+      responsibleOptions: parsed.responsibleInfo.options ?? [],
+      rawResponsible: parsed.rawResponsible,
+    });
   });
 
-  const processedRows = toAdd.length + existing.length + invalid.length + duplicateInFile.length;
+  const processedRows = toAdd.length + existing.length + invalid.length + duplicateInFile.length + excluded.length;
   return {
     sheetName: sheet.name,
     sourceRows: processedRows,
@@ -321,12 +460,15 @@ export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
     existing,
     invalid,
     duplicateInFile,
+    excluded,
     stats: {
       sourceRows: processedRows,
       newCases: toAdd.length,
       existingCases: existing.length,
+      updateCandidates: existing.filter((item) => item.changes.length).length,
       invalidRows: invalid.length,
       duplicateRows: duplicateInFile.length,
+      excludedRows: excluded.length,
     },
   };
 }

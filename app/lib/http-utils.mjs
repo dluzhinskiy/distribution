@@ -1,0 +1,143 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { FIELD, cleanText } from "./domain.mjs";
+
+const PRIVATE_EMPLOYEE_FIELDS = new Set(["Хэш-пароля", "Хэш кода первичного входа"]);
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+};
+
+export function publicAttachment(attachment = {}) {
+  return {
+    id: cleanText(attachment.id),
+    name: cleanText(attachment.name) || "Документ",
+    size: Number(attachment.size) || 0,
+    mimeType: cleanText(attachment.mimeType) || "application/octet-stream",
+    width: Number(attachment.width) || 0,
+    height: Number(attachment.height) || 0,
+  };
+}
+
+export function sanitizeApiPayload(value, key = "") {
+  if (Array.isArray(value)) {
+    if (key === "employees") {
+      return value.map((employee) => {
+        const copy = { ...employee };
+        for (const field of PRIVATE_EMPLOYEE_FIELDS) delete copy[field];
+        return copy;
+      });
+    }
+    if (key === "cases") {
+      return value.map((caseRow) => ({
+        ...caseRow,
+        [FIELD.documents]: Array.isArray(caseRow?.[FIELD.documents])
+          ? caseRow[FIELD.documents].map(publicAttachment)
+          : [],
+      }));
+    }
+    return value.map((item) => sanitizeApiPayload(item));
+  }
+  if (!value || typeof value !== "object") return value;
+  const sanitized = Object.fromEntries(
+    Object.entries(value).map(([childKey, childValue]) => [childKey, sanitizeApiPayload(childValue, childKey)]),
+  );
+  if (Array.isArray(sanitized[FIELD.documents])) {
+    sanitized[FIELD.documents] = sanitized[FIELD.documents].map(publicAttachment);
+  }
+  return sanitized;
+}
+
+export function sendJson(res, status, payload, headers = {}) {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    ...headers,
+  });
+  res.end(JSON.stringify(sanitizeApiPayload(payload)));
+}
+
+export function readJsonBody(req, maxBytes = 2_000_000) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > maxBytes) {
+        const error = new Error("Слишком большой запрос.");
+        error.status = 413;
+        reject(error);
+        req.destroy();
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on("end", () => {
+      if (!chunks.length) return resolve({});
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch {
+        const error = new Error("Не удалось прочитать JSON.");
+        error.status = 400;
+        reject(error);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+export function readBinaryBody(req, maxBytes = 12_000_000) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        const error = new Error("Файл слишком большой.");
+        error.status = 413;
+        reject(error);
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+export async function serveStatic(req, res, url, publicDir) {
+  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+  const relativePath = requested.replace(/^\/+/, "");
+  const filePath = path.resolve(publicDir, relativePath);
+  const publicRoot = `${path.resolve(publicDir)}${path.sep}`;
+  if (filePath !== path.resolve(publicDir) && !filePath.startsWith(publicRoot)) {
+    res.writeHead(403);
+    return res.end("Forbidden");
+  }
+  try {
+    const data = await fs.readFile(filePath);
+    const headers = { "Content-Type": MIME[path.extname(filePath)] ?? "application/octet-stream" };
+    if (requested === "/index.html") {
+      headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private";
+      headers.Pragma = "no-cache";
+      headers.Expires = "0";
+    }
+    res.writeHead(200, headers);
+    res.end(data);
+  } catch {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Not found");
+  }
+}

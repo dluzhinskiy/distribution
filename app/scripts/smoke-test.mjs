@@ -11,8 +11,10 @@ assert.ok(Array.isArray(enriched.employees), "Сотрудники должны 
 assert.ok(Array.isArray(enriched.queues), "Очереди должны читаться массивом");
 assert.ok(Array.isArray(enriched.state), "Состояние должно читаться массивом");
 assert.ok(Array.isArray(enriched.vacations), "Отпуска должны читаться массивом");
-assert.ok(Array.isArray(enriched.journal), "Журнал должен читаться массивом");
 assert.ok(Array.isArray(enriched.settings), "Настройки должны читаться массивом");
+assert.ok(Array.isArray(enriched.yucSettings), "Настройки ЮЦ должны читаться массивом");
+assert.ok(Array.isArray(enriched.regionalAssignments), "Региональные закрепления должны читаться массивом");
+assert.ok(Array.isArray(enriched.regionalSubstitutions), "Региональные замещения должны читаться массивом");
 
 assert.ok(enriched.cases.length > 0, "В MTS Tabs должны быть дела");
 assert.ok(enriched.employees.length > 0, "В MTS Tabs должны быть сотрудники");
