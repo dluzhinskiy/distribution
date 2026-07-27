@@ -96,10 +96,9 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     if (!configured()) return null;
     const claims = verifySessionToken(parseCookies(req)[AUTH_SESSION_COOKIE], secret);
     if (!claims) return null;
-    // Сеанс действителен только пока в MTS Tabs существует хэш пароля.
-    // Принудительное чтение нужно, чтобы удаление или сброс пароля срабатывали сразу,
-    // а не после истечения серверного кэша сотрудников.
-    const data = await readData(["employees"], { force: true });
+    // Изменения паролей и ролей, сделанные через приложение, сразу обновляют кэш.
+    // Ручные изменения в MTS Tabs подхватываются по TTL таблицы сотрудников.
+    const data = await readData(["employees"]);
     const employeesWithId = data.employees.filter((item) => cleanText(item.employee_id) === claims.employeeId);
     // employee_id — ключ авторизации. При дубле невозможно безопасно определить владельца сеанса.
     if (employeesWithId.length !== 1) return null;
@@ -131,7 +130,7 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     if (req.method === "POST" && url.pathname === "/api/auth/login") {
       if (!configured()) throw Object.assign(new Error("Авторизация ещё не настроена: задайте AUTH_SESSION_SECRET."), { status: 503 });
       const body = await readBody(req);
-      const data = await readData(["employees"], { force: true });
+      const data = await readData(["employees"], { force: url.searchParams.get("refresh") === "1" });
       const employee = findByLogin(data.employees, body.login);
       if (!employee || !cleanText(employee["Хэш-пароля"]) || !await verifySecret(body.password, employee["Хэш-пароля"])) {
         throw Object.assign(new Error("Неверный логин или пароль."), { status: 401 });
@@ -202,7 +201,7 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
 
     const parts = url.pathname.split("/").filter(Boolean);
     const employeeId = decodeURIComponent(parts[3] ?? "");
-    const data = await readData(["employees"], { force: true });
+    const data = await readData(["employees"]);
     const employeesWithId = data.employees.filter((item) => cleanText(item.employee_id) === employeeId);
     if (!employeesWithId.length) throw Object.assign(new Error("Сотрудник не найден."), { status: 404 });
     if (employeesWithId.length > 1) {

@@ -48,3 +48,35 @@ test("parallel requests for the same table share an in-flight read", async () =>
   await Promise.all([first, second]);
   assert.equal(reads, 1);
 });
+
+test("successful mutation can replace one cached table without reading storage", async () => {
+  let reads = 0;
+  const cache = createTableCache({
+    readFresh: async () => { reads += 1; return { employees: [{ employee_id: "OLD" }] }; },
+    tableKeys: ["employees"],
+    bootstrapKeys: ["employees"],
+    ttlByTable: {},
+    defaultTtl: 60_000,
+  });
+  await cache.read(["employees"]);
+  cache.replace("employees", [{ employee_id: "NEW" }]);
+  assert.deepEqual((await cache.read(["employees"])).employees, [{ employee_id: "NEW" }]);
+  assert.equal(reads, 1);
+  assert.equal(cache.status().cachedTables.employees.version, 2);
+});
+
+test("cache snapshot returns only loaded tables and never triggers missing reads", async () => {
+  let reads = 0;
+  const cache = createTableCache({
+    readFresh: async ([key]) => { reads += 1; return { [key]: [{ key }] }; },
+    tableKeys: ["cases", "employees"],
+    bootstrapKeys: ["cases", "employees"],
+    ttlByTable: {},
+    defaultTtl: 60_000,
+  });
+  await cache.read(["employees"]);
+  const snapshot = cache.snapshot();
+  assert.deepEqual(Object.keys(snapshot), ["employees"]);
+  assert.deepEqual(snapshot.employees, [{ key: "employees" }]);
+  assert.equal(reads, 1);
+});

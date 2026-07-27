@@ -18,7 +18,7 @@ export function createWriteCoordinator({ beforeWrite = async () => {} } = {}) {
   let active = 0;
   let queued = 0;
 
-  async function run(operation) {
+  async function run(operation, context = {}) {
     queued += 1;
     const previous = tail.catch(() => {});
     let release;
@@ -27,7 +27,7 @@ export function createWriteCoordinator({ beforeWrite = async () => {} } = {}) {
     queued -= 1;
     active += 1;
     try {
-      await beforeWrite();
+      await beforeWrite(context);
       return await operation();
     } finally {
       active -= 1;

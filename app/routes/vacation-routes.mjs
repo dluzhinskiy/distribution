@@ -20,7 +20,7 @@ export function createVacationRoutes({
   return async function handleVacationRoute(req, res, url, user) {
     if (req.method === "POST" && url.pathname === "/api/vacations/toggle") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(["employees", "vacations"]);
       requireManageEmployee(user, data, body.employee_id);
       const day = toISODate(body.date);
       if (!body.employee_id || !day) {
@@ -41,7 +41,7 @@ export function createVacationRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/vacations/range") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(["employees", "vacations"]);
       requireManageEmployee(user, data, body.employee_id);
       const dates = allDatesInRange(body.start, body.end);
       if (!body.employee_id || !dates.length) {
@@ -57,7 +57,7 @@ export function createVacationRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/vacations/save-year") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(["employees", "vacations"]);
       requireManageEmployee(user, data, body.employee_id);
       if (!body.employee_id || !body.year) {
         sendJson(res, 400, { ok: false, error: "Нужны employee_id и year." });
@@ -71,7 +71,7 @@ export function createVacationRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/vacations/clear-year") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(["employees", "vacations"]);
       requireManageEmployee(user, data, body.employee_id);
       if (!body.employee_id || !body.year) {
         sendJson(res, 400, { ok: false, error: "Нужны employee_id и year." });
@@ -98,7 +98,7 @@ export function createVacationRoutes({
         sendJson(res, 400, { ok: false, error: "Нет подготовленного плана импорта." });
         return true;
       }
-      const data = await readData();
+      const data = await readData(["employees", "vacations"]);
       for (const item of plan.matched) requireManageEmployee(user, data, item.employee_id);
       const result = replaceVacationDatesForEmployees(data, plan.matched, plan.scopeDates);
       const confirmedData = await saveAndConfirm(data, ["vacations"]);

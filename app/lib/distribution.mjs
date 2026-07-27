@@ -310,33 +310,70 @@ export function isEmployeeAvailable(employee, type, date = new Date(), vacations
 
 export function enrichData(data, date = new Date()) {
   const vacations = (data.vacations ?? []).map(normalizeVacation).filter((item) => item.employee_id && item["Дата начала"]);
-  const cases = data.cases.map((item) => caseDerived(item, data.settings, date));
+  const cases = (data.cases ?? []).map((item) => caseDerived(item, data.settings, date));
   const activeRegisterCases = cases.filter((caseRow) => !isDeletedCase(caseRow));
-  const employees = (data.employees ?? [])
-    .filter((employee) => cleanText(employee.employee_id) !== "EMP-000")
-    .map((employee) => {
-    const name = cleanText(employee[FIELD.name]);
-    const activeCases = activeRegisterCases.filter((caseRow) => nameMatches(caseRow[FIELD.responsible], name) && caseRow["Активное число"] === 1);
+  const sourceEmployees = (data.employees ?? []).filter((employee) => cleanText(employee.employee_id) !== "EMP-000");
+  const employeeNameIndex = new Map();
+  const activeLoads = sourceEmployees.map(() => ({ total: 0, judicial: 0, administrative: 0, claim: 0 }));
+  for (let index = 0; index < sourceEmployees.length; index += 1) {
+    const name = cleanText(sourceEmployees[index][FIELD.name]);
+    const aliases = new Set([name, shortName(name)].filter(Boolean));
+    for (const alias of aliases) {
+      if (!employeeNameIndex.has(alias)) employeeNameIndex.set(alias, []);
+      employeeNameIndex.get(alias).push(index);
+    }
+  }
+  let activeCasesCount = 0;
+  let unassignedCases = 0;
+  const totalsByType = new Map(WORKLOAD_TYPES.map((type) => [workloadType(type), { total: 0, active: 0 }]));
+  for (const caseRow of activeRegisterCases) {
+    const active = caseRow["Активное число"] === 1;
+    const responsible = cleanText(caseRow[FIELD.responsible]);
+    const normalizedType = workloadType(caseRow[FIELD.caseType]);
+    if (active) activeCasesCount += 1;
+    if (!responsible) unassignedCases += 1;
+    const typeTotals = totalsByType.get(normalizedType);
+    if (typeTotals) {
+      typeTotals.total += 1;
+      if (active) typeTotals.active += 1;
+    }
+    if (!active || !responsible) continue;
+    const candidateIndexes = new Set([
+      ...(employeeNameIndex.get(responsible) ?? []),
+      ...(employeeNameIndex.get(shortName(responsible)) ?? []),
+    ]);
+    for (const index of candidateIndexes) {
+      const employeeName = sourceEmployees[index][FIELD.name];
+      if (!nameMatches(responsible, employeeName)) continue;
+      const load = activeLoads[index];
+      load.total += 1;
+      if (normalizedType === "судебное") load.judicial += 1;
+      else if (normalizedType === "административное") load.administrative += 1;
+      else if (normalizedType === "претензия") load.claim += 1;
+    }
+  }
+  const employees = sourceEmployees.map((employee, index) => {
+    const load = activeLoads[index];
     return {
       ...employee,
       "Отпуск с": toISODate(employee["Отпуск с"]),
       "Отпуск по": toISODate(employee["Отпуск по"]),
       "Сейчас в отпуске": isEmployeeOnVacation(employee, date, vacations) ? "Да" : "Нет",
-      "Активные всего": activeCases.length,
-      "Активные судебные": activeCases.filter((item) => workloadType(item[FIELD.caseType]) === "судебное").length,
-      "Активные административные": activeCases.filter((item) => item[FIELD.caseType] === "административное").length,
-      "Активные претензии": activeCases.filter((item) => item[FIELD.caseType] === "претензия").length,
+      "Активные всего": load.total,
+      "Активные судебные": load.judicial,
+      "Активные административные": load.administrative,
+      "Активные претензии": load.claim,
     };
   });
   const summary = {
     totalCases: activeRegisterCases.length,
-    activeCases: activeRegisterCases.filter((item) => item["Активное число"] === 1).length,
-    unassignedCases: activeRegisterCases.filter((item) => !cleanText(item[FIELD.responsible])).length,
+    activeCases: activeCasesCount,
+    unassignedCases,
     activeEmployees: employees.filter((item) => yes(item[FIELD.employeeActive])).length,
     byType: WORKLOAD_TYPES.map((type) => ({
       type,
-      total: activeRegisterCases.filter((item) => workloadType(item[FIELD.caseType]) === workloadType(type)).length,
-      active: activeRegisterCases.filter((item) => workloadType(item[FIELD.caseType]) === workloadType(type) && item["Активное число"] === 1).length,
+      total: totalsByType.get(workloadType(type))?.total ?? 0,
+      active: totalsByType.get(workloadType(type))?.active ?? 0,
       activityDays: DEFAULT_ACTIVITY_DAYS[workloadType(type)] ?? "",
     })),
   };

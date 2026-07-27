@@ -257,6 +257,7 @@
                 <tbody id="casesTable"></tbody>
               </table>
             </div>
+            <div class="cases-pagination" id="casesPagination"></div>
           </section>
         </section>
 
@@ -348,12 +349,7 @@
                   <button class="settings-help-trigger" type="button" data-settings-help="loadCoefficients" aria-label="Справка по коэффициентам" title="Как работают коэффициенты">?</button>
                 </div>
               </div>
-              <div class="table-wrap compact load-coefficients-wrap">
-                <table class="load-coefficients-table">
-                  <thead><tr><th>Тип нагрузки</th><th>Коэффициент</th></tr></thead>
-                  <tbody id="loadCoefficientsTable"></tbody>
-                </table>
-              </div>
+              <div class="load-coefficients-grid" id="loadCoefficientsTable"></div>
               <div class="actions-row">
                 <button class="btn btn-primary" id="saveLoadCoefficientsBtn">Сохранить коэффициенты</button>
               </div>
@@ -414,7 +410,11 @@
                   <div class="form-grid">
                     <label class="field">
                       <span>Порог перегруза</span>
-                      <input type="number" min="0" step="1" name="Порог перегруза" />
+                      <span class="settings-number-stepper">
+                        <button class="settings-number-step" type="button" data-settings-number-step="-1" aria-label="Уменьшить порог перегруза">−</button>
+                        <input class="settings-number-input" type="number" min="0" step="1" name="Порог перегруза" />
+                        <button class="settings-number-step" type="button" data-settings-number-step="1" aria-label="Увеличить порог перегруза">+</button>
+                      </span>
                     </label>
                     <label class="field">
                       <span>Считать перегруз по</span>

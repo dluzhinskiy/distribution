@@ -23,7 +23,7 @@ export function createSettingsRoutes({
       requireAdmin(user);
       const body = await readBody(req);
       const rows = validateLoadCoefficients(body.rows);
-      const data = await readData();
+      const data = await readData(["loadCoefficients"]);
       data.loadCoefficients = rows;
       const confirmedData = await saveAndConfirm(data, ["loadCoefficients"]);
       sendJson(res, 200, { ok: true, coefficients: confirmedData.loadCoefficients, data: confirmedData });
@@ -34,7 +34,7 @@ export function createSettingsRoutes({
       const yuc = normalizeYuc(decodeURIComponent(url.pathname.split("/").pop()));
       requireManageYuc(user, yuc);
       const patch = await readBody(req);
-      const data = await readData();
+      const data = await readData(["yucSettings"]);
       let row = data.yucSettings.find((item) => normalizeYuc(item[FIELD.yuc]) === yuc);
       if (!row) {
         row = {
@@ -71,7 +71,7 @@ export function createSettingsRoutes({
       const yuc = normalizeYuc(body.yuc);
       requireManageYuc(user, yuc);
       const rows = Array.isArray(body.rows) ? body.rows : [];
-      const data = await readData();
+      const data = await readData(["settings"]);
       for (const raw of rows) {
         const type = normalizeType(raw[FIELD.caseType]);
         if (!type) continue;
@@ -104,7 +104,7 @@ export function createSettingsRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/regional-assignments/upsert") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(["employees", "regionalAssignments"]);
       const row = normalizeRegionalAssignment(body.row, body.yuc);
       requireManageYuc(user, row[FIELD.yuc]);
       const originalKey = body.original ? regionalAssignmentKey(normalizeRegionalAssignment(body.original, body.yuc)) : "";
@@ -126,7 +126,7 @@ export function createSettingsRoutes({
       const scopedRow = normalizeRegionalAssignment(body.row, body.yuc);
       requireManageYuc(user, scopedRow[FIELD.yuc]);
       const key = regionalAssignmentKey(scopedRow);
-      const data = await readData();
+      const data = await readData(["regionalAssignments"]);
       data.regionalAssignments = data.regionalAssignments.filter((item) => regionalAssignmentKey(item) !== key);
       const confirmedData = await saveAndConfirm(data, ["regionalAssignments"]);
       sendJson(res, 200, { ok: true, data: confirmedData });
@@ -135,7 +135,7 @@ export function createSettingsRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/regional-substitutions/upsert") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(["employees", "regionalSubstitutions"]);
       const row = normalizeRegionalSubstitution(body.row, body.yuc);
       requireManageYuc(user, row[FIELD.yuc]);
       assertRegionalSubstitution(row);
@@ -158,7 +158,7 @@ export function createSettingsRoutes({
       const scopedRow = normalizeRegionalSubstitution(body.row, body.yuc);
       requireManageYuc(user, scopedRow[FIELD.yuc]);
       const key = regionalSubstitutionKey(scopedRow);
-      const data = await readData();
+      const data = await readData(["regionalSubstitutions"]);
       data.regionalSubstitutions = data.regionalSubstitutions.filter((item) => regionalSubstitutionKey(item) !== key);
       const confirmedData = await saveAndConfirm(data, ["regionalSubstitutions"]);
       sendJson(res, 200, { ok: true, data: confirmedData });

@@ -24,6 +24,8 @@ import {
 } from "./lib/load-coefficients.js";
 
 const state = createAppState();
+const rowsByYucIndex = new WeakMap();
+const dataViewNames = ["dashboard", "distribution", "cases", "employees", "settings"];
 
 const caseTypes = ["претензия", "административное", "судебное", "уголовное", "банкротное"];
 const workloadCaseTypes = ["претензия", "административное", "судебное"];
@@ -186,14 +188,16 @@ async function logOut() {
   await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   state.data = null;
   state.accessUsers = [];
+  state.loadedViews.clear();
+  state.loadingViews.clear();
   state.accessExpandedYucs.clear();
   state.accessYucExpansionInitialized = false;
   showAuthGate("Вы вышли из приложения.");
 }
 
-async function loadAccessUsers() {
+async function loadAccessUsers({ force = false } = {}) {
   if (!isAdminUser() && !isManagerUser()) return;
-  const payload = await api("/api/access/users");
+  const payload = await api(`/api/access/users${force ? "?refresh=1" : ""}`);
   state.accessUsers = payload.users ?? [];
   renderAccessUsers();
 }
@@ -273,7 +277,10 @@ async function issueAccessCode(employeeId) {
     method: "POST",
     body: JSON.stringify({ days: 7 }),
   });
-  await loadAccessUsers();
+  state.accessUsers = state.accessUsers.map((item) => item.employeeId === employeeId
+    ? { ...item, firstAccessExpiresAt: payload.expiresAt }
+    : item);
+  renderAccessUsers();
   showAccessCodeModal(user, payload.code, payload.expiresAt);
 }
 
@@ -288,7 +295,10 @@ async function resetAccessPassword(employeeId) {
     method: "POST",
     body: JSON.stringify({ days: 7 }),
   });
-  await loadAccessUsers();
+  state.accessUsers = state.accessUsers.map((item) => item.employeeId === employeeId
+    ? { ...item, hasPassword: false, firstAccessExpiresAt: payload.expiresAt }
+    : item);
+  renderAccessUsers();
   showAccessCodeModal(user, payload.code, payload.expiresAt);
 }
 
@@ -296,11 +306,14 @@ async function saveAccessRole(employeeId) {
   if (!isAdminUser()) return;
   const select = $(`.access-role-select[data-employee-id="${CSS.escape(employeeId)}"]`);
   if (!select) return;
-  await api(`/api/access/users/${encodeURIComponent(employeeId)}`, {
+  const payload = await api(`/api/access/users/${encodeURIComponent(employeeId)}`, {
     method: "PATCH",
     body: JSON.stringify({ role: select.value }),
   });
-  await loadAccessUsers();
+  state.accessUsers = state.accessUsers.map((item) => item.employeeId === employeeId
+    ? { ...item, role: payload.user?.role ?? select.value }
+    : item);
+  renderAccessUsers();
   toast("Роль доступа сохранена.");
 }
 
@@ -492,23 +505,34 @@ async function uploadCaseWorkbook(file) {
   }
 }
 
-async function loadData() {
+async function loadData({ view = activeDataViewName(), force = false } = {}) {
+  if (state.loadingViews.has(view)) return;
+  state.loadingViews.add(view);
   setStatus("Читаю MTS Tabs…");
-  const payload = await api("/api/data");
-  applyDataPayload(payload);
-  setStatus("Готово");
+  try {
+    const query = new URLSearchParams({ view });
+    if (force) query.set("refresh", "1");
+    const payload = await api(`/api/data?${query}`);
+    applyDataPayload(payload);
+    state.loadedViews.add(view);
+    setStatus("Готово");
+  } finally {
+    state.loadingViews.delete(view);
+  }
 }
 
 function applyDataPayload(payload = {}) {
   if (!payload.data) return;
   const nextData = { ...payload.data };
   state.data = {
+    ...(state.data ?? {}),
     ...nextData,
     directories: nextData.directories ?? state.data?.directories,
   };
   if (payload.user) applyAuthUser(payload.user);
   state.storagePath = payload.storagePath || state.storagePath;
   if ($("#storagePath")) $("#storagePath").textContent = state.storagePath || "MTS Tabs API";
+  markDataViewsDirty();
   renderAll();
 }
 
@@ -524,14 +548,12 @@ function showView(name) {
   $(`#view-${name}`).classList.add("active");
   $$(".nav-link").forEach((link) => link.classList.toggle("active", link.dataset.view === name));
   $("#pageTitle").textContent = name === "cases" && state.caseListScope === "mine" ? "Мои дела" : titles[name];
-  if (name === "employees" && state.data) {
-    resetEmployeeAvailabilityDrafts();
-  }
-  if (name === "settings" && state.data) {
-    renderSettings();
-  }
+  if (state.data && dataViewNames.includes(name) && !state.loadedViews.has(name)) {
+    loadData({ view: name }).catch((error) => { setStatus("Ошибка"); toast(error.message, "error"); });
+  } else if (state.data) renderDataView(name);
   if (name === "access") {
-    loadAccessUsers().catch((error) => { setStatus("Ошибка"); toast(error.message, "error"); });
+    if (state.accessUsers.length) renderAccessUsers();
+    else loadAccessUsers().catch((error) => { setStatus("Ошибка"); toast(error.message, "error"); });
   }
 }
 
@@ -616,7 +638,18 @@ function yucMatches(value) {
 }
 
 function rowsForSelectedYuc(rows) {
-  return (rows ?? []).filter((row) => yucMatches(row["ЮЦ"]));
+  if (!Array.isArray(rows)) return [];
+  let index = rowsByYucIndex.get(rows);
+  if (!index) {
+    index = new Map();
+    for (const row of rows) {
+      const yuc = normalizeYucName(row["ЮЦ"]);
+      if (!index.has(yuc)) index.set(yuc, []);
+      index.get(yuc).push(row);
+    }
+    rowsByYucIndex.set(rows, index);
+  }
+  return index.get(selectedYuc()) ?? [];
 }
 
 function employeesForSelectedYuc() {
@@ -788,11 +821,13 @@ function setSelectedYuc(yuc, options = {}) {
   const changed = next !== state.selectedYuc;
   state.selectedYuc = next;
   if (changed) {
+    state.casesPage = 1;
     state.lastRecommendation = null;
     state.vacationRangeStart = null;
     state.responsibleDrafts = {};
     state.statusDrafts = {};
     state.resetRegionOnRender = options.resetRegion !== false;
+    markDataViewsDirty();
   }
   if (isExternalReadOnlyYuc()) showView("cases");
   applyRoleUi();
@@ -1021,12 +1056,38 @@ function historicalCasesForSelectedYuc() {
     .filter(caseWithinHistoricalPeriod);
 }
 
+function casesGroupedByEmployee(rows, employees) {
+  const result = new Map(employees.map((employee) => [employee.employee_id, []]));
+  const aliases = new Map();
+  for (const employee of employees) {
+    const name = String(employee["ФИО"] ?? "").trim();
+    for (const alias of new Set([name, shortName(name)].filter(Boolean))) {
+      if (!aliases.has(alias)) aliases.set(alias, []);
+      aliases.get(alias).push(employee);
+    }
+  }
+  for (const row of rows) {
+    const responsible = String(row["Ответственный"] ?? "").trim();
+    if (!responsible) continue;
+    const candidates = new Map([
+      ...(aliases.get(responsible) ?? []),
+      ...(aliases.get(shortName(responsible)) ?? []),
+    ].map((employee) => [employee.employee_id, employee]));
+    for (const employee of candidates.values()) {
+      if (nameMatches(responsible, employee["ФИО"])) result.get(employee.employee_id)?.push(row);
+    }
+  }
+  return result;
+}
+
 function historicalWorkloadByEmployee() {
   const rows = historicalCasesForSelectedYuc();
+  const employees = employeesForSelectedYuc();
+  const groupedCases = casesGroupedByEmployee(rows, employees);
   const coefficientConfig = currentLoadCoefficientConfig();
   const weighted = state.weightedDashboard && coefficientConfig.valid;
-  return employeesForSelectedYuc().map((employee) => {
-    const employeeCases = rows.filter((caseRow) => nameMatches(caseRow["Ответственный"], employee["ФИО"]));
+  return employees.map((employee) => {
+    const employeeCases = groupedCases.get(employee.employee_id) ?? [];
     const byType = Object.fromEntries(workloadCaseTypes.map((type) => [
       type,
       employeeCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type).length,
@@ -1109,13 +1170,12 @@ function applyHistoricalCaseFilter(responsible, type = "") {
 
 function workloadByEmployee() {
   const yucCases = casesForSelectedYuc();
+  const employees = employeesForSelectedYuc();
+  const groupedCases = casesGroupedByEmployee(yucCases, employees);
   const includeInactive = includeInactiveInLoadForSelectedYuc();
-  return employeesForSelectedYuc().map((employee) => {
-    const name = employee["ФИО"];
-    const productionCases = yucCases.filter((caseRow) =>
-      nameMatches(caseRow["Ответственный"], name) &&
-      !completedStatuses.has(caseRow["Статус"])
-    );
+  return employees.map((employee) => {
+    const productionCases = (groupedCases.get(employee.employee_id) ?? [])
+      .filter((caseRow) => !completedStatuses.has(caseRow["Статус"]));
     const byType = Object.fromEntries(workloadCaseTypes.map((type) => {
       const rows = productionCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type);
       const active = rows.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length;
@@ -1764,7 +1824,7 @@ function renderCases() {
   renderCaseColumnsToggles(profile, visibility);
   renderCasesQuickFilter();
   const term = ($("#casesSearch")?.value ?? "").toLowerCase();
-  const rows = casesForRegistry()
+  const filteredRows = casesForRegistry()
     .filter((row) => state.showDeletedCases || !isDeletedCase(row))
     .filter(caseMatchesQuickFilter)
     .filter(caseMatchesResponsibleFilter)
@@ -1772,7 +1832,22 @@ function renderCases() {
     .filter((row) => !term || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(term)))
     .slice()
     .reverse();
-  if (!rows.length) {
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / state.casesPageSize));
+  state.casesPage = Math.min(Math.max(1, state.casesPage), totalPages);
+  const pageStart = (state.casesPage - 1) * state.casesPageSize;
+  const rows = filteredRows.slice(pageStart, pageStart + state.casesPageSize);
+  const pagination = $("#casesPagination");
+  if (pagination) {
+    pagination.innerHTML = filteredRows.length ? `
+      <span>Показано ${pageStart + 1}–${Math.min(pageStart + rows.length, filteredRows.length)} из ${filteredRows.length}</span>
+      <div>
+        <button class="tiny-btn light cases-page-button" type="button" data-cases-page="${state.casesPage - 1}" ${state.casesPage <= 1 ? "disabled" : ""}>Назад</button>
+        <span>Страница ${state.casesPage} из ${totalPages}</span>
+        <button class="tiny-btn light cases-page-button" type="button" data-cases-page="${state.casesPage + 1}" ${state.casesPage >= totalPages ? "disabled" : ""}>Вперёд</button>
+      </div>
+    ` : "";
+  }
+  if (!filteredRows.length) {
     $("#casesTable").innerHTML = `<tr><td colspan="${columns.length}" class="empty-cell">Дела не найдены.</td></tr>`;
     return;
   }
@@ -1783,7 +1858,17 @@ function renderCases() {
   `).join("");
 }
 
+function scheduleCasesRender() {
+  if (state.casesSearchTimer) window.clearTimeout(state.casesSearchTimer);
+  state.casesSearchTimer = window.setTimeout(() => {
+    state.casesSearchTimer = null;
+    state.casesPage = 1;
+    renderCases();
+  }, 180);
+}
+
 function applyCasesQuickFilter(filter) {
+  state.casesPage = 1;
   state.casesQuickFilter = filter || "";
   state.casesResponsibleFilter = "";
   if ($("#casesSearch")) $("#casesSearch").value = "";
@@ -1792,6 +1877,7 @@ function applyCasesQuickFilter(filter) {
 }
 
 function applyCasesResponsibleFilter(responsible) {
+  state.casesPage = 1;
   state.casesResponsibleFilter = responsible || "";
   state.casesQuickFilter = "";
   if ($("#casesSearch")) $("#casesSearch").value = "";
@@ -1804,6 +1890,7 @@ function applyCasesCellFilter(field, value) {
   const normalizedValue = String(value ?? "").trim();
   if (!caseCellFilterFields.has(normalizedField) || !normalizedValue) return;
   state.casesCellFilter = { field: normalizedField, value: normalizedValue };
+  state.casesPage = 1;
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
   renderCases();
@@ -1811,6 +1898,7 @@ function applyCasesCellFilter(field, value) {
 
 function clearCasesCellFilter() {
   state.casesCellFilter = null;
+  state.casesPage = 1;
   renderCases();
 }
 
@@ -2529,6 +2617,18 @@ function currentLoadCoefficientConfig() {
   return loadCoefficientConfig(state.data?.loadCoefficients ?? []);
 }
 
+function settingsNumberStepper({ value, min = 0, step = 1, inputClass = "", inputAttributes = "", label = "Числовое значение", disabled = false } = {}) {
+  const numericValue = Number(value);
+  const minusDisabled = disabled || (Number.isFinite(numericValue) && numericValue <= min);
+  return `
+    <span class="settings-number-stepper">
+      <button class="settings-number-step" type="button" data-settings-number-step="-1" aria-label="Уменьшить: ${escapeHtml(label)}" ${minusDisabled ? "disabled" : ""}>−</button>
+      <input class="settings-number-input ${inputClass}" type="number" min="${escapeHtml(min)}" step="${escapeHtml(step)}" inputmode="decimal" value="${escapeHtml(value ?? "")}" ${inputAttributes} ${disabled ? "disabled" : ""} aria-label="${escapeHtml(label)}" />
+      <button class="settings-number-step" type="button" data-settings-number-step="1" aria-label="Увеличить: ${escapeHtml(label)}" ${disabled ? "disabled" : ""}>+</button>
+    </span>
+  `;
+}
+
 function renderLoadCoefficients() {
   const table = $("#loadCoefficientsTable");
   const saveButton = $("#saveLoadCoefficientsBtn");
@@ -2537,10 +2637,10 @@ function renderLoadCoefficients() {
   const admin = isAdminUser();
   const config = currentLoadCoefficientConfig();
   table.innerHTML = loadCoefficientTypes.map((type) => `
-    <tr data-load-coefficient-type="${escapeHtml(type)}">
-      <td><strong>${escapeHtml(type)}</strong></td>
-      <td><input class="load-coefficient-input" type="text" inputmode="decimal" value="${escapeHtml(config.values[type] ?? "")}" ${admin ? "" : "disabled"} /></td>
-    </tr>
+    <div class="load-coefficient-item" data-load-coefficient-type="${escapeHtml(type)}">
+      <span>${escapeHtml(type)}</span>
+      ${settingsNumberStepper({ value: config.values[type] ?? "", min: 0.05, step: 0.05, inputClass: "load-coefficient-input", label: `Коэффициент: ${type}`, disabled: !admin })}
+    </div>
   `).join("");
   saveButton?.classList.toggle("hidden", !admin);
   if (note) {
@@ -2551,20 +2651,50 @@ function renderLoadCoefficients() {
   }
 }
 
+function syncSettingsNumberStepper(input) {
+  const stepper = input?.closest(".settings-number-stepper");
+  if (!stepper) return;
+  const value = Number(String(input.value || "").replace(",", "."));
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const minus = stepper.querySelector('[data-settings-number-step="-1"]');
+  const plus = stepper.querySelector('[data-settings-number-step="1"]');
+  if (minus) minus.disabled = input.disabled || (Number.isFinite(min) && Number.isFinite(value) && value <= min);
+  if (plus) plus.disabled = input.disabled || (input.max !== "" && Number.isFinite(max) && Number.isFinite(value) && value >= max);
+}
+
+function changeSettingsNumber(button) {
+  const stepper = button.closest(".settings-number-stepper");
+  const input = stepper?.querySelector("input[type='number']");
+  if (!input || input.disabled) return;
+  const current = Number(String(input.value || "").replace(",", "."));
+  const direction = Number(button.dataset.settingsNumberStep) || 0;
+  const step = Number(input.step) || 1;
+  const min = input.min !== "" && Number.isFinite(Number(input.min)) ? Number(input.min) : Number.NEGATIVE_INFINITY;
+  const max = input.max !== "" && Number.isFinite(Number(input.max)) ? Number(input.max) : Number.POSITIVE_INFINITY;
+  const precision = (String(step).split(".")[1] ?? "").length;
+  const base = Number.isFinite(current) ? current : Math.max(min, 0);
+  const next = Math.min(max, Math.max(min, Number((base + direction * step).toFixed(precision))));
+  input.value = String(next);
+  syncSettingsNumberStepper(input);
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  setStatus("Есть несохраненные изменения");
+}
+
 function renderDeadlineSettings() {
   const table = $("#deadlineSettingsTable");
   if (!table) return;
   table.innerHTML = deadlineSettingsForSelectedYuc().map((row) => `
     <tr data-deadline-type="${escapeHtml(row["Тип дела"])}">
       <td>${escapeHtml(row["Тип дела"])}</td>
-      <td><input class="deadline-input deadline-setting-field" type="number" min="1" step="1" data-field="Активность, дни" value="${escapeHtml(row["Активность, дни"])}" /></td>
-      <td><input class="deadline-input deadline-setting-field" type="number" min="1" step="1" data-field="Автозавершение, дни" value="${escapeHtml(row["Автозавершение, дни"])}" /></td>
+      <td>${settingsNumberStepper({ value: row["Активность, дни"], min: 1, inputClass: "deadline-input deadline-setting-field", inputAttributes: 'data-field="Активность, дни"', label: `Активность, дни: ${row["Тип дела"]}` })}</td>
+      <td>${settingsNumberStepper({ value: row["Автозавершение, дни"], min: 1, inputClass: "deadline-input deadline-setting-field", inputAttributes: 'data-field="Автозавершение, дни"', label: `Автозавершение, дни: ${row["Тип дела"]}` })}</td>
       <td>${yesNoToggle({
         className: "deadline-setting-field",
         attrs: `data-field="Учитывать долг"`,
         checked: yes(row["Учитывать долг"]),
       })}</td>
-      <td><input class="deadline-input deadline-setting-field" type="number" min="0" step="1" data-field="Максимальный долг" value="${escapeHtml(row["Максимальный долг"])}" /></td>
+      <td>${settingsNumberStepper({ value: row["Максимальный долг"], min: 0, inputClass: "deadline-input deadline-setting-field", inputAttributes: 'data-field="Максимальный долг"', label: `Максимальный долг: ${row["Тип дела"]}` })}</td>
     </tr>
   `).join("");
 }
@@ -2601,6 +2731,7 @@ function updateRegionalSettingsAvailability() {
     control.disabled = !enabled;
     control.closest(".toggle-inline")?.classList.toggle("disabled", !enabled);
   });
+  panel?.querySelectorAll(".settings-number-input").forEach(syncSettingsNumberStepper);
 }
 
 function regionalAssignmentRow(row = {}, index = -1, isNew = false) {
@@ -2691,7 +2822,7 @@ function renderSettings() {
 
 async function saveLoadCoefficients() {
   if (!isAdminUser()) return;
-  const rows = $$("#loadCoefficientsTable tr").map((row) => ({
+  const rows = $$("#loadCoefficientsTable .load-coefficient-item").map((row) => ({
     "Тип нагрузки": row.dataset.loadCoefficientType,
     "Коэффициент": Number(String(row.querySelector(".load-coefficient-input")?.value ?? "").replace(",", ".")),
   }));
@@ -2776,21 +2907,38 @@ function closeSettingsHelp() {
   $("#settingsHelpModal")?.setAttribute("aria-hidden", "true");
 }
 
+function markDataViewsDirty(names = dataViewNames) {
+  for (const name of names) state.dirtyViews.add(name);
+}
+
+function activeDataViewName() {
+  return $(".view.active")?.id?.replace(/^view-/, "") || (isEmployeeUser() ? "cases" : "dashboard");
+}
+
+function renderDataView(name, { force = false } = {}) {
+  if (!state.data || !dataViewNames.includes(name)) return;
+  if (!force && !state.dirtyViews.has(name)) return;
+  if (name === "dashboard") {
+    renderSummary();
+    renderCompletionControl();
+    renderWorkloadDashboard();
+  } else if (name === "distribution") {
+    renderYucRegionSelects();
+  } else if (name === "cases") {
+    renderCases();
+  } else if (name === "employees") {
+    if (state.employeeSection === "vacations") renderVacations();
+    else resetEmployeeAvailabilityDrafts();
+  } else if (name === "settings") {
+    renderSettings();
+  }
+  state.dirtyViews.delete(name);
+}
+
 function renderAll() {
   if (!state.data) return;
   renderYucTabs();
-  if (isEmployeeUser() || isExternalReadOnlyYuc()) {
-    renderCases();
-    return;
-  }
-  renderSummary();
-  renderCompletionControl();
-  renderWorkloadDashboard();
-  renderYucRegionSelects();
-  renderCases();
-  renderEmployees();
-  renderVacations();
-  renderSettings();
+  renderDataView(activeDataViewName());
 }
 
 function formDraft() {
@@ -3098,21 +3246,23 @@ async function saveEmployee(employeeId) {
     patch[input.dataset.field] = input.type === "checkbox" ? yesNo(input.checked ? "Да" : "Нет") : input.value;
   });
   setStatus("Сохраняю сотрудника…");
-  let payload = await api(`/api/employees/${encodeURIComponent(employeeId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  });
   const debtToggles = $$(`tr[data-employee-row="${CSS.escape(employeeId)}"] .employee-debt-field`);
+  const debts = [];
   for (const input of debtToggles) {
     if (input.disabled) continue;
     const max = Number(input.max) || Number.POSITIVE_INFINITY;
     const value = Math.max(0, Math.min(max, Math.floor(Number(input.value) || 0)));
-    payload = await api(`/api/queues/${encodeURIComponent(input.dataset.queue)}/${encodeURIComponent(input.dataset.employee)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ [input.dataset.field]: value }),
-    });
+    debts.push({ queue_id: input.dataset.queue, employee_id: input.dataset.employee, [input.dataset.field]: value });
   }
-  setDataFromPayload(payload);
+  const payload = await api(`/api/employees/${encodeURIComponent(employeeId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ employee: patch, debts }),
+  });
+  state.data.employees = state.data.employees.map((row) => row.employee_id === employeeId ? { ...row, ...payload.employee } : row);
+  const updatedQueues = new Map((payload.queues ?? []).map((row) => [`${row.queue_id}::${row.employee_id}`, row]));
+  state.data.queues = state.data.queues.map((row) => updatedQueues.get(`${row.queue_id}::${row.employee_id}`) ?? row);
+  markDataViewsDirty(["dashboard", "employees", "distribution"]);
+  renderEmployees();
   state.lastRecommendation = null;
   scheduleRecommendation();
   setStatus("Сохранено");
@@ -3562,16 +3712,26 @@ function caseModalReadonlyValue(field, value) {
   return escapeHtml(value || "—");
 }
 
+function caseModalMultilineValue(value) {
+  return String(value ?? "")
+    .replace(/&#(?:0*10|x0*a);/gi, "\n")
+    .replace(/\r\n?/g, "\n");
+}
+
 function caseModalField({ field, label, type = "text", wide = false, rows = 3, readonly = false }) {
   const draft = caseModalDraft();
   const value = draft[field] ?? "";
   const editing = state.caseModalEditing && !readonly;
+  const multiline = type === "textarea";
   const classes = ["case-edit-field", wide ? "wide" : ""].filter(Boolean).join(" ");
   if (!editing) {
+    const displayValue = multiline
+      ? escapeHtml(caseModalMultilineValue(value) || "—")
+      : caseModalReadonlyValue(field, value);
     return `
-      <div class="case-detail-item ${wide ? "wide" : ""}" data-case-detail-field="${escapeHtml(field)}">
+      <div class="case-detail-item ${wide ? "wide" : ""} ${multiline ? "multiline" : ""}" data-case-detail-field="${escapeHtml(field)}">
         <span>${escapeHtml(label)}</span>
-        <strong>${caseModalReadonlyValue(field, value)}</strong>
+        <strong>${displayValue}</strong>
       </div>
     `;
   }
@@ -3579,7 +3739,7 @@ function caseModalField({ field, label, type = "text", wide = false, rows = 3, r
     return `
       <label class="field ${classes}">
         <span>${escapeHtml(label)}</span>
-        <textarea data-case-modal-field="${escapeHtml(field)}" rows="${rows}">${escapeHtml(value)}</textarea>
+        <textarea data-case-modal-field="${escapeHtml(field)}" rows="${rows}">${escapeHtml(caseModalMultilineValue(value))}</textarea>
       </label>
     `;
   }
@@ -4199,7 +4359,7 @@ function bindEvents() {
   $$(".nav-link").forEach((link) => {
     link.addEventListener("click", () => showView(link.dataset.view));
   });
-  $("#refreshBtn").addEventListener("click", loadData);
+  $("#refreshBtn").addEventListener("click", () => loadData({ view: activeDataViewName(), force: true }));
   $("#settingsHelpClose")?.addEventListener("click", closeSettingsHelp);
   $("#settingsHelpModal")?.addEventListener("click", (event) => {
     if (event.target.id === "settingsHelpModal") closeSettingsHelp();
@@ -4207,7 +4367,7 @@ function bindEvents() {
   $("#authLoginForm")?.addEventListener("submit", (event) => logIn(event).catch((error) => setAuthMessage(error.message, "error")));
   $("#authFirstAccessForm")?.addEventListener("submit", (event) => completeFirstAccess(event).catch((error) => setAuthMessage(error.message, "error")));
   $$(".auth-mode").forEach((button) => button.addEventListener("click", () => setAuthMode(button.dataset.authMode)));
-  $("#refreshAccessBtn")?.addEventListener("click", () => loadAccessUsers().catch((error) => toast(error.message, "error")));
+  $("#refreshAccessBtn")?.addEventListener("click", () => loadAccessUsers({ force: true }).catch((error) => toast(error.message, "error")));
   $("#closeAccessCodeBtn")?.addEventListener("click", closeAccessCodeModal);
   $("#copyAccessCodeBtn")?.addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#accessCodeValue").textContent || ""); toast("Код скопирован."); } catch { toast("Не удалось скопировать код. Скопируйте его вручную.", "error"); } });
   $("#accessCodeModal")?.addEventListener("click", (event) => { if (event.target.id === "accessCodeModal") closeAccessCodeModal(); });
@@ -4368,7 +4528,7 @@ function bindEvents() {
     }
   });
   $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
-  $("#casesSearch").addEventListener("input", renderCases);
+  $("#casesSearch").addEventListener("input", scheduleCasesRender);
   $("#casesSearchClear")?.addEventListener("click", () => {
     const input = $("#casesSearch");
     if (!input) return;
@@ -4405,7 +4565,10 @@ function bindEvents() {
   $$(".subtab").forEach((button) => {
     button.addEventListener("click", () => {
       state.employeeSection = button.dataset.employeeSection;
-      if (state.data) resetEmployeeAvailabilityDrafts();
+      if (state.data) {
+        if (state.employeeSection === "vacations") renderVacations();
+        else resetEmployeeAvailabilityDrafts();
+      }
       $$(".subtab").forEach((item) => item.classList.toggle("active", item === button));
       $$(".employee-section").forEach((section) => section.classList.toggle("active", section.id === `employee-section-${state.employeeSection}`));
     });
@@ -4445,6 +4608,11 @@ function bindEvents() {
   }));
   $("#cancelVacationDraftBtn").addEventListener("click", cancelVacationDraft);
   document.addEventListener("click", (event) => {
+    const settingsNumberButton = event.target.closest("[data-settings-number-step]");
+    if (settingsNumberButton) {
+      changeSettingsNumber(settingsNumberButton);
+      return;
+    }
     const settingsHelpButton = event.target.closest("[data-settings-help]");
     if (settingsHelpButton) {
       openSettingsHelp(settingsHelpButton.dataset.settingsHelp);
@@ -4463,6 +4631,12 @@ function bindEvents() {
     const historicalPresetButton = event.target.closest(".historical-preset");
     if (historicalPresetButton) {
       setHistoricalPreset(historicalPresetButton.dataset.preset);
+      return;
+    }
+    const casesPageButton = event.target.closest(".cases-page-button");
+    if (casesPageButton && !casesPageButton.disabled) {
+      state.casesPage = Math.max(1, Number(casesPageButton.dataset.casesPage) || 1);
+      renderCases();
       return;
     }
     const historicalSegmentButton = event.target.closest(".historical-segment");
@@ -4593,6 +4767,11 @@ function bindEvents() {
     if (vacationDay) handleVacationDateClick(vacationDay.dataset.date);
   });
   document.addEventListener("change", (event) => {
+    if (event.target.matches(".settings-number-input")) {
+      syncSettingsNumberStepper(event.target);
+      setStatus("Есть несохраненные изменения");
+      return;
+    }
     if (event.target.matches("#weightedDashboardToggle")) {
       setWeightedDashboard(event.target.checked);
       return;

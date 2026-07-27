@@ -16,6 +16,7 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
     tables: new Map(),
     loadedAt: new Map(),
     pending: new Map(),
+    versions: new Map(),
   };
   const performance = {
     startedAt: new Date().toISOString(),
@@ -43,6 +44,7 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
     for (const [key, rows] of Object.entries(data)) {
       cache.tables.set(key, Array.isArray(rows) ? rows.map(cloneRow) : rows);
       cache.loadedAt.set(key, now);
+      cache.versions.set(key, (cache.versions.get(key) || 0) + 1);
     }
   }
 
@@ -93,7 +95,9 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
 
   async function read(keys = bootstrapKeys, options = {}) {
     const requested = normalizeKeys(keys);
-    const stale = options.force
+    const stale = options.cacheOnly
+      ? requested.filter((key) => !cache.tables.has(key))
+      : options.force
       ? requested
       : requested.filter((key) => !cache.tables.has(key) || age(key) > ttl(key));
     if (stale.length) await refresh(stale);
@@ -105,6 +109,29 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
       if (!Object.prototype.hasOwnProperty.call(data, key)) data[key] = [];
     }
     return data;
+  }
+
+  function replace(key, rows) {
+    if (!tableKeys.includes(key)) throw new Error(`Неизвестная таблица кэша: ${key}`);
+    merge({ [key]: Array.isArray(rows) ? rows : [] });
+  }
+
+  function snapshot(keys = tableKeys) {
+    const requested = Array.isArray(keys) ? keys : [keys];
+    const data = {};
+    for (const key of requested) {
+      if (!cache.tables.has(key)) continue;
+      const value = cache.tables.get(key);
+      data[key] = Array.isArray(value) ? value.map(cloneRow) : value;
+    }
+    for (const key of emptyKeys) {
+      if (!Object.prototype.hasOwnProperty.call(data, key)) data[key] = [];
+    }
+    return data;
+  }
+
+  function invalidate(keys = tableKeys) {
+    for (const key of normalizeKeys(keys)) cache.loadedAt.delete(key);
   }
 
   function status() {
@@ -123,6 +150,7 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
           remainingMs: Number.isFinite(currentAge) ? Math.max(ttl(key) - currentAge, 0) : null,
           stale: !cache.tables.has(key) || currentAge > ttl(key),
           rows: Array.isArray(cache.tables.get(key)) ? cache.tables.get(key).length : 0,
+          version: cache.versions.get(key) || 0,
         }];
       })),
       performance: {
@@ -133,5 +161,5 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
     };
   }
 
-  return { read, status };
+  return { read, replace, snapshot, invalidate, status };
 }

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
 import { canManageYuc } from "./lib/access-policy.mjs";
 import { FIELD, cleanText, enrichData, normalizeYuc, nameMatches } from "./lib/domain.mjs";
-import { readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
+import { patchTableRow, patchTableRows, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { loadRuntimeConfig } from "./lib/runtime-config.mjs";
 import { readBinaryBody, readJsonBody as readBody, sendJson, serveStatic } from "./lib/http-utils.mjs";
@@ -17,6 +17,8 @@ import { createCaseRoutes } from "./routes/case-routes.mjs";
 import { createWriteCoordinator, isMutationRequest } from "./lib/write-coordinator.mjs";
 import { normalizeError } from "./lib/errors.mjs";
 import { assertAllowedFields } from "./lib/validation.mjs";
+import { mutationReadTables } from "./lib/mutation-dependencies.mjs";
+import { managerScopedData, tableKeysForView } from "./lib/view-data.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -61,8 +63,12 @@ const tableCache = createTableCache({
 });
 const readData = tableCache.read;
 const cacheStatus = tableCache.status;
+async function readRouteData(keys = ALL_TABLE_KEYS, options = {}) {
+  await readData(keys, options);
+  return tableCache.snapshot();
+}
 const writeCoordinator = createWriteCoordinator({
-  beforeWrite: () => readData(undefined, { force: true }),
+  beforeWrite: ({ method, pathname } = {}) => readData(mutationReadTables(method, pathname), { force: true }),
 });
 
 
@@ -86,17 +92,15 @@ function employeeScopedData(rawData, employee) {
 }
 
 async function saveAuthEmployee(data, employee) {
-  // Авторизация работает только с таблицей сотрудников. Не пропускаем такой
-  // неполный набор данных через enrichData(), которому нужны все таблицы.
-  await saveData(data, ["employees"]);
-  let latest = null;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    if (attempt) await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
-    const fresh = await readData(["employees"], { force: true });
-    latest = fresh.employees.find((item) => cleanText(item.employee_id) === cleanText(employee.employee_id));
-    if (latest) return latest;
+  const authFields = ["Роль доступа", "Хэш-пароля", "Хэш кода первичного входа", "Срок действия кода"];
+  if (employee?._recordId) {
+    await patchTableRow("employees", employee, authFields);
+    tableCache.replace("employees", data.employees);
+    return employee;
   }
-  return latest ?? employee;
+  await saveData(data, ["employees"]);
+  const fresh = await readData(["employees"], { force: true });
+  return fresh.employees.find((item) => cleanText(item.employee_id) === cleanText(employee.employee_id)) ?? employee;
 }
 
 const auth = createAuthController({ readData, saveEmployee: saveAuthEmployee, sendJson, readBody });
@@ -145,7 +149,9 @@ async function confirmedDataAfterSave(data, changedTables = null, confirm = null
     confirm = changedTables;
     changedTables = null;
   }
-  await saveData(data, changedTables ?? undefined);
+  const tablesToSave = changedTables ?? ALL_TABLE_KEYS;
+  const currentData = await readData(tablesToSave, { cacheOnly: true });
+  await saveData(data, tablesToSave, { currentData });
   let lastData = null;
   const refreshTables = changedTables;
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -167,7 +173,7 @@ function findCase(data, caseId) {
 
 const handleSettingsRoute = createSettingsRoutes({
   readBody,
-  readData,
+  readData: readRouteData,
   saveAndConfirm: confirmedDataAfterSave,
   sendJson,
   requireManageYuc,
@@ -182,7 +188,7 @@ const handleSettingsRoute = createSettingsRoutes({
 const handleVacationRoute = createVacationRoutes({
   readBody,
   readBinaryBody,
-  readData,
+  readData: readRouteData,
   saveAndConfirm: confirmedDataAfterSave,
   sendJson,
   requireManageEmployee,
@@ -190,7 +196,7 @@ const handleVacationRoute = createVacationRoutes({
 const handleCaseImportRoute = createCaseImportRoutes({
   readBody,
   readBinaryBody,
-  readData,
+  readData: readRouteData,
   readDirectories,
   saveAndConfirm: confirmedDataAfterSave,
   sendJson,
@@ -202,12 +208,16 @@ const handleCaseRoute = createCaseRoutes({
   auth,
   readBody,
   readBinaryBody,
-  readData,
+  readData: readRouteData,
   saveAndConfirm: confirmedDataAfterSave,
   sendJson,
   requireManageYuc,
   requireManageCase,
   employeeScopedData,
+  patchCachedRow: async (table, row, fields, data) => {
+    await patchTableRow(table, row, fields);
+    tableCache.replace(table, data[table]);
+  },
   caseDocumentMaxBytes: CASE_DOCUMENT_MAX_BYTES,
   officePreviewMaxBytes: OFFICE_PREVIEW_MAX_BYTES,
 });
@@ -230,11 +240,14 @@ async function api(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/data") {
-    const rawData = await readData();
+    const requestedView = cleanText(url.searchParams.get("view"));
+    const requestedKeys = tableKeysForView(requestedView, ALL_TABLE_KEYS);
+    const rawData = await readData(requestedKeys, { force: url.searchParams.get("refresh") === "1" });
+    const loadedTables = Object.keys(rawData);
     if (auth.isManager(user)) {
-      const directories = await readDirectories(rawData);
-      const data = { ...enrichData(rawData), directories };
-      return sendJson(res, 200, { ok: true, user, data, storagePath: storagePath(), tabsStorageStatus: tabsStorageStatus(), cacheStatus: cacheStatus(), directoriesPath: directoriesPath() });
+      const directories = await readDirectories({ force: url.searchParams.get("refreshDirectories") === "1" });
+      const data = { ...managerScopedData(rawData), directories };
+      return sendJson(res, 200, { ok: true, user, data, loadedTables, view: requestedView || "all", storagePath: storagePath(), tabsStorageStatus: tabsStorageStatus(), cacheStatus: cacheStatus(), directoriesPath: directoriesPath() });
     }
     const employee = rawData.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
     if (!employee) {
@@ -242,8 +255,8 @@ async function api(req, res, url) {
       error.status = 401;
       throw error;
     }
-    const directories = await readDirectories(rawData);
-    return sendJson(res, 200, { ok: true, user, data: { ...employeeScopedData(rawData, employee), directories }, storagePath: storagePath(), cacheStatus: cacheStatus() });
+    const directories = await readDirectories();
+    return sendJson(res, 200, { ok: true, user, data: { ...employeeScopedData(rawData, employee), directories }, loadedTables, view: requestedView || "all", storagePath: storagePath(), cacheStatus: cacheStatus() });
   }
 
   if (await handleCaseRoute(req, res, url, user)) return;
@@ -264,7 +277,7 @@ async function api(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/directories") {
-    const directories = await readDirectories(await readData());
+    const directories = await readDirectories({ force: url.searchParams.get("refresh") === "1" });
     return sendJson(res, 200, { ok: true, directories, directoriesPath: directoriesPath() });
   }
 
@@ -272,16 +285,27 @@ async function api(req, res, url) {
 
   if (req.method === "PATCH" && url.pathname.startsWith("/api/employees/")) {
     const id = decodeURIComponent(url.pathname.split("/").pop());
-    const patch = await readBody(req);
-    const data = await readData();
+    const body = await readBody(req);
+    const patch = body.employee && typeof body.employee === "object" ? body.employee : body;
+    const debts = Array.isArray(body.debts) ? body.debts : [];
+    const data = await readRouteData(["employees", "queues"]);
     const employee = data.employees.find((item) => item.employee_id === id);
     if (!employee) return sendJson(res, 404, { ok: false, error: "Сотрудник не найден." });
     requireManageYuc(user, employee[FIELD.yuc]);
     assertAllowedFields(patch, EMPLOYEE_MANAGER_EDIT_FIELDS, "Через этот экран нельзя изменять");
     Object.assign(employee, Object.fromEntries(Object.entries(patch).filter(([field]) => EMPLOYEE_MANAGER_EDIT_FIELDS.has(field))));
-    const confirmedData = await confirmedDataAfterSave(data, ["employees"], (freshData) => Boolean(freshData.employees.find((item) => item.employee_id === id)));
-    const confirmedEmployee = confirmedData.employees.find((item) => item.employee_id === id) ?? employee;
-    return sendJson(res, 200, { ok: true, employee: confirmedEmployee, data: confirmedData });
+    const debtRows = debts.map((item) => {
+      const row = data.queues.find((candidate) => candidate.queue_id === cleanText(item.queue_id) && candidate.employee_id === cleanText(item.employee_id));
+      if (!row || row.employee_id !== id) throw Object.assign(new Error("Строка долга сотрудника не найдена."), { status: 404 });
+      requireManageYuc(user, row[FIELD.yuc]);
+      row[FIELD.debt] = Math.max(0, Math.floor(Number(item[FIELD.debt]) || 0));
+      return row;
+    });
+    await patchTableRow("employees", employee, [...EMPLOYEE_MANAGER_EDIT_FIELDS]);
+    if (debtRows.length) await patchTableRows("queues", debtRows.map((row) => ({ row, changedFields: [FIELD.debt] })));
+    tableCache.replace("employees", data.employees);
+    tableCache.replace("queues", data.queues);
+    return sendJson(res, 200, { ok: true, employee, queues: debtRows });
   }
 
   if (await handleVacationRoute(req, res, url, user)) return;
@@ -290,15 +314,15 @@ async function api(req, res, url) {
   if (req.method === "PATCH" && url.pathname.startsWith("/api/queues/")) {
     const [, , , queueId, employeeId] = url.pathname.split("/");
     const patch = await readBody(req);
-    const data = await readData();
+    const data = await readRouteData(["queues"]);
     const row = data.queues.find((item) => item.queue_id === decodeURIComponent(queueId) && item.employee_id === decodeURIComponent(employeeId));
     if (!row) return sendJson(res, 404, { ok: false, error: "Строка очереди не найдена." });
     requireManageYuc(user, row[FIELD.yuc]);
     assertAllowedFields(patch, new Set([FIELD.debt]), "В очереди нельзя изменять");
     Object.assign(row, patch);
-    const confirmedData = await confirmedDataAfterSave(data, ["queues"], (freshData) => Boolean(freshData.queues.find((item) => item.queue_id === row.queue_id && item.employee_id === row.employee_id)));
-    const confirmedQueue = confirmedData.queues.find((item) => item.queue_id === row.queue_id && item.employee_id === row.employee_id) ?? row;
-    return sendJson(res, 200, { ok: true, queue: confirmedQueue, data: confirmedData });
+    await patchTableRow("queues", row, [FIELD.debt]);
+    tableCache.replace("queues", data.queues);
+    return sendJson(res, 200, { ok: true, queue: row, data: enrichData(data) });
   }
 
   return sendJson(res, 404, { ok: false, error: "Метод API не найден." });
@@ -333,9 +357,20 @@ async function writeServerErrorLog({ id, req, url, error }) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  const requestStarted = performance.now();
+  const originalWriteHead = res.writeHead.bind(res);
+  res.writeHead = (statusCode, statusMessageOrHeaders, maybeHeaders) => {
+    const timing = `app;dur=${Math.max(0, performance.now() - requestStarted).toFixed(1)}`;
+    if (typeof statusMessageOrHeaders === "string") {
+      return originalWriteHead(statusCode, statusMessageOrHeaders, { ...(maybeHeaders ?? {}), "Server-Timing": timing });
+    }
+    return originalWriteHead(statusCode, { ...(statusMessageOrHeaders ?? {}), "Server-Timing": timing });
+  };
   try {
     if (url.pathname.startsWith("/api/")) {
-      if (isMutationRequest(req.method, url.pathname)) await writeCoordinator.run(() => api(req, res, url));
+      if (isMutationRequest(req.method, url.pathname)) {
+        await writeCoordinator.run(() => api(req, res, url), { method: req.method, pathname: url.pathname });
+      }
       else await api(req, res, url);
     } else {
       await staticFile(req, res, url);

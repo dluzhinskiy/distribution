@@ -41,7 +41,7 @@ export function createCaseImportRoutes({
         sendJson(res, 400, { ok: false, error: "Выберите новые дела или обновления для применения." });
         return true;
       }
-      const data = await readData();
+      const data = await readData(["cases", "employees"]);
       for (const row of rows) {
         const yuc = row?.source?.[FIELD.yuc] ?? row[FIELD.yuc];
         requireManageYuc(user, yuc);

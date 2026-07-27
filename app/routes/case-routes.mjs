@@ -10,6 +10,7 @@ import {
   cleanText,
   completeCaseByDeadline,
   deleteCase,
+  enrichData,
   isDeletedCase,
   normalizeDraft,
   postponeCaseCompletion,
@@ -28,6 +29,10 @@ const MANAGER_CASE_EDIT_FIELDS = new Set([
   "Дата поступления", "Дата завершения", "Истец", "Ответчик", "Третье лицо",
   "Предмет", "Движение дела",
 ]);
+const DISTRIBUTION_READ_TABLES = [
+  "cases", "employees", "queues", "state", "vacations", "settings",
+  "yucSettings", "regionalAssignments", "regionalSubstitutions",
+];
 
 function findCase(data, caseId) {
   return data.cases.find((item) => item.case_id === caseId);
@@ -78,6 +83,7 @@ export function createCaseRoutes({
   requireManageYuc,
   requireManageCase,
   employeeScopedData,
+  patchCachedRow = async (table, _row, _fields, data) => saveAndConfirm(data, [table]),
   caseDocumentMaxBytes,
   officePreviewMaxBytes,
 }) {
@@ -140,7 +146,7 @@ export function createCaseRoutes({
       error.status = 400;
       throw error;
     }
-    const data = await readData();
+    const data = await readData(["cases", "employees", "settings", "vacations"]);
     const caseRow = findCase(data, id);
     if (!caseRow) {
       const error = new Error("Дело не найдено.");
@@ -173,7 +179,10 @@ export function createCaseRoutes({
       assertAllowedFields(patch, MANAGER_CASE_EDIT_FIELDS, "Через карточку нельзя изменять");
       Object.assign(caseRow, patch);
     }
-    const confirmedData = await saveAndConfirm(data, ["cases"], (freshData) => Boolean(findCase(freshData, id)));
+    const changedFields = [...Object.keys(patch)];
+    if (patch["Статус"] === "Завершено" && !changedFields.includes("Дата завершения")) changedFields.push("Дата завершения");
+    await patchCachedRow("cases", caseRow, changedFields, data);
+    const confirmedData = enrichData(data);
     const confirmedCase = assertConfirmedCase(confirmedData, id, "обновление дела");
     const responseData = manager
       ? confirmedData
@@ -184,7 +193,7 @@ export function createCaseRoutes({
   return async function handleCaseRoute(req, res, url, user) {
     if (req.method === "GET" && /^\/api\/cases\/[^/]+$/.test(url.pathname)) {
       const caseId = decodeURIComponent(url.pathname.split("/").pop());
-      const data = await readData(["cases"], { force: true });
+      const data = await readData(["cases"]);
       const caseRow = findCase(data, caseId);
       if (!caseRow) {
         const error = new Error("Дело не найдено.");
@@ -197,7 +206,7 @@ export function createCaseRoutes({
 
     if (req.method === "POST" && /^\/api\/cases\/[^/]+\/documents$/.test(url.pathname)) {
       const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
-      const data = await readData();
+      const data = await readData(["cases", "employees", "settings", "vacations"]);
       const caseRow = findCase(data, caseId);
       if (!caseRow) {
         const error = new Error("Дело не найдено.");
@@ -215,7 +224,8 @@ export function createCaseRoutes({
       const mimeType = cleanText(req.headers["x-file-type"]) || "application/octet-stream";
       const attachment = await uploadAttachment("cases", { buffer: file, name, mimeType });
       caseRow[FIELD.documents] = [...(Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : []), attachment];
-      const confirmedData = await saveAndConfirm(data, ["cases"], (freshData) => Boolean(findCase(freshData, caseId)));
+      await patchCachedRow("cases", caseRow, [FIELD.documents], data);
+      const confirmedData = enrichData(data);
       const confirmedCase = assertConfirmedCase(confirmedData, caseId, "добавление документа");
       const responseData = auth.isManager(user)
         ? confirmedData
@@ -249,7 +259,7 @@ export function createCaseRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/recommend") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(DISTRIBUTION_READ_TABLES);
       const draft = normalizeDraft(body.draft ?? body);
       requireManageYuc(user, draft[FIELD.yuc]);
       sendJson(res, 200, { ok: true, result: recommendWithPreview(data, draft) });
@@ -258,7 +268,7 @@ export function createCaseRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/assign-auto") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(DISTRIBUTION_READ_TABLES);
       const draft = normalizeDraft(body.draft ?? body);
       requireManageYuc(user, draft[FIELD.yuc]);
       const created = assignAutomatically(data, draft);
@@ -269,7 +279,7 @@ export function createCaseRoutes({
 
     if (req.method === "POST" && url.pathname === "/api/assign-manual") {
       const body = await readBody(req);
-      const data = await readData();
+      const data = await readData(DISTRIBUTION_READ_TABLES);
       const draft = normalizeDraft(body.draft ?? body);
       requireManageYuc(user, draft[FIELD.yuc]);
       const created = assignManually(data, draft, body.responsible, body.comment);
@@ -278,27 +288,36 @@ export function createCaseRoutes({
       return true;
     }
 
-    const existingAction = async (action, tables, label) => {
+    const existingAction = async (action, tables, label, readTables = tables) => {
       const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
-      const data = await readData();
+      const data = await readData(readTables);
       requireManageCase(user, data, caseId);
+      const beforeCase = { ...findCase(data, caseId) };
       const result = await action(data, caseId);
-      const confirmedData = await saveAndConfirm(data, tables, (freshData) => Boolean(findCase(freshData, caseId)));
+      let confirmedData;
+      if (tables.length === 1 && tables[0] === "cases") {
+        const changedCase = findCase(data, caseId);
+        const changedFields = Object.keys(changedCase).filter((field) => JSON.stringify(beforeCase[field]) !== JSON.stringify(changedCase[field]));
+        await patchCachedRow("cases", changedCase, changedFields, data);
+        confirmedData = enrichData(data);
+      } else {
+        confirmedData = await saveAndConfirm(data, tables, (freshData) => Boolean(findCase(freshData, caseId)));
+      }
       sendJson(res, 200, { ok: true, ...result, case: assertConfirmedCase(confirmedData, caseId, label), data: confirmedData });
       return true;
     };
 
     if (req.method === "POST" && url.pathname.startsWith("/api/cases/") && url.pathname.endsWith("/assign-auto")) {
       await readBody(req);
-      return existingAction((data, caseId) => assignExistingAutomatically(data, caseId), ["cases", "queues", "state"], "автоназначение существующего дела");
+      return existingAction((data, caseId) => assignExistingAutomatically(data, caseId), ["cases", "queues", "state"], "автоназначение существующего дела", DISTRIBUTION_READ_TABLES);
     }
     if (req.method === "POST" && url.pathname.startsWith("/api/cases/") && url.pathname.endsWith("/assign-manual")) {
       const body = await readBody(req);
-      return existingAction((data, caseId) => assignExistingManually(data, caseId, body.responsible, body.comment), ["cases", "state"], "ручное назначение существующего дела");
+      return existingAction((data, caseId) => assignExistingManually(data, caseId, body.responsible, body.comment), ["cases", "state"], "ручное назначение существующего дела", DISTRIBUTION_READ_TABLES);
     }
     if (req.method === "POST" && url.pathname.startsWith("/api/cases/") && url.pathname.endsWith("/responsible")) {
       const body = await readBody(req);
-      return existingAction((data, caseId) => changeCaseResponsible(data, caseId, body.responsible), ["cases"], "смена ответственного");
+      return existingAction((data, caseId) => changeCaseResponsible(data, caseId, body.responsible), ["cases"], "смена ответственного", ["cases", "employees"]);
     }
     if (req.method === "POST" && url.pathname.startsWith("/api/cases/") && url.pathname.endsWith("/delete")) {
       const body = await readBody(req);

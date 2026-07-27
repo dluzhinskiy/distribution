@@ -7,6 +7,10 @@ const FIELD_KEY = "name";
 const PAGE_SIZE = Number(process.env.TABS_PAGE_SIZE || 1000);
 const REQUEST_TIMEOUT_MS = Number(process.env.TABS_REQUEST_TIMEOUT_MS || 30000);
 const REQUEST_RETRIES = Number(process.env.TABS_REQUEST_RETRIES || 3);
+const DIRECTORY_CACHE_TTL_MS = Number(process.env.DIRECTORY_CACHE_TTL_MS || 5 * 60 * 1000);
+let directoryCache = null;
+let directoryCacheLoadedAt = 0;
+let directoryReadPending = null;
 
 const DIRECTORY_TABLE = {
   name: "Справочник регионов",
@@ -203,6 +207,20 @@ async function readRemoteDirectories() {
   };
 }
 
-export async function readDirectories() {
-  return readRemoteDirectories();
+export async function readDirectories(options = {}) {
+  const force = options?.force === true;
+  const fresh = directoryCache && Date.now() - directoryCacheLoadedAt <= DIRECTORY_CACHE_TTL_MS;
+  if (!force && fresh) return directoryCache;
+  if (!directoryReadPending) {
+    directoryReadPending = readRemoteDirectories()
+      .then((value) => {
+        directoryCache = value;
+        directoryCacheLoadedAt = Date.now();
+        return value;
+      })
+      .finally(() => {
+        directoryReadPending = null;
+      });
+  }
+  return directoryReadPending;
 }

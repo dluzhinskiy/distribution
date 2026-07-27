@@ -35,3 +35,10 @@ test("request method classification leaves reads outside the write queue", () =>
   assert.equal(isMutationRequest("POST", "/api/auth/login"), false);
   assert.equal(isMutationRequest("POST", "/api/assign-auto"), true);
 });
+
+test("write coordinator passes endpoint context to targeted refresh", async () => {
+  let received;
+  const coordinator = createWriteCoordinator({ beforeWrite: async (context) => { received = context; } });
+  await coordinator.run(async () => "ok", { method: "PATCH", pathname: "/api/employees/EMP-001" });
+  assert.deepEqual(received, { method: "PATCH", pathname: "/api/employees/EMP-001" });
+});

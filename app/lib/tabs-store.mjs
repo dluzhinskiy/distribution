@@ -392,11 +392,31 @@ async function updateRows(table, updates) {
   }
 }
 
+export async function patchTableRows(key, updates = []) {
+  const table = TABLES[key];
+  if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  const records = updates.map(({ row, changedFields = [] }) => {
+    if (!row?._recordId) throw new Error(`Для адресного обновления «${table.name}» не найден recordId.`);
+    const allowed = new Set(changedFields.map((field) => outboundFieldName(table, field)));
+    const fields = Object.fromEntries(Object.entries(normalizeToTabs(table, row)).filter(([field]) => allowed.has(field)));
+    return { recordId: row._recordId, fields };
+  }).filter((record) => Object.keys(record.fields).length);
+  for (const chunk of chunks(records, 10)) {
+    await request(table, "PATCH", { records: chunk, fieldKey: tableFieldKey(table) });
+  }
+  return updates.map(({ row }) => row);
+}
+
+export async function patchTableRow(key, row, changedFields = []) {
+  await patchTableRows(key, [{ row, changedFields }]);
+  return row;
+}
+
 function comparableFields(table, row) {
   return JSON.stringify(normalizeToTabs(table, row));
 }
 
-async function syncTable(key, desiredRows = []) {
+async function syncTable(key, desiredRows = [], knownCurrentRows = null) {
   const table = TABLES[key];
   const creates = [];
   const updates = [];
@@ -405,7 +425,7 @@ async function syncTable(key, desiredRows = []) {
     const existingRows = desiredRows.filter((row) => row._recordId);
     creates.push(...desiredRows.filter((row) => !row._recordId));
     if (existingRows.length) {
-      const currentRows = await readTable(table);
+      const currentRows = Array.isArray(knownCurrentRows) ? knownCurrentRows : await readTable(table);
       const currentByRecordId = new Map(currentRows.map((row) => [row._recordId, row]));
       for (const row of existingRows) {
         const current = currentByRecordId.get(row._recordId);
@@ -423,7 +443,7 @@ async function syncTable(key, desiredRows = []) {
     return;
   }
 
-  const currentRows = await readTable(table);
+  const currentRows = Array.isArray(knownCurrentRows) ? knownCurrentRows : await readTable(table);
   const currentByKey = new Map(currentRows.map((row) => [rowKey(table, row), row]));
   const desiredKeys = new Set();
   for (const row of desiredRows) {
@@ -557,8 +577,8 @@ export async function readData(keys = TABLE_KEYS) {
   return Object.fromEntries(entries);
 }
 
-export async function saveData(data, keys = TABLE_KEYS) {
+export async function saveData(data, keys = TABLE_KEYS, { currentData = null } = {}) {
   for (const key of normalizeTableKeys(keys)) {
-    await syncTable(key, data[key] ?? []);
+    await syncTable(key, data[key] ?? [], currentData?.[key] ?? null);
   }
 }

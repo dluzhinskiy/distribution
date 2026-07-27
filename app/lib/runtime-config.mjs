@@ -19,7 +19,7 @@ export function loadRuntimeConfig(env = process.env) {
     officePreviewMaxBytes: finiteNumber(env.OFFICE_PREVIEW_MAX_BYTES, 12_000_000, { min: 1 }),
     cacheTtl: {
       default: finiteNumber(env.FAST_ENGINE_CACHE_TTL_MS, 30_000, { min: 0 }),
-      employees: finiteNumber(env.FAST_ENGINE_EMPLOYEES_CACHE_TTL_MS, 120_000, { min: 0 }),
+      employees: finiteNumber(env.FAST_ENGINE_EMPLOYEES_CACHE_TTL_MS, 30_000, { min: 0 }),
       vacations: finiteNumber(env.FAST_ENGINE_VACATIONS_CACHE_TTL_MS, 120_000, { min: 0 }),
       static: finiteNumber(env.FAST_ENGINE_STATIC_CACHE_TTL_MS, 600_000, { min: 0 }),
     },
