@@ -2732,6 +2732,329 @@ textarea:disabled {
   grid-column: 1 / -1;
 }
 
+.case-documents-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(78, 122, 165, 0.2);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.case-documents-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.case-documents-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.case-documents-head span {
+  font-weight: 800;
+  color: #16304c;
+}
+
+.case-documents-head small,
+.case-document-info span,
+.case-documents-empty {
+  color: #607a96;
+  font-size: 13px;
+}
+
+.case-documents-list {
+  display: grid;
+  gap: 8px;
+}
+
+.case-document-dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 76px;
+  padding: 14px 18px;
+  border: 1.5px dashed rgba(47, 141, 246, 0.44);
+  border-radius: 15px;
+  color: #315b84;
+  background: rgba(239, 248, 255, 0.5);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+
+.case-document-dropzone:hover,
+.case-document-dropzone.is-dragging {
+  border-color: var(--apple-accent, #2f8df6);
+  background: var(--apple-accent-soft, rgba(47, 141, 246, 0.14));
+}
+
+.case-document-dropzone.is-dragging {
+  transform: scale(1.01);
+}
+
+.case-document-dropzone:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+.case-document-dropzone > span {
+  display: grid;
+  gap: 3px;
+}
+
+.case-document-dropzone strong {
+  color: #16304c;
+  font-size: 14px;
+}
+
+.case-document-dropzone small {
+  color: #607a96;
+  font-size: 12px;
+}
+
+.case-document-drop-icon {
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  fill: none;
+  stroke: var(--apple-accent, #2f8df6);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.case-document-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(78, 122, 165, 0.14);
+}
+
+.case-document-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 10px;
+  color: var(--apple-accent, #2f8df6);
+  background: var(--apple-accent-soft, rgba(47, 141, 246, 0.14));
+  font-size: 18px;
+}
+
+.case-document-info {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  flex: 1;
+}
+
+.case-document-info strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #16304c;
+}
+
+.case-document-download {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--apple-accent, #2f8df6);
+  text-decoration: none;
+  background: var(--apple-accent-soft, rgba(47, 141, 246, 0.14));
+}
+
+.case-document-preview,
+.case-document-download {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  color: var(--apple-accent, #2f8df6);
+  text-decoration: none;
+  background: var(--apple-accent-soft, rgba(47, 141, 246, 0.14));
+  cursor: pointer;
+}
+
+.case-document-action-icon {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.9;
+}
+
+.case-document-preview:hover,
+.case-document-download:hover {
+  filter: brightness(0.96);
+}
+
+.document-preview-card {
+  width: min(1240px, calc(100vw - 48px));
+  height: min(860px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  position: relative;
+}
+
+.document-preview-loading {
+  min-height: 280px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: #607a96;
+}
+
+.office-preview {
+  padding: 6px 4px 20px;
+  color: #16304c;
+}
+
+.office-preview-paragraph {
+  margin: 0 0 14px;
+  white-space: pre-wrap;
+  line-height: 1.58;
+}
+
+.office-preview-sheet + .office-preview-sheet {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(78, 122, 165, 0.18);
+}
+
+.office-preview-sheet h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.office-preview-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(78, 122, 165, 0.2);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.office-preview-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.office-preview-table td {
+  min-width: 88px;
+  max-width: 340px;
+  padding: 8px 10px;
+  border-right: 1px solid rgba(78, 122, 165, 0.16);
+  border-bottom: 1px solid rgba(78, 122, 165, 0.16);
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.office-preview-table tr:last-child td { border-bottom: 0; }
+.office-preview-table td:last-child { border-right: 0; }
+
+.office-preview-note {
+  margin: 14px 0 0;
+  color: #607a96;
+  font-size: 13px;
+}
+
+.document-preview-head {
+  align-items: flex-start;
+  padding-right: 76px;
+}
+
+.document-preview-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid rgba(78, 122, 165, 0.24);
+  border-radius: 14px;
+  color: #16304c;
+  background: rgba(255, 255, 255, 0.68);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.document-preview-close:hover {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.document-preview-body {
+  min-height: 0;
+  padding: 0 24px 20px;
+  overflow: auto;
+}
+
+.document-preview-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 500px;
+  border: 1px solid rgba(78, 122, 165, 0.2);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.document-preview-image-wrap {
+  min-height: 100%;
+  display: grid;
+  place-items: start center;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid rgba(78, 122, 165, 0.2);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.document-preview-image-wrap img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(26, 63, 101, 0.2);
+}
+
+.document-preview-unsupported {
+  min-height: 280px;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+  color: #607a96;
+}
+
+.document-preview-unsupported strong {
+  color: #16304c;
+}
+
+.case-documents-empty {
+  padding: 10px 0 2px;
+}
+
 .case-modal-form .field {
   min-width: 0;
 }

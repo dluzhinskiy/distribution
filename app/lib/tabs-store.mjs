@@ -24,9 +24,13 @@ const TABLES = {
     name: "Дела",
     datasheetId: process.env.TABS_CASES_DATASHEET_ID || "dstD5wqizSVQS89kL7",
     viewId: process.env.TABS_CASES_VIEW_ID || "viwBynFRDSNva",
+    // Поле вложений может быть скрыто в пользовательском представлении. Для дел
+    // читаем полный набор полей, чтобы обычное сохранение не потеряло документы.
+    readAllFields: true,
     headers: CASE_HEADERS,
     keyFields: ["case_id"],
     dateFields: ["Дата поступления", "Дата завершения", "Отложить завершение до", "Дата предупреждения о завершении", "Дата распределения"],
+    attachmentFields: ["Документы"],
   },
   employees: {
     name: "Сотрудники",
@@ -132,7 +136,7 @@ function requireToken() {
 
 function tableUrl(table, extra = {}) {
   const url = new URL(`${API_BASE}/datasheets/${table.datasheetId}/records`);
-  if (table.viewId) url.searchParams.set("viewId", table.viewId);
+  if (table.viewId && !table.readAllFields) url.searchParams.set("viewId", table.viewId);
   url.searchParams.set("fieldKey", FIELD_KEY);
   for (const [key, value] of Object.entries(extra)) {
     if (Array.isArray(value)) {
@@ -455,6 +459,72 @@ function chunks(items, size) {
     result.push(items.slice(i, i + size));
   }
   return result;
+}
+
+function attachmentEndpoint(table) {
+  return new URL(`${API_BASE}/datasheets/${table.datasheetId}/attachments`);
+}
+
+function attachmentDownloadUrl(table, attachment = {}) {
+  const token = cleanText(attachment.token);
+  if (!token) throw new Error("У вложения отсутствует токен для скачивания.");
+  const url = new URL(`${API_BASE}/datasheets/${table.datasheetId}/attachments`);
+  url.searchParams.set("token", token);
+  return url;
+}
+
+function attachmentFromUploadPayload(payload = {}) {
+  const data = payload?.data;
+  const candidates = [
+    Array.isArray(data) ? data[0] : null,
+    data?.attachment,
+    Array.isArray(data?.attachments) ? data.attachments[0] : null,
+    data,
+  ];
+  const attachment = candidates.find((item) => item && typeof item === "object" && !Array.isArray(item));
+  if (!attachment || !cleanText(attachment.name || attachment.token || attachment.url || attachment.id)) {
+    throw new Error("MTS Tabs не вернул данные загруженного вложения.");
+  }
+  return { ...attachment };
+}
+
+export async function uploadAttachment(tableKey, { buffer, name, mimeType = "application/octet-stream" } = {}) {
+  const table = TABLES[tableKey];
+  if (!table) throw new Error(`Неизвестная таблица: ${tableKey}`);
+  requireToken();
+  if (!buffer?.length) throw new Error("Нельзя загрузить пустой файл.");
+  const form = new FormData();
+  form.append("file", new Blob([buffer], { type: mimeType }), name || "document");
+  const response = await fetchWithRetry(attachmentEndpoint(table), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    body: form,
+  });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`POST вложения «${table.name}»: API вернул не JSON (${response.status}).`);
+  }
+  if (!response.ok || payload.success === false || (payload.code && ![200, 201].includes(payload.code))) {
+    throw new Error(`Не удалось загрузить вложение: ${payload.message || text || response.status}.`);
+  }
+  return attachmentFromUploadPayload(payload);
+}
+
+export async function downloadAttachment(tableKey, attachment) {
+  const table = TABLES[tableKey];
+  if (!table) throw new Error(`Неизвестная таблица: ${tableKey}`);
+  requireToken();
+  const response = await fetchWithRetry(attachmentDownloadUrl(table, attachment), {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Не удалось скачать вложение: ${response.status}; ${text.slice(0, 300)}`);
+  }
+  return response;
 }
 
 export async function readData(keys = TABLE_KEYS) {

@@ -605,6 +605,17 @@
         </div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="documentPreviewModal" aria-hidden="true">
+      <div class="modal-card document-preview-card" role="dialog" aria-modal="true" aria-labelledby="documentPreviewTitle">
+        <div class="modal-head document-preview-head">
+          <div><span class="modal-eyebrow">Документ по делу</span><h2 id="documentPreviewTitle">Предпросмотр</h2></div>
+          <button class="icon-btn document-preview-close" id="documentPreviewClose" type="button" aria-label="Закрыть просмотр">×</button>
+        </div>
+        <div class="document-preview-body" id="documentPreviewBody"></div>
+        <div class="modal-actions"><a class="btn btn-primary" id="documentPreviewDownload" href="#">Скачать</a><button class="btn btn-secondary" id="documentPreviewOk" type="button">Закрыть</button></div>
+      </div>
+    </div>
     <div class="modal-overlay" id="accessCodeModal" aria-hidden="true">
       <div class="modal-card access-code-modal-card" role="dialog" aria-modal="true" aria-labelledby="accessCodeTitle">
         <div class="modal-head"><h2 id="accessCodeTitle">Код первичного входа</h2></div>

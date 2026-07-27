@@ -39,6 +39,8 @@ const state = {
   caseModalCaseId: "",
   caseModalEditing: false,
   caseModalDraft: null,
+  caseDocumentUploading: false,
+  documentPreviewKey: "",
   vacationDrafts: {},
   queueManualCandidate: null,
   journalLoaded: false,
@@ -3399,6 +3401,193 @@ function caseModalField({ field, label, type = "text", wide = false, rows = 3, r
   `;
 }
 
+function caseDocuments(row) {
+  return Array.isArray(row?.["Документы"]) ? row["Документы"] : [];
+}
+
+function formatDocumentSize(value) {
+  const bytes = Number(value) || 0;
+  if (!bytes) return "размер не указан";
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+function caseDocumentKey(document) {
+  return String(document?.id || document?.token || document?.url || "").trim();
+}
+
+function caseDocumentsSection(row, canEdit) {
+  const documents = caseDocuments(row);
+  const items = documents.length
+    ? documents.map((document) => {
+      const key = caseDocumentKey(document);
+      const downloadUrl = key
+        ? `/api/cases/${encodeURIComponent(row.case_id)}/documents/${encodeURIComponent(key)}/download`
+        : "";
+      return `
+        <div class="case-document-item">
+          <span class="case-document-icon" aria-hidden="true">▤</span>
+          <div class="case-document-info">
+            <strong title="${escapeHtml(document.name || "Документ")}">${escapeHtml(document.name || "Документ")}</strong>
+            <span>${escapeHtml(formatDocumentSize(document.size))}</span>
+          </div>
+          ${key ? `<button class="icon-btn case-document-preview" type="button" data-case-id="${escapeHtml(row.case_id)}" data-document-id="${escapeHtml(key)}" title="Открыть для просмотра" aria-label="Открыть ${escapeHtml(document.name || "документ")} для просмотра"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.75h7l5 5v13.5H6zM13 2.75v5h5M9 12h6M9 15.5h6" /></svg></button>` : ""}
+          ${downloadUrl ? `<a class="icon-btn case-document-download" href="${downloadUrl}" title="Скачать документ" aria-label="Скачать ${escapeHtml(document.name || "документ")}"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.5m0 0 4-4m-4 4-4-4M5 15.5v4.75h14V15.5" /></svg></a>` : ""}
+        </div>
+      `;
+    }).join("")
+    : `<div class="case-documents-empty">Документы не приложены.</div>`;
+  return `
+    <section class="case-documents-section">
+      <div class="case-documents-head">
+        <div>
+          <span>Документы</span>
+          <small>${documents.length ? `${documents.length} ${documents.length === 1 ? "файл" : "файлов"}` : ""}</small>
+        </div>
+      </div>
+      <div class="case-documents-list">${items}</div>
+      ${state.caseModalEditing && canEdit ? `
+        <button class="case-document-dropzone" type="button" ${state.caseDocumentUploading ? "disabled" : ""}>
+          <svg class="case-document-drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14V3.5m0 0 4 4m-4-4-4 4M5 15.5v4.75h14V15.5" /></svg>
+          <span><strong>${state.caseDocumentUploading ? "Загрузка файлов…" : "Перетащите файлы сюда"}</strong><small>${state.caseDocumentUploading ? "Дождитесь завершения операции" : "или нажмите, чтобы выбрать с устройства"}</small></span>
+        </button>
+      ` : ""}
+      ${state.caseModalEditing && canEdit ? `<input id="caseDocumentInput" class="hidden" type="file" multiple />` : ""}
+    </section>
+  `;
+}
+
+function documentPreviewKind(document = {}) {
+  const mime = String(document.mimeType || "").toLowerCase();
+  const name = String(document.name || "").toLowerCase();
+  if (mime === "application/pdf" || name.endsWith(".pdf")) return "pdf";
+  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name)) return "image";
+  if (mime.includes("wordprocessingml.document") || name.endsWith(".docx")) return "docx";
+  if (mime.includes("spreadsheetml") || /\.(xlsx|xlsm)$/.test(name)) return "xlsx";
+  return "unsupported";
+}
+
+function officePreviewHtml(preview = {}) {
+  if (preview.type === "docx") {
+    const blocks = (preview.blocks ?? []).map((block) => block.type === "table"
+      ? `<div class="office-preview-table-wrap"><table class="office-preview-table">${(block.rows ?? []).map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</table></div>`
+      : `<p class="office-preview-paragraph">${escapeHtml(block.text)}</p>`).join("");
+    return `<div class="office-preview office-preview-docx">${blocks || "<p>В документе не найден текст для отображения.</p>"}${preview.truncated ? "<p class=\"office-preview-note\">Показана начальная часть документа.</p>" : ""}</div>`;
+  }
+  const sheets = (preview.sheets ?? []).map((sheet) => `
+    <section class="office-preview-sheet">
+      <h3>${escapeHtml(sheet.name || "Лист")}</h3>
+      <div class="office-preview-table-wrap"><table class="office-preview-table">${(sheet.rows ?? []).map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("") || "<tr><td>Лист пуст.</td></tr>"}</table></div>
+    </section>
+  `).join("");
+  return `<div class="office-preview office-preview-xlsx">${sheets || "<p>В книге не найдено листов для отображения.</p>"}${preview.truncated ? "<p class=\"office-preview-note\">Показана начальная часть книги.</p>" : ""}</div>`;
+}
+
+async function loadOfficeDocumentPreview(caseId, documentId) {
+  const previewKey = `${caseId}::${documentId}`;
+  try {
+    const payload = await api(`/api/cases/${encodeURIComponent(caseId)}/documents/${encodeURIComponent(documentId)}/office-preview`);
+    if (state.documentPreviewKey !== previewKey) return;
+    $("#documentPreviewBody").innerHTML = officePreviewHtml(payload.preview);
+  } catch (error) {
+    if (state.documentPreviewKey !== previewKey) return;
+    $("#documentPreviewBody").innerHTML = `<div class="document-preview-unsupported"><strong>Не удалось подготовить предпросмотр.</strong><span>${escapeHtml(error.message)}</span></div>`;
+  }
+}
+
+function closeDocumentPreview() {
+  $("#documentPreviewModal")?.classList.remove("show");
+  $("#documentPreviewModal")?.setAttribute("aria-hidden", "true");
+  if ($("#documentPreviewBody")) $("#documentPreviewBody").innerHTML = "";
+  if ($("#documentPreviewDownload")) $("#documentPreviewDownload").setAttribute("href", "#");
+  state.documentPreviewKey = "";
+}
+
+function openDocumentPreview(caseId, documentId) {
+  const row = state.data?.cases?.find((item) => item.case_id === caseId);
+  const document = caseDocuments(row).find((item) => caseDocumentKey(item) === documentId);
+  if (!row || !document) {
+    toast("Документ не найден. Обновите данные и повторите попытку.", "error");
+    return;
+  }
+  const source = `/api/cases/${encodeURIComponent(caseId)}/documents/${encodeURIComponent(documentId)}/preview`;
+  const download = `/api/cases/${encodeURIComponent(caseId)}/documents/${encodeURIComponent(documentId)}/download`;
+  const kind = documentPreviewKind(document);
+  const previewKey = `${caseId}::${documentId}`;
+  state.documentPreviewKey = previewKey;
+  $("#documentPreviewTitle").textContent = document.name || "Документ";
+  $("#documentPreviewDownload").setAttribute("href", download);
+  $("#documentPreviewBody").innerHTML = kind === "pdf"
+    ? `<iframe class="document-preview-frame" src="${source}" title="${escapeHtml(document.name || "Документ")}"></iframe>`
+    : kind === "image"
+      ? `<div class="document-preview-image-wrap"><img src="${source}" alt="${escapeHtml(document.name || "Документ")}" /></div>`
+      : ["docx", "xlsx"].includes(kind)
+        ? `<div class="document-preview-loading"><span class="loading-spinner" aria-hidden="true"></span><span>Подготавливаю предпросмотр…</span></div>`
+      : `<div class="document-preview-unsupported"><strong>Для этого типа файла предпросмотр пока недоступен.</strong><span>Скачайте документ, чтобы открыть его в подходящей программе.</span></div>`;
+  $("#documentPreviewModal")?.classList.add("show");
+  $("#documentPreviewModal")?.setAttribute("aria-hidden", "false");
+  $("#documentPreviewClose")?.focus();
+  if (["docx", "xlsx"].includes(kind)) loadOfficeDocumentPreview(caseId, documentId);
+}
+
+async function uploadCaseDocuments(files) {
+  const pendingFiles = [...(files ?? [])].filter((file) => file?.size >= 0);
+  const row = caseModalRow();
+  if (!pendingFiles.length || state.caseDocumentUploading || !row || !canEditCaseRow(row) || !state.caseModalEditing) return;
+  const caseId = row.case_id;
+  const successful = [];
+  const failed = [];
+  state.caseDocumentUploading = true;
+  renderCaseModal();
+  beginWriteLock();
+  setStatus(`Загружаю файлы: 0 из ${pendingFiles.length}…`);
+  try {
+    for (const [index, file] of pendingFiles.entries()) {
+      setStatus(`Загружаю файлы: ${index + 1} из ${pendingFiles.length}…`);
+      try {
+        const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/documents`, {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            "X-File-Name": encodeURIComponent(file.name || "document"),
+            "X-File-Type": file.type || "application/octet-stream",
+          },
+          body: file,
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.error || "Не удалось загрузить документ.");
+        setDataFromPayload(payload);
+        state.caseModalCaseId = payload.case?.case_id || caseId;
+        successful.push(file.name || "Документ");
+      } catch (error) {
+        failed.push({ name: file.name || "Документ", error: error.message || "Неизвестная ошибка" });
+      }
+    }
+    if (failed.length) {
+      setStatus("Ошибка");
+      toast(successful.length
+        ? `Добавлено файлов: ${successful.length} из ${pendingFiles.length}. Не удалось: ${failed.map((item) => item.name).join(", ")}.`
+        : `Не удалось загрузить файлы: ${failed.map((item) => item.name).join(", ")}.`, "error");
+    } else {
+      setStatus("Сохранено");
+      toast(pendingFiles.length === 1 ? `Документ «${successful[0]}» добавлен.` : `Добавлено файлов: ${successful.length}.`);
+    }
+  } finally {
+    state.caseDocumentUploading = false;
+    endWriteLock();
+    if (caseModalRow()) renderCaseModal();
+  }
+}
+
+function uploadDroppedCaseDocument(event) {
+  uploadCaseDocuments(event.dataTransfer?.files).catch((error) => {
+    setStatus("Ошибка");
+    toast(error.message, "error");
+  });
+}
+
 function renderCaseModal() {
   const row = caseModalRow();
   if (!row) return;
@@ -3431,6 +3620,7 @@ function renderCaseModal() {
       <div class="case-modal-grid">
         ${caseModalField({ field: "Предмет", label: "Предмет", type: "textarea", wide: true, rows: 4, readonly: caseModalFieldReadonlyForUser("Предмет") })}
       </div>
+      ${caseDocumentsSection(row, canEdit)}
     </div>
   `;
   $("#caseModalEdit").classList.toggle("hidden", state.caseModalEditing || !canEdit);
@@ -3445,6 +3635,7 @@ function openCaseModal(caseId) {
   state.caseModalCaseId = caseId;
   state.caseModalEditing = false;
   state.caseModalDraft = null;
+  state.caseDocumentUploading = false;
   renderCaseModal();
   $("#caseModal").classList.add("show");
   $("#caseModalEdit").focus();
@@ -3459,6 +3650,7 @@ function closeCaseModal() {
   state.caseModalCaseId = "";
   state.caseModalEditing = false;
   state.caseModalDraft = null;
+  state.caseDocumentUploading = false;
 }
 
 function startCaseModalEdit() {
@@ -3838,6 +4030,29 @@ function bindEvents() {
   $("#caseModal").addEventListener("click", (event) => {
     if (event.target.id === "caseModal") closeCaseModal();
   });
+  $("#caseModal").addEventListener("dragover", (event) => {
+    const dropzone = event.target.closest(".case-document-dropzone:not([disabled])");
+    if (!dropzone) return;
+    event.preventDefault();
+    dropzone.classList.add("is-dragging");
+  });
+  $("#caseModal").addEventListener("dragleave", (event) => {
+    const dropzone = event.target.closest(".case-document-dropzone");
+    if (!dropzone || dropzone.contains(event.relatedTarget)) return;
+    dropzone.classList.remove("is-dragging");
+  });
+  $("#caseModal").addEventListener("drop", (event) => {
+    const dropzone = event.target.closest(".case-document-dropzone:not([disabled])");
+    if (!dropzone) return;
+    event.preventDefault();
+    dropzone.classList.remove("is-dragging");
+    uploadDroppedCaseDocument(event);
+  });
+  $("#documentPreviewClose")?.addEventListener("click", closeDocumentPreview);
+  $("#documentPreviewOk")?.addEventListener("click", closeDocumentPreview);
+  $("#documentPreviewModal")?.addEventListener("click", (event) => {
+    if (event.target.id === "documentPreviewModal") closeDocumentPreview();
+  });
   $("#queueManualAssignCancelBtn")?.addEventListener("click", closeQueueManualAssignModal);
   $("#queueManualAssignModal")?.addEventListener("click", (event) => {
     if (event.target.id === "queueManualAssignModal") closeQueueManualAssignModal();
@@ -4048,6 +4263,16 @@ function bindEvents() {
       }
       return;
     }
+    const caseDocumentDropzone = event.target.closest(".case-document-dropzone:not([disabled])");
+    if (caseDocumentDropzone) {
+      $("#caseDocumentInput")?.click();
+      return;
+    }
+    const previewCaseDocumentButton = event.target.closest(".case-document-preview");
+    if (previewCaseDocumentButton) {
+      openDocumentPreview(previewCaseDocumentButton.dataset.caseId, previewCaseDocumentButton.dataset.documentId);
+      return;
+    }
     const caseIdButton = event.target.closest(".case-id-link");
     if (caseIdButton) openCaseModal(caseIdButton.dataset.id);
     const saveCaseChangesButton = event.target.closest(".save-case-changes");
@@ -4102,6 +4327,15 @@ function bindEvents() {
     if (vacationDay) handleVacationDateClick(vacationDay.dataset.date);
   });
   document.addEventListener("change", (event) => {
+    if (event.target.matches("#caseDocumentInput")) {
+      const files = [...(event.target.files ?? [])];
+      event.target.value = "";
+      uploadCaseDocuments(files).catch((error) => {
+        setStatus("Ошибка");
+        toast(error.message, "error");
+      });
+      return;
+    }
     if (event.target.matches(".case-column-visibility")) {
       setCaseColumnVisibility(event.target.dataset.columnKey, event.target.checked);
       return;

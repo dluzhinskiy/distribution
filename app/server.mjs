@@ -1,13 +1,15 @@
 import http from "node:http";
+import { Readable } from "node:stream";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
-import { FIELD, YUC_SETTING, allDatesInRange, assignAutomatically, assignExistingAutomatically, assignExistingManually, assignManually, changeCaseResponsible, cleanText, clearVacationYear, completeCaseByDeadline, deleteCase, enrichData, importCasesFromRows, normalizeDraft, normalizeType, normalizeYuc, nameMatches, postponeCaseCompletion, recommend, recommendWithPreview, replaceVacationDatesForEmployees, replaceVacationYear, restoreCase, setVacationDates, toISODate, yesNo } from "./lib/domain.mjs";
-import { readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
+import { FIELD, YUC_SETTING, allDatesInRange, assignAutomatically, assignExistingAutomatically, assignExistingManually, assignManually, changeCaseResponsible, cleanText, clearVacationYear, completeCaseByDeadline, deleteCase, enrichData, importCasesFromRows, isDeletedCase, normalizeDraft, normalizeType, normalizeYuc, nameMatches, postponeCaseCompletion, recommend, recommendWithPreview, replaceVacationDatesForEmployees, replaceVacationYear, restoreCase, setVacationDates, toISODate, yesNo } from "./lib/domain.mjs";
+import { downloadAttachment, readData as readDataFresh, saveData, storagePath, tabsStorageStatus, uploadAttachment } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { parseCaseWorkbook } from "./lib/xlsx-case-import.mjs";
 import { parseVacationWorkbook } from "./lib/xlsx-vacation-import.mjs";
+import { previewDocx, previewXlsx } from "./lib/office-preview.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -59,6 +61,19 @@ const MIME = {
 };
 
 const PRIVATE_EMPLOYEE_FIELDS = new Set(["Хэш-пароля", "Хэш кода первичного входа"]);
+const CASE_DOCUMENT_MAX_BYTES = Number(process.env.CASE_DOCUMENT_MAX_BYTES || 12_000_000);
+const OFFICE_PREVIEW_MAX_BYTES = Number(process.env.OFFICE_PREVIEW_MAX_BYTES || 12_000_000);
+
+function publicAttachment(attachment = {}) {
+  return {
+    id: cleanText(attachment.id),
+    name: cleanText(attachment.name) || "Документ",
+    size: Number(attachment.size) || 0,
+    mimeType: cleanText(attachment.mimeType) || "application/octet-stream",
+    width: Number(attachment.width) || 0,
+    height: Number(attachment.height) || 0,
+  };
+}
 
 function sanitizeApiPayload(value, key = "") {
   if (Array.isArray(value)) {
@@ -69,10 +84,22 @@ function sanitizeApiPayload(value, key = "") {
         return copy;
       });
     }
+    if (key === "cases") {
+      return value.map((caseRow) => ({
+        ...caseRow,
+        [FIELD.documents]: Array.isArray(caseRow?.[FIELD.documents])
+          ? caseRow[FIELD.documents].map(publicAttachment)
+          : [],
+      }));
+    }
     return value.map((item) => sanitizeApiPayload(item));
   }
   if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, sanitizeApiPayload(childValue, childKey)]));
+  const sanitized = Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, sanitizeApiPayload(childValue, childKey)]));
+  if (Array.isArray(sanitized[FIELD.documents])) {
+    sanitized[FIELD.documents] = sanitized[FIELD.documents].map(publicAttachment);
+  }
+  return sanitized;
 }
 
 function sendJson(res, status, payload, headers = {}) {
@@ -217,6 +244,90 @@ async function handleCasePatch(req, res, url, user) {
     ? confirmedData
     : employeeScopedData(confirmedData, confirmedData.employees.find((item) => cleanText(item.employee_id) === user.employeeId));
   sendJson(res, 200, { ok: true, case: confirmedCase, data: responseData });
+}
+
+function requireCaseDocumentWrite(user, data, caseRow) {
+  if (auth.isManager(user)) {
+    requireManageYuc(user, caseRow[FIELD.yuc]);
+    return;
+  }
+  const employee = data.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
+  if (normalizeYuc(caseRow[FIELD.yuc]) !== ownYuc(user) || !caseBelongsToEmployee(caseRow, employee)) {
+    const error = new Error("Добавлять документы можно только в собственное дело своего ЮЦ.");
+    error.status = 403;
+    throw error;
+  }
+}
+
+function safeAttachmentName(value) {
+  const decoded = (() => {
+    try { return decodeURIComponent(String(value ?? "")); } catch { return String(value ?? ""); }
+  })();
+  return decoded.replace(/[\u0000-\u001f\\/:*?"<>|]/g, "_").trim().slice(0, 180) || "document";
+}
+
+function attachmentId(attachment = {}) {
+  return cleanText(attachment.id || attachment.token || attachment.url);
+}
+
+function attachmentDownloadHeaders(attachment, upstream, disposition = "attachment") {
+  const name = safeAttachmentName(attachment?.name || "document");
+  return {
+    "Content-Type": upstream.headers.get("content-type") || attachment?.mimeType || "application/octet-stream",
+    "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(name)}`,
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
+async function findCaseAttachment(caseId, documentId) {
+  const data = await readData(["cases"], { force: true });
+  const caseRow = findCase(data, caseId);
+  if (!caseRow) {
+    const error = new Error("Дело не найдено.");
+    error.status = 404;
+    throw error;
+  }
+  const attachment = (Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : [])
+    .find((item) => attachmentId(item) === documentId);
+  if (!attachment) {
+    const error = new Error("Документ не найден.");
+    error.status = 404;
+    throw error;
+  }
+  return attachment;
+}
+
+async function streamCaseAttachment(res, attachment, disposition) {
+  const upstream = await downloadAttachment("cases", attachment);
+  res.writeHead(200, attachmentDownloadHeaders(attachment, upstream, disposition));
+  if (!upstream.body) return res.end();
+  Readable.fromWeb(upstream.body).on("error", () => res.destroy()).pipe(res);
+}
+
+function officePreviewType(attachment = {}) {
+  const name = cleanText(attachment.name).toLowerCase();
+  const mime = cleanText(attachment.mimeType).toLowerCase();
+  if (name.endsWith(".docx") || mime.includes("wordprocessingml.document")) return "docx";
+  if (name.endsWith(".xlsx") || name.endsWith(".xlsm") || mime.includes("spreadsheetml.sheet") || mime.includes("spreadsheetml.template")) return "xlsx";
+  return "";
+}
+
+async function getOfficePreview(attachment) {
+  const type = officePreviewType(attachment);
+  if (!type) {
+    const error = new Error("Предпросмотр доступен для файлов DOCX, XLSX и XLSM.");
+    error.status = 415;
+    throw error;
+  }
+  const upstream = await downloadAttachment("cases", attachment);
+  const buffer = Buffer.from(await upstream.arrayBuffer());
+  if (buffer.length > OFFICE_PREVIEW_MAX_BYTES) {
+    const error = new Error("Файл слишком большой для предпросмотра. Его можно скачать и открыть на устройстве.");
+    error.status = 413;
+    throw error;
+  }
+  return type === "docx" ? previewDocx(buffer) : previewXlsx(buffer);
 }
 
 function normalizeTableKeys(keys = BOOTSTRAP_TABLE_KEYS) {
@@ -490,6 +601,66 @@ async function api(req, res, url) {
     }
     const directories = await readDirectories(rawData);
     return sendJson(res, 200, { ok: true, user, data: { ...employeeScopedData(rawData, employee), directories }, journalLoaded: false, storagePath: storagePath(), cacheStatus: cacheStatus() });
+  }
+
+  if (req.method === "GET" && /^\/api\/cases\/[^/]+$/.test(url.pathname)) {
+    const caseId = decodeURIComponent(url.pathname.split("/").pop());
+    const data = await readData(["cases"], { force: true });
+    const caseRow = findCase(data, caseId);
+    if (!caseRow) {
+      const error = new Error("Дело не найдено.");
+      error.status = 404;
+      throw error;
+    }
+    return sendJson(res, 200, { ok: true, case: caseRow });
+  }
+
+  if (req.method === "POST" && /^\/api\/cases\/[^/]+\/documents$/.test(url.pathname)) {
+    const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
+    const data = await readData();
+    const caseRow = findCase(data, caseId);
+    if (!caseRow) {
+      const error = new Error("Дело не найдено.");
+      error.status = 404;
+      throw error;
+    }
+    if (isDeletedCase(caseRow)) {
+      const error = new Error("Нельзя добавлять документы в удалённое дело.");
+      error.status = 409;
+      throw error;
+    }
+    requireCaseDocumentWrite(user, data, caseRow);
+    const file = await readBinaryBody(req, CASE_DOCUMENT_MAX_BYTES);
+    const name = safeAttachmentName(req.headers["x-file-name"]);
+    const mimeType = cleanText(req.headers["x-file-type"]) || "application/octet-stream";
+    const attachment = await uploadAttachment("cases", { buffer: file, name, mimeType });
+    caseRow[FIELD.documents] = [...(Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : []), attachment];
+    const confirmedData = await confirmedDataAfterSave(data, ["cases"], (freshData) => Boolean(findCase(freshData, caseId)));
+    const confirmedCase = assertConfirmedCase(confirmedData, caseId, "добавление документа");
+    const responseData = auth.isManager(user)
+      ? confirmedData
+      : employeeScopedData(confirmedData, confirmedData.employees.find((item) => cleanText(item.employee_id) === user.employeeId));
+    return sendJson(res, 200, { ok: true, attachment: publicAttachment(attachment), case: confirmedCase, data: responseData });
+  }
+
+  if (req.method === "GET" && /^\/api\/cases\/[^/]+\/documents\/[^/]+\/preview$/.test(url.pathname)) {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const attachment = await findCaseAttachment(decodeURIComponent(parts[2]), decodeURIComponent(parts[4]));
+    await streamCaseAttachment(res, attachment, "inline");
+    return;
+  }
+
+  if (req.method === "GET" && /^\/api\/cases\/[^/]+\/documents\/[^/]+\/office-preview$/.test(url.pathname)) {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const attachment = await findCaseAttachment(decodeURIComponent(parts[2]), decodeURIComponent(parts[4]));
+    return sendJson(res, 200, { ok: true, preview: await getOfficePreview(attachment) });
+  }
+
+  if (req.method === "GET" && /^\/api\/cases\/[^/]+\/documents\/[^/]+\/download$/.test(url.pathname)) {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const attachment = await findCaseAttachment(decodeURIComponent(parts[2]), decodeURIComponent(parts[4]));
+    await streamCaseAttachment(res, attachment, "attachment");
+    return;
   }
 
   if (req.method === "PATCH" && url.pathname.startsWith("/api/cases/")) {

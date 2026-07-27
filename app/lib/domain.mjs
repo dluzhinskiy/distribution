@@ -35,6 +35,7 @@ export const CASE_HEADERS = [
   "Ручное назначение",
   "Комментарий",
   "Ссылка",
+  "Документы",
 ];
 
 export const EMPLOYEE_HEADERS = [
@@ -162,6 +163,7 @@ export const FIELD = {
   debt: "Долг",
   debtDate: "Дата долга",
   position: "Позиция",
+  documents: "Документы",
 };
 export const YUC_SETTING = {
   regionalEnabled: "Региональные очереди вкл\\выкл",
