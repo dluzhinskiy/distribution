@@ -112,7 +112,7 @@ function isAdminUser() {
 }
 
 function isManagerUser() {
-  return currentRole() === "Руководитель";
+  return ["Руководитель", "Заместитель"].includes(currentRole());
 }
 
 function userYuc() {
@@ -248,7 +248,7 @@ function renderAccessUsers() {
   const target = $("#accessUsersTable");
   if (!target || (!isAdminUser() && !isManagerUser())) return;
   const admin = isAdminUser();
-  const roles = ["Сотрудник", "Руководитель", "Администратор"];
+  const roles = ["Сотрудник", "Руководитель", "Заместитель", "Администратор"];
   target.innerHTML = state.accessUsers.map((user) => `
     <tr>
       <td><strong>${escapeHtml(user.name || user.employeeId)}</strong><div class="muted">${escapeHtml(user.employeeId)}</div></td>

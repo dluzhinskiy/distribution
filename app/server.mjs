@@ -161,7 +161,7 @@ function ownYuc(user) {
 
 function canManageYuc(user, yuc) {
   return auth.isAdmin(user) || (
-    cleanText(user?.role) === "Руководитель" &&
+    ["Руководитель", "Заместитель"].includes(cleanText(user?.role)) &&
     Boolean(ownYuc(user)) &&
     normalizeYuc(yuc) === ownYuc(user)
   );

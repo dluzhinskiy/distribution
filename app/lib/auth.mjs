@@ -8,6 +8,7 @@ const SESSION_TTL_SECONDS = Number(process.env.AUTH_SESSION_TTL_SECONDS || 60 * 
 export const ROLE = {
   employee: "Сотрудник",
   manager: "Руководитель",
+  deputy: "Заместитель",
   admin: "Администратор",
 };
 
@@ -21,12 +22,13 @@ export function normalizeRole(value) {
   const role = String(value ?? "").trim().toLowerCase();
   if (role === ROLE.admin.toLowerCase()) return ROLE.admin;
   if (role === ROLE.manager.toLowerCase()) return ROLE.manager;
+  if (role === ROLE.deputy.toLowerCase()) return ROLE.deputy;
   return ROLE.employee;
 }
 
 export function isManagerRole(role) {
   const normalized = normalizeRole(role);
-  return normalized === ROLE.manager || normalized === ROLE.admin;
+  return normalized === ROLE.manager || normalized === ROLE.deputy || normalized === ROLE.admin;
 }
 
 export function isAdminRole(role) {

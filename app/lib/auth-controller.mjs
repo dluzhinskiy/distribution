@@ -259,6 +259,6 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     isManager: (user) => isManagerRole(user?.role),
     isAdmin: (user) => isAdminRole(user?.role),
     isSystemEmployee,
-    roleOptions: [ROLE.employee, ROLE.manager, ROLE.admin],
+    roleOptions: [ROLE.employee, ROLE.manager, ROLE.deputy, ROLE.admin],
   };
 }
