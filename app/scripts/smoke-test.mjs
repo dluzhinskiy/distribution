@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { enrichData, recommend } from "../lib/domain.mjs";
 import { readData, tabsStorageStatus } from "../lib/tabs-store.mjs";
+import { validateLoadCoefficients } from "../lib/load-coefficients.mjs";
 
 const source = await readData();
 const enriched = enrichData(structuredClone(source), new Date());
@@ -15,6 +16,8 @@ assert.ok(Array.isArray(enriched.settings), "Настройки должны ч�
 assert.ok(Array.isArray(enriched.yucSettings), "Настройки ЮЦ должны читаться массивом");
 assert.ok(Array.isArray(enriched.regionalAssignments), "Региональные закрепления должны читаться массивом");
 assert.ok(Array.isArray(enriched.regionalSubstitutions), "Региональные замещения должны читаться массивом");
+assert.ok(Array.isArray(enriched.loadCoefficients), "Коэффициенты нагрузки должны читаться массивом");
+assert.equal(validateLoadCoefficients(enriched.loadCoefficients).length, 5, "Должны читаться пять корректных коэффициентов");
 
 assert.ok(enriched.cases.length > 0, "В MTS Tabs должны быть дела");
 assert.ok(enriched.employees.length > 0, "В MTS Tabs должны быть сотрудники");

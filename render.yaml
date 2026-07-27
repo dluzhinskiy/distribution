@@ -16,6 +16,10 @@ services:
         value: "false"
       - key: TABS_API_TOKEN
         sync: false
+      - key: TABS_LOAD_COEFFICIENTS_DATASHEET_ID
+        value: dstMwyNHdQBXtX4hzP
+      - key: TABS_LOAD_COEFFICIENTS_VIEW_ID
+        value: viwj6WawdPEJM
       - key: AUTH_SESSION_SECRET
         generateValue: true
       - key: BOOTSTRAP_ADMIN_LOGIN

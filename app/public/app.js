@@ -15,6 +15,13 @@ import {
 import { ApiError, isWriteRequest, requestJson, requestMethod, uploadBinary } from "./lib/api-client.js";
 import { createAppState, viewTitles as titles } from "./lib/app-state.js";
 import { groupAccessUsers } from "./lib/access-utils.js";
+import {
+  exactCaseCoefficient,
+  formatWeightedLoad,
+  loadCoefficientConfig,
+  loadCoefficientTypes,
+  weightedCases,
+} from "./lib/load-coefficients.js";
 
 const state = createAppState();
 
@@ -28,6 +35,8 @@ const themeStorageKey = "mts-load-distribution-theme";
 const blueTheme = "blue";
 const redTheme = "red";
 const caseColumnsStoragePrefix = "mts-load-distribution-case-columns-v1";
+const weightedDashboardStorageKey = "mts-load-distribution-weighted-dashboard";
+try { state.weightedDashboard = localStorage.getItem(weightedDashboardStorageKey) === "1"; } catch { /* localStorage may be unavailable */ }
 const CASE_COLUMN_OPTIONS = [
   { key: "id", label: "ID", locked: true },
   { key: "type", label: "Тип дела" },
@@ -105,6 +114,7 @@ function applyRoleUi() {
   $("#caseResponsibleEditToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#caseDeleteEditToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#showDeletedCasesToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
+  $("#loadCoefficientsCard")?.classList.toggle("hidden", !isAdminUser());
   const accessDescription = $("#accessDescription");
   if (accessDescription) accessDescription.textContent = isAdminUser()
     ? "Выдавайте одноразовые коды первичного входа и назначайте роли. Код показывается один раз."
@@ -924,6 +934,7 @@ function caseMatchesCellFilter(row) {
   if (!filter?.field || !filter.value) return true;
   const current = String(row[filter.field] ?? "").trim();
   if (filter.field === "Ответственный") return nameMatches(current, filter.value);
+  if (filter.field === "Тип дела" && workloadCaseTypes.includes(filter.value)) return workloadCaseType(current) === filter.value;
   return current === filter.value;
 }
 
@@ -974,6 +985,7 @@ function ensureHistoricalDefaults() {
   state.historicalFrom = dateISO(now.getFullYear(), 0, 1);
   state.historicalTo = today();
   state.historicalInitialized = true;
+  state.historicalPeriodPreset = "current-year";
 }
 
 function historicalDateLabel() {
@@ -1011,25 +1023,41 @@ function historicalCasesForSelectedYuc() {
 
 function historicalWorkloadByEmployee() {
   const rows = historicalCasesForSelectedYuc();
+  const coefficientConfig = currentLoadCoefficientConfig();
+  const weighted = state.weightedDashboard && coefficientConfig.valid;
   return employeesForSelectedYuc().map((employee) => {
     const employeeCases = rows.filter((caseRow) => nameMatches(caseRow["Ответственный"], employee["ФИО"]));
     const byType = Object.fromEntries(workloadCaseTypes.map((type) => [
       type,
       employeeCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type).length,
     ]));
+    const weightedByType = Object.fromEntries(workloadCaseTypes.map((type) => [
+      type,
+      weightedCases(employeeCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type), coefficientConfig),
+    ]));
     const completed = employeeCases.filter((caseRow) => caseRow["Статус"] === "Завершено").length;
     const inWork = employeeCases.length - completed;
     return {
       employee,
+      cases: employeeCases,
       byType,
+      weightedByType,
       total: employeeCases.length,
+      weightedTotal: weightedCases(employeeCases, coefficientConfig),
       completed,
       inWork,
     };
-  }).sort((a, b) => b.total - a.total || a.employee["ФИО"].localeCompare(b.employee["ФИО"], "ru"));
+  }).sort((a, b) => (weighted ? b.weightedTotal - a.weightedTotal : b.total - a.total) || a.employee["ФИО"].localeCompare(b.employee["ФИО"], "ru"));
 }
 
 function setHistoricalPreset(preset) {
+  if (preset === "custom") {
+    state.historicalAllTime = false;
+    state.historicalInitialized = true;
+    state.historicalPeriodPreset = "custom";
+    renderWorkloadDashboard();
+    return;
+  }
   const now = new Date();
   const end = dateISO(now.getFullYear(), now.getMonth(), now.getDate());
   const start = new Date(now);
@@ -1044,6 +1072,7 @@ function setHistoricalPreset(preset) {
   } else {
     state.historicalAllTime = true;
     state.historicalInitialized = true;
+    state.historicalPeriodPreset = "all";
     state.historicalFrom = "";
     state.historicalTo = "";
     renderWorkloadDashboard();
@@ -1051,9 +1080,22 @@ function setHistoricalPreset(preset) {
   }
   state.historicalAllTime = false;
   state.historicalInitialized = true;
+  state.historicalPeriodPreset = preset;
   state.historicalFrom = dateISO(start.getFullYear(), start.getMonth(), start.getDate());
   state.historicalTo = end;
   renderWorkloadDashboard();
+}
+
+function historicalPresetButton(preset, label) {
+  const active = state.historicalPeriodPreset === preset;
+  return `
+    <button
+      class="tiny-btn light historical-preset ${active ? "active" : ""}"
+      type="button"
+      data-preset="${escapeHtml(preset)}"
+      aria-pressed="${active ? "true" : "false"}"
+    ><span class="historical-preset-check" aria-hidden="true">✓</span>${escapeHtml(label)}</button>
+  `;
 }
 
 function applyHistoricalCaseFilter(responsible, type = "") {
@@ -1078,7 +1120,12 @@ function workloadByEmployee() {
       const rows = productionCases.filter((caseRow) => workloadCaseType(caseRow["Тип дела"]) === type);
       const active = rows.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length;
       const inactive = rows.length - active;
-      return [type, { active, inactive, total: rows.length, load: includeInactive ? rows.length : active }];
+      return [type, {
+        active,
+        inactive,
+        total: rows.length,
+        load: includeInactive ? rows.length : active,
+      }];
     }));
     const activeTotal = productionCases.filter((caseRow) => Number(caseRow["Активное число"]) === 1).length;
     const inactiveTotal = productionCases.filter((caseRow) => Number(caseRow["Активное число"]) !== 1).length;
@@ -1092,6 +1139,32 @@ function workloadByEmployee() {
   }).sort((a, b) => b.total - a.total || a.employee["ФИО"].localeCompare(b.employee["ФИО"], "ru"));
 }
 
+function coefficientLegendHtml(config = currentLoadCoefficientConfig()) {
+  return `
+    <div class="coefficient-legend" aria-label="Коэффициенты приведённой нагрузки">
+      <span class="coefficient-legend-title">Коэффициенты</span>
+      ${loadCoefficientTypes.map((type) => `
+        <span class="coefficient-chip">
+          <span>${escapeHtml(type.charAt(0).toUpperCase() + type.slice(1))}</span>
+          <strong>× ${formatWeightedLoad(config.values[type])}</strong>
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function weightedBreakdownText(rows, config = currentLoadCoefficientConfig()) {
+  const counts = new Map();
+  for (const row of rows ?? []) {
+    const type = normalizeCaseType(row["Тип дела"]);
+    counts.set(type, (counts.get(type) || 0) + 1);
+  }
+  return loadCoefficientTypes
+    .filter((type) => counts.has(type))
+    .map((type) => `${type}: ${counts.get(type)} × ${formatWeightedLoad(config.values[type])} = ${formatWeightedLoad(counts.get(type) * config.values[type])}`)
+    .join("; ");
+}
+
 function historicalSegmentClass(type) {
   if (type === "претензия") return "claim";
   if (type === "административное") return "admin";
@@ -1101,22 +1174,17 @@ function historicalSegmentClass(type) {
 
 function renderHistoricalWorkloadDashboard() {
   ensureHistoricalDefaults();
+  const coefficientConfig = currentLoadCoefficientConfig();
+  const weighted = state.weightedDashboard && coefficientConfig.valid;
   const rows = historicalWorkloadByEmployee();
-  const maxTotal = Math.max(...rows.map((row) => row.total), 1);
+  const maxTotal = Math.max(...rows.map((row) => weighted ? row.weightedTotal : row.total), 1);
   const totalCases = rows.reduce((sum, row) => sum + row.total, 0);
+  const totalWeighted = rows.reduce((sum, row) => sum + row.weightedTotal, 0);
   const periodLabel = state.historicalFrom || state.historicalTo
     ? `${state.historicalFrom ? formatRuDateDash(state.historicalFrom) : "начало"} — ${state.historicalTo ? formatRuDateDash(state.historicalTo) : "сегодня"}`
     : "всё время";
   $("#workloadDashboard").innerHTML = `
     <div class="historical-controls">
-      <label class="field compact">
-        <span>С даты</span>
-        <input type="date" id="historicalFrom" value="${escapeHtml(state.historicalFrom)}" />
-      </label>
-      <label class="field compact">
-        <span>По дату</span>
-        <input type="date" id="historicalTo" value="${escapeHtml(state.historicalTo)}" />
-      </label>
       <label class="field compact">
         <span>Режим даты</span>
         <select id="historicalDateMode">
@@ -1125,26 +1193,52 @@ function renderHistoricalWorkloadDashboard() {
         </select>
       </label>
       <div class="historical-presets" aria-label="Быстрый выбор периода">
-        <button class="tiny-btn light historical-preset" type="button" data-preset="month">Месяц</button>
-        <button class="tiny-btn light historical-preset" type="button" data-preset="quarter">Квартал</button>
-        <button class="tiny-btn light historical-preset" type="button" data-preset="current-year">Текущий год</button>
-        <button class="tiny-btn light historical-preset" type="button" data-preset="year">Год</button>
-        <button class="tiny-btn light historical-preset" type="button" data-preset="all">Всё время</button>
+        ${historicalPresetButton("month", "Месяц")}
+        ${historicalPresetButton("quarter", "Квартал")}
+        ${historicalPresetButton("current-year", "Текущий год")}
+        ${historicalPresetButton("year", "Год")}
+        ${historicalPresetButton("all", "Всё время")}
+        ${historicalPresetButton("custom", "Произвольный")}
       </div>
+    </div>
+    <div class="historical-custom-period ${state.historicalPeriodPreset === "custom" ? "" : "is-locked"}" aria-label="Границы выбранного периода">
+        <label class="field compact">
+          <span>С даты</span>
+          <input type="date" id="historicalFrom" value="${escapeHtml(state.historicalFrom)}" ${state.historicalPeriodPreset === "custom" ? "" : "disabled"} />
+        </label>
+        <label class="field compact">
+          <span>По дату</span>
+          <input type="date" id="historicalTo" value="${escapeHtml(state.historicalTo)}" ${state.historicalPeriodPreset === "custom" ? "" : "disabled"} />
+        </label>
+    </div>
+    <div class="historical-mode-row">
+      <label
+        class="toggle-inline weighted-dashboard-toggle ${coefficientConfig.valid ? "" : "disabled"}"
+        title="${escapeHtml(coefficientConfig.valid ? "Пересчитать историческую нагрузку по глобальным коэффициентам" : `Приведённая нагрузка недоступна: ${coefficientConfig.errors.join("; ")}`)}"
+      >
+        <input id="weightedDashboardToggle" type="checkbox" ${weighted ? "checked" : ""} ${coefficientConfig.valid ? "" : "disabled"} />
+        <span class="switch-ui"></span>
+        <span>Приведённая нагрузка</span>
+      </label>
+      <span class="historical-mode-hint">${weighted ? "Полоса показывает итог с учётом коэффициентов." : "Полоса разделена по типам нагрузки."}</span>
     </div>
     <div class="historical-summary-line">
       <span>${escapeHtml(periodLabel)}</span>
       <span>${escapeHtml(historicalDateLabel())}</span>
       <span>${totalCases} дел</span>
+      ${weighted ? `<span><strong>${formatWeightedLoad(totalWeighted)}</strong> приведённой нагрузки</span>` : ""}
     </div>
-    <div class="historical-legend">
-      <span><i class="historical-dot claim"></i>Претензии</span>
-      <span><i class="historical-dot admin"></i>Административные</span>
-      <span><i class="historical-dot court"></i>Судебные</span>
-    </div>
+    ${weighted
+      ? coefficientLegendHtml(coefficientConfig)
+      : `<div class="historical-legend">
+          <span><i class="historical-dot claim"></i>Претензии</span>
+          <span><i class="historical-dot admin"></i>Административные</span>
+          <span><i class="historical-dot court"></i>Судебные</span>
+        </div>`}
     <div class="historical-chart">
       ${rows.map((row) => {
-        const totalWidth = row.total ? Math.max(6, Math.round((row.total / maxTotal) * 100)) : 0;
+        const displayedTotal = weighted ? row.weightedTotal : row.total;
+        const totalWidth = displayedTotal ? Math.max(6, Math.round((displayedTotal / maxTotal) * 100)) : 0;
         return `
           <div class="historical-row ${row.total ? "" : "empty"}">
             <div class="historical-employee">
@@ -1159,11 +1253,19 @@ function renderHistoricalWorkloadDashboard() {
                 <span>${row.completed} завершено · ${row.inWork} в работе</span>
               </div>
             </div>
-            <div class="historical-bar-shell" title="${escapeHtml(displayName(row.employee["ФИО"]))}: ${row.total}">
+            <div class="historical-bar-shell" title="${escapeHtml(displayName(row.employee["ФИО"]))}: ${weighted ? `${formatWeightedLoad(row.weightedTotal)} приведённой нагрузки` : `${row.total} дел`}">
               <div class="historical-bar-stack" style="width:${totalWidth}%">
-                ${workloadCaseTypes.map((type) => {
+                ${weighted ? row.weightedTotal ? `
+                  <button
+                    type="button"
+                    class="historical-segment weighted historical-filter"
+                    style="width:100%"
+                    data-responsible="${escapeHtml(row.employee["ФИО"])}"
+                    title="${escapeHtml(`${displayName(row.employee["ФИО"])}: ${formatWeightedLoad(row.weightedTotal)}; ${weightedBreakdownText(row.cases, coefficientConfig)}`)}"
+                  ><span>${formatWeightedLoad(row.weightedTotal)}</span></button>
+                ` : "" : workloadCaseTypes.map((type) => {
                   const count = row.byType[type] || 0;
-                  const width = row.total ? Math.round((count / row.total) * 100) : 0;
+                  const width = displayedTotal ? Math.round((count / displayedTotal) * 100) : 0;
                   if (!count) return "";
                   return `
                     <button
@@ -1179,8 +1281,8 @@ function renderHistoricalWorkloadDashboard() {
               </div>
             </div>
             <div class="historical-total">
-              <strong>${row.total}</strong>
-              <span>${workloadCaseTypes.map((type) => `${row.byType[type] || 0}`).join(" / ")}</span>
+              <strong>${weighted ? formatWeightedLoad(row.weightedTotal) : row.total}</strong>
+              <span>${weighted ? `${row.total} дел` : workloadCaseTypes.map((type) => `${row.byType[type] || 0}`).join(" / ")}</span>
             </div>
           </div>
         `;
@@ -1194,14 +1296,19 @@ function renderWorkloadDashboard() {
   const subtitle = $("#workloadCardSubtitle");
   const badgeNode = $("#workloadCardBadge");
   const toggle = $("#toggleHistoricalDashboard");
+  const coefficientConfig = currentLoadCoefficientConfig();
+  if (state.weightedDashboard && !coefficientConfig.valid) state.weightedDashboard = false;
+  const historicalWeighted = state.historicalDashboard && state.weightedDashboard && coefficientConfig.valid;
   if (title) title.textContent = state.historicalDashboard ? "Историческая нагрузка сотрудников" : "Нагрузка сотрудников в производстве";
   if (subtitle) {
-    subtitle.textContent = state.historicalDashboard
-      ? "Назначенные дела за выбранный период: завершённые и те, которые ещё находятся в работе."
-      : "Ярким показаны активные дела, полупрозрачным — незавершённые дела, которые уже не активны по сроку актуальности.";
+    subtitle.textContent = historicalWeighted
+      ? "Историческая нагрузка пересчитана по действующим глобальным коэффициентам."
+      : state.historicalDashboard
+        ? "Назначенные дела за выбранный период: завершённые и те, которые ещё находятся в работе."
+        : "Ярким показаны активные дела, полупрозрачным — незавершённые дела, которые уже не активны по сроку актуальности.";
   }
   if (badgeNode) {
-    badgeNode.textContent = state.historicalDashboard ? "история" : "по типам нагрузки";
+    badgeNode.textContent = historicalWeighted ? "приведённая" : state.historicalDashboard ? "история" : "по типам нагрузки";
     badgeNode.className = `badge ${state.historicalDashboard ? "badge-blue" : "badge-red"}`;
   }
   if (toggle) {
@@ -1218,7 +1325,10 @@ function renderWorkloadDashboard() {
   const rows = workloadByEmployee();
   const includeInactive = includeInactiveInLoadForSelectedYuc();
   const loadModeText = includeInactive ? "активные + неактивные незавершённые" : "только активные";
-  const maxTotal = Math.max(...rows.flatMap((row) => workloadCaseTypes.map((type) => includeInactive ? row.byType[type].load : row.byType[type].total)), 1);
+  const maxTotal = Math.max(...rows.flatMap((row) => workloadCaseTypes.map((type) => {
+    const item = row.byType[type];
+    return includeInactive ? item.load : item.total;
+  })), 1);
   $("#workloadDashboard").innerHTML = `
     <div class="workload-legend">
       <span>Режим расчёта: ${escapeHtml(loadModeText)}</span>
@@ -1248,21 +1358,24 @@ function renderWorkloadDashboard() {
         </div>
         ${workloadCaseTypes.map((type) => {
           const item = row.byType[type];
-          const activeWidth = item.active ? Math.max(8, Math.round((item.active / maxTotal) * 100)) : 0;
-          const inactiveWidth = item.inactive ? Math.max(8, Math.round((item.inactive / maxTotal) * 100)) : 0;
-          const loadWidth = item.load ? Math.max(8, Math.round((item.load / maxTotal) * 100)) : 0;
+          const activeValue = item.active;
+          const inactiveValue = item.inactive;
+          const loadValue = item.load;
+          const activeWidth = activeValue ? Math.max(8, Math.round((activeValue / maxTotal) * 100)) : 0;
+          const inactiveWidth = inactiveValue ? Math.max(8, Math.round((inactiveValue / maxTotal) * 100)) : 0;
+          const loadWidth = loadValue ? Math.max(8, Math.round((loadValue / maxTotal) * 100)) : 0;
           return `
             <div class="workload-cell">
               <div class="workload-count">
                 <strong>${item.load}</strong>
                 <span>${includeInactive ? "в расчёте" : `${item.active} / ${item.inactive}`}</span>
               </div>
-              <div class="workload-bars" title="${includeInactive ? `В расчёте: ${item.load}` : `Активные: ${item.active}; неактивные незавершённые: ${item.inactive}`}">
+              <div class="workload-bars" title="${escapeHtml(includeInactive ? `В расчёте: ${item.load}` : `Активные: ${item.active}; неактивные незавершённые: ${item.inactive}`)}">
                 ${includeInactive
-                  ? item.load ? `<div class="workload-bar active" style="width:${loadWidth}%"></div>` : ""
+                  ? loadValue ? `<div class="workload-bar active" style="width:${loadWidth}%"></div>` : ""
                   : `
-                    ${item.active ? `<div class="workload-bar active" style="width:${activeWidth}%"></div>` : ""}
-                    ${item.inactive ? `<div class="workload-bar inactive" style="width:${inactiveWidth}%"></div>` : ""}
+                    ${activeValue ? `<div class="workload-bar active" style="width:${activeWidth}%"></div>` : ""}
+                    ${inactiveValue ? `<div class="workload-bar inactive" style="width:${inactiveWidth}%"></div>` : ""}
                   `}
               </div>
             </div>
@@ -1275,6 +1388,18 @@ function renderWorkloadDashboard() {
       `).join("")}
     </div>
   `;
+}
+
+function setWeightedDashboard(enabled) {
+  const config = currentLoadCoefficientConfig();
+  if (enabled && !config.valid) {
+    state.weightedDashboard = false;
+    toast(`Приведённая нагрузка недоступна: ${config.errors.join("; ")}.`, "error");
+  } else {
+    state.weightedDashboard = Boolean(enabled);
+  }
+  try { localStorage.setItem(weightedDashboardStorageKey, state.weightedDashboard ? "1" : "0"); } catch { /* optional preference */ }
+  renderWorkloadDashboard();
 }
 
 function toggleHistoricalDashboardWithFlip() {
@@ -2400,6 +2525,32 @@ function workloadTypeOptions(current) {
   return optionList(workloadTypes, current || "все");
 }
 
+function currentLoadCoefficientConfig() {
+  return loadCoefficientConfig(state.data?.loadCoefficients ?? []);
+}
+
+function renderLoadCoefficients() {
+  const table = $("#loadCoefficientsTable");
+  const saveButton = $("#saveLoadCoefficientsBtn");
+  const note = $("#loadCoefficientsNote");
+  if (!table) return;
+  const admin = isAdminUser();
+  const config = currentLoadCoefficientConfig();
+  table.innerHTML = loadCoefficientTypes.map((type) => `
+    <tr data-load-coefficient-type="${escapeHtml(type)}">
+      <td><strong>${escapeHtml(type)}</strong></td>
+      <td><input class="load-coefficient-input" type="text" inputmode="decimal" value="${escapeHtml(config.values[type] ?? "")}" ${admin ? "" : "disabled"} /></td>
+    </tr>
+  `).join("");
+  saveButton?.classList.toggle("hidden", !admin);
+  if (note) {
+    note.textContent = config.valid
+      ? admin ? "Коэффициенты действуют во всех ЮЦ и только на историческом дэшборде." : "Глобальные коэффициенты доступны только для просмотра и применяются на историческом дэшборде."
+      : `Приведённая нагрузка недоступна: ${config.errors.join("; ")}.`;
+    note.classList.toggle("is-error", !config.valid);
+  }
+}
+
 function renderDeadlineSettings() {
   const table = $("#deadlineSettingsTable");
   if (!table) return;
@@ -2530,6 +2681,7 @@ function renderRegionalSubstitutions() {
 }
 
 function renderSettings() {
+  renderLoadCoefficients();
   renderDeadlineSettings();
   renderYucSettingsForm();
   renderRegionalAssignments();
@@ -2537,7 +2689,31 @@ function renderSettings() {
   updateRegionalSettingsAvailability();
 }
 
+async function saveLoadCoefficients() {
+  if (!isAdminUser()) return;
+  const rows = $$("#loadCoefficientsTable tr").map((row) => ({
+    "Тип нагрузки": row.dataset.loadCoefficientType,
+    "Коэффициент": Number(String(row.querySelector(".load-coefficient-input")?.value ?? "").replace(",", ".")),
+  }));
+  const payload = await api("/api/load-coefficients", { method: "PUT", body: JSON.stringify({ rows }) });
+  setDataFromPayload(payload);
+  toast("Глобальные коэффициенты сохранены.");
+}
+
 const settingsHelp = {
+  loadCoefficients: {
+    title: "Коэффициенты приведённой нагрузки",
+    body: `
+      <p>Коэффициент задаёт условный вес одного дела каждого типа.</p>
+      <ul>
+        <li>Приведённая нагрузка равна сумме: количество дел каждого типа × его коэффициент.</li>
+        <li>Пример: 2 судебных × 1,00 + 3 претензии × 0,30 = 2,90.</li>
+        <li>Коэффициенты едины для всех ЮЦ. После изменения вся история пересчитывается по новым значениям.</li>
+        <li>Значение должно быть больше нуля и иметь не более двух знаков после запятой.</li>
+        <li>Расчёт доступен только на историческом дэшборде и не влияет на рекомендации, перегруз и автоназначение.</li>
+      </ul>
+    `,
+  },
   deadlines: {
     title: "Сроки по типам нагрузки",
     body: `
@@ -4044,6 +4220,10 @@ function bindEvents() {
     setStatus("Ошибка");
     toast(error.message, "error");
   }));
+  $("#saveLoadCoefficientsBtn")?.addEventListener("click", () => saveLoadCoefficients().catch((error) => {
+    setStatus("Ошибка");
+    toast(error.message, "error");
+  }));
   $("#saveDeadlineSettingsBtn")?.addEventListener("click", () => saveDeadlineSettings().catch((error) => {
     setStatus("Ошибка");
     toast(error.message, "error");
@@ -4413,6 +4593,10 @@ function bindEvents() {
     if (vacationDay) handleVacationDateClick(vacationDay.dataset.date);
   });
   document.addEventListener("change", (event) => {
+    if (event.target.matches("#weightedDashboardToggle")) {
+      setWeightedDashboard(event.target.checked);
+      return;
+    }
     if (event.target.matches(".case-column-visibility")) {
       setCaseColumnVisibility(event.target.dataset.columnKey, event.target.checked);
       return;
@@ -4477,6 +4661,7 @@ function bindEvents() {
     if (event.target.matches("#historicalFrom")) {
       state.historicalAllTime = false;
       state.historicalInitialized = true;
+      state.historicalPeriodPreset = "custom";
       state.historicalFrom = event.target.value;
       renderWorkloadDashboard();
       return;
@@ -4484,6 +4669,7 @@ function bindEvents() {
     if (event.target.matches("#historicalTo")) {
       state.historicalAllTime = false;
       state.historicalInitialized = true;
+      state.historicalPeriodPreset = "custom";
       state.historicalTo = event.target.value;
       renderWorkloadDashboard();
       return;

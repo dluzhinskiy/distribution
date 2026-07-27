@@ -52,6 +52,7 @@ export const SHEETS = {
   yucSettings: "Настройки ЮЦ",
   regionalAssignments: "Региональные закрепления",
   regionalSubstitutions: "Региональные замещения",
+  loadCoefficients: "Коэффициенты нагрузки",
 };
 
 export const CASE_HEADERS = [

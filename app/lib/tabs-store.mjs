@@ -10,6 +10,8 @@ import {
   YUC_SETTINGS_HEADERS,
   cleanText,
 } from "./domain.mjs";
+import { LOAD_COEFFICIENT_HEADERS } from "./load-coefficients.mjs";
+import { inboundFieldValue, outboundFieldName, tableFieldKey } from "./tabs-fields.mjs";
 
 const API_BASE = process.env.TABS_API_BASE || "https://tabs.mts.ru/fusion/v1";
 const TOKEN = process.env.TABS_API_TOKEN;
@@ -104,6 +106,15 @@ const TABLES = {
     dateFields: [],
     readOnlyFields: ["Название"],
   },
+  loadCoefficients: {
+    name: "Коэффициенты нагрузки",
+    datasheetId: process.env.TABS_LOAD_COEFFICIENTS_DATASHEET_ID || "dstMwyNHdQBXtX4hzP",
+    viewId: process.env.TABS_LOAD_COEFFICIENTS_VIEW_ID || "viwj6WawdPEJM",
+    headers: LOAD_COEFFICIENT_HEADERS,
+    keyFields: ["Тип нагрузки"],
+    numberFields: ["Коэффициент"],
+    readOnlyFields: ["Название"],
+  },
 };
 
 const TABLE_KEYS = Object.keys(TABLES);
@@ -137,7 +148,7 @@ function requireToken() {
 function tableUrl(table, extra = {}) {
   const url = new URL(`${API_BASE}/datasheets/${table.datasheetId}/records`);
   if (table.viewId && !table.readAllFields) url.searchParams.set("viewId", table.viewId);
-  url.searchParams.set("fieldKey", FIELD_KEY);
+  url.searchParams.set("fieldKey", tableFieldKey(table));
   for (const [key, value] of Object.entries(extra)) {
     if (Array.isArray(value)) {
       value.forEach((item) => url.searchParams.append(key, item));
@@ -292,7 +303,7 @@ function normalizeFromTabs(table, fields = {}) {
   const attachmentSet = new Set(table.attachmentFields ?? []);
   const row = {};
   for (const header of table.headers) {
-    const value = fields[header];
+    const value = inboundFieldValue(table, fields, header);
     if (table.name === "Дела" && header === "Ссылка") {
       row[header] = fromTabsUrl(value);
     } else if (attachmentSet.has(header)) {
@@ -316,11 +327,11 @@ function normalizeToTabs(table, row = {}) {
     if (readOnlySet.has(header)) continue;
     const value = row[header];
     if (table.name === "Дела" && header === "Ссылка") {
-      fields[header] = toTabsUrl(value);
+      fields[outboundFieldName(table, header)] = toTabsUrl(value);
     } else if (attachmentSet.has(header)) {
-      fields[header] = normalizeAttachments(value);
+      fields[outboundFieldName(table, header)] = normalizeAttachments(value);
     } else {
-      fields[header] = dateSet.has(header)
+      fields[outboundFieldName(table, header)] = dateSet.has(header)
         ? toTabsDate(value, header === "Дата события")
         : numberSet.has(header)
           ? (value === "" || value === null || value === undefined ? null : Number(value))
@@ -364,7 +375,7 @@ async function createRows(table, rows) {
   for (const chunk of chunks(rows, 1000)) {
     await request(table, "POST", {
       records: chunk.map((row) => ({ fields: normalizeToTabs(table, row) })),
-      fieldKey: FIELD_KEY,
+      fieldKey: tableFieldKey(table),
     });
   }
 }
@@ -376,7 +387,7 @@ async function updateRows(table, updates) {
         recordId,
         fields: normalizeToTabs(table, row),
       })),
-      fieldKey: FIELD_KEY,
+      fieldKey: tableFieldKey(table),
     });
   }
 }

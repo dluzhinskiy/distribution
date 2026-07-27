@@ -47,7 +47,7 @@ export function uniqueYucs(values) {
 export function normalizeCaseType(value) {
   const text = String(value ?? "").trim().toLowerCase();
   if (text === "админ") return "административное";
-  if (text === "суд") return "судебное";
+  if (["суд", "судебное дело", "третьи лица"].includes(text)) return "судебное";
   if (text.includes("уголов")) return "уголовное";
   if (text.includes("банкрот")) return "банкротное";
   return text;

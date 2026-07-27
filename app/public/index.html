@@ -337,6 +337,28 @@
 
         <section class="view" id="view-settings">
           <div class="grid settings-layout">
+            <section class="card load-coefficients-card" id="loadCoefficientsCard">
+              <div class="card-head">
+                <div>
+                  <h2>Глобальные коэффициенты приведённой нагрузки</h2>
+                  <p id="loadCoefficientsNote">Коэффициенты действуют во всех ЮЦ и только на историческом дэшборде.</p>
+                </div>
+                <div class="settings-card-actions">
+                  <span class="badge badge-blue">все ЮЦ</span>
+                  <button class="settings-help-trigger" type="button" data-settings-help="loadCoefficients" aria-label="Справка по коэффициентам" title="Как работают коэффициенты">?</button>
+                </div>
+              </div>
+              <div class="table-wrap compact load-coefficients-wrap">
+                <table class="load-coefficients-table">
+                  <thead><tr><th>Тип нагрузки</th><th>Коэффициент</th></tr></thead>
+                  <tbody id="loadCoefficientsTable"></tbody>
+                </table>
+              </div>
+              <div class="actions-row">
+                <button class="btn btn-primary" id="saveLoadCoefficientsBtn">Сохранить коэффициенты</button>
+              </div>
+            </section>
+
             <section class="card">
               <div class="card-head">
                 <div>

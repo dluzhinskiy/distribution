@@ -30,6 +30,13 @@ function createHarness(body, data) {
       if (!employee) throw new Error("employee not found");
       return employee;
     },
+    requireAdmin: (user) => {
+      if (user.role !== "Администратор") {
+        const error = new Error("admin only");
+        error.status = 403;
+        throw error;
+      }
+    },
   });
   return { handle, savedTables };
 }
@@ -82,4 +89,21 @@ test("manager cannot change settings of another YUC", async () => {
 test("settings router ignores unrelated endpoints", async () => {
   const { handle } = createHarness({}, {});
   assert.equal(await handle({ method: "GET" }, responseCapture(), new URL("http://localhost/api/data"), {}), false);
+});
+
+test("only administrator may save complete global load coefficients", async () => {
+  const rows = [
+    ["судебное", 1], ["административное", 0.5], ["претензия", 0.3], ["уголовное", 1.2], ["банкротное", 1.8],
+  ].map(([type, coefficient]) => ({ "Тип нагрузки": type, "Коэффициент": coefficient }));
+  const data = { loadCoefficients: [] };
+  const { handle, savedTables } = createHarness({ rows }, data);
+  await assert.rejects(
+    handle({ method: "PUT" }, responseCapture(), new URL("http://localhost/api/load-coefficients"), { role: "Руководитель" }),
+    (error) => error.status === 403,
+  );
+  const res = responseCapture();
+  assert.equal(await handle({ method: "PUT" }, res, new URL("http://localhost/api/load-coefficients"), { role: "Администратор" }), true);
+  assert.equal(res.status, 200);
+  assert.deepEqual(savedTables, ["loadCoefficients"]);
+  assert.equal(data.loadCoefficients.find((row) => row["Тип нагрузки"] === "банкротное")["Коэффициент"], 1.8);
 });

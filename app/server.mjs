@@ -33,6 +33,7 @@ const CACHE_TTL = {
   yucSettings: runtime.cacheTtl.static,
   regionalAssignments: runtime.cacheTtl.static,
   regionalSubstitutions: runtime.cacheTtl.static,
+  loadCoefficients: runtime.cacheTtl.static,
 };
 const ALL_TABLE_KEYS = [
   "cases",
@@ -44,6 +45,7 @@ const ALL_TABLE_KEYS = [
   "yucSettings",
   "regionalAssignments",
   "regionalSubstitutions",
+  "loadCoefficients",
 ];
 const BOOTSTRAP_TABLE_KEYS = ALL_TABLE_KEYS;
 
@@ -79,6 +81,7 @@ function employeeScopedData(rawData, employee) {
     yucSettings: [],
     regionalAssignments: [],
     regionalSubstitutions: [],
+    loadCoefficients: rawData.loadCoefficients ?? [],
   });
 }
 
@@ -169,6 +172,12 @@ const handleSettingsRoute = createSettingsRoutes({
   sendJson,
   requireManageYuc,
   requireEmployeeInYuc,
+  requireAdmin: (user) => {
+    if (auth.isAdmin(user)) return;
+    const error = new Error("Изменять глобальные коэффициенты может только администратор.");
+    error.status = 403;
+    throw error;
+  },
 });
 const handleVacationRoute = createVacationRoutes({
   readBody,

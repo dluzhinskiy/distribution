@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FIELD, assignAutomatically, assignManually } from "../lib/domain.mjs";
+import { FIELD, assignAutomatically, assignManually, recommend } from "../lib/domain.mjs";
 
 function distributionData() {
   return {
@@ -47,4 +47,15 @@ test("manual assignment creates only the case and leaves queue state unchanged",
   assert.equal(assigned.case[FIELD.responsible], "Петров П.П.");
   assert.deepEqual(data.state, before);
   assert.equal(Object.prototype.hasOwnProperty.call(data, "journal"), false);
+});
+
+test("dashboard coefficients do not affect recommendation or queue selection", () => {
+  const withoutCoefficients = distributionData();
+  const withCoefficients = distributionData();
+  withCoefficients.loadCoefficients = [
+    { "Тип нагрузки": "судебное", "Коэффициент": 99 },
+    { "Тип нагрузки": "уголовное", "Коэффициент": 0.01 },
+  ];
+  const date = new Date(2026, 6, 27, 12, 0, 0);
+  assert.deepEqual(recommend(withCoefficients, draft, date), recommend(withoutCoefficients, draft, date));
 });

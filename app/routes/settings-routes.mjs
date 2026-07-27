@@ -7,6 +7,7 @@ import {
   regionalAssignmentKey,
   regionalSubstitutionKey,
 } from "../lib/regional-rules.mjs";
+import { validateLoadCoefficients } from "../lib/load-coefficients.mjs";
 
 export function createSettingsRoutes({
   readBody,
@@ -15,8 +16,20 @@ export function createSettingsRoutes({
   sendJson,
   requireManageYuc,
   requireEmployeeInYuc,
+  requireAdmin = () => {},
 }) {
   return async function handleSettingsRoute(req, res, url, user) {
+    if (req.method === "PUT" && url.pathname === "/api/load-coefficients") {
+      requireAdmin(user);
+      const body = await readBody(req);
+      const rows = validateLoadCoefficients(body.rows);
+      const data = await readData();
+      data.loadCoefficients = rows;
+      const confirmedData = await saveAndConfirm(data, ["loadCoefficients"]);
+      sendJson(res, 200, { ok: true, coefficients: confirmedData.loadCoefficients, data: confirmedData });
+      return true;
+    }
+
     if (req.method === "PATCH" && url.pathname.startsWith("/api/yuc-settings/")) {
       const yuc = normalizeYuc(decodeURIComponent(url.pathname.split("/").pop()));
       requireManageYuc(user, yuc);
