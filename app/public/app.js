@@ -542,6 +542,19 @@ function setDataFromPayload(payload) {
   }
 }
 
+function mergeChangedCases(changedCases = [], employees = null) {
+  if (!state.data || !Array.isArray(changedCases) || !changedCases.length) return;
+  const changedById = new Map(changedCases.map((row) => [row.case_id, row]));
+  const existingIds = new Set((state.data.cases ?? []).map((row) => row.case_id));
+  state.data.cases = (state.data.cases ?? []).map((row) => changedById.get(row.case_id) ?? row);
+  for (const row of changedCases) {
+    if (!existingIds.has(row.case_id)) state.data.cases.push(row);
+  }
+  if (Array.isArray(employees)) state.data.employees = employees;
+  markDataViewsDirty(["dashboard", "distribution", "cases", "employees"]);
+  renderAll();
+}
+
 function showView(name) {
   if (isEmployeeUser() && name !== "cases") name = "cases";
   $$(".view").forEach((view) => view.classList.remove("active"));
@@ -2144,9 +2157,9 @@ async function applyCaseImport() {
   setStatus("Применяю импорт в MTS Tabs…");
   const payload = await api("/api/cases/import-apply", {
     method: "POST",
-    body: JSON.stringify({ rows: selectedRows, updates: selectedUpdates }),
+    body: JSON.stringify({ rows: selectedRows, updates: selectedUpdates, cacheVersions: state.caseImportPlan.cacheVersions ?? {} }),
   });
-  setDataFromPayload(payload);
+  mergeChangedCases(payload.cases, payload.employees);
   state.caseImportPlan = null;
   state.caseImportSelectedRows = new Set();
   state.caseImportSelectedUpdates = new Set();

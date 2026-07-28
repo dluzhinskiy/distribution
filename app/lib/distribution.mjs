@@ -1444,18 +1444,30 @@ export function caseImportDuplicateReason(candidate, existing) {
 export function importCasesFromRows(data, rows, date = new Date()) {
   const added = [];
   const skipped = [];
+  const duplicateIndex = new Map();
+  for (const caseRow of data.cases ?? []) {
+    const link = cleanText(caseRow["Ссылка"]);
+    const key = link ? `link:${link}` : `fields:${caseImportKey(caseRow)}`;
+    if (!duplicateIndex.has(key)) duplicateIndex.set(key, caseRow);
+  }
+  let nextCaseNumber = (data.cases ?? []).reduce((max, caseRow) => {
+    const match = cleanText(caseRow.case_id).match(/CASE-(\d+)/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0) + 1;
   for (const item of rows ?? []) {
     const source = item.source ?? item;
     const normalized = normalizeDraft(source);
-    const duplicateReason = (data.cases ?? [])
-      .map((caseRow) => caseImportDuplicateReason(normalized, caseRow))
-      .find(Boolean);
+    const link = cleanText(normalized["Ссылка"]);
+    const duplicateKey = link ? `link:${link}` : `fields:${caseImportKey(normalized)}`;
+    const duplicateRow = duplicateIndex.get(duplicateKey);
+    const duplicateReason = duplicateRow ? caseImportDuplicateReason(normalized, duplicateRow) : "";
     if (duplicateReason) {
       skipped.push({ rowNumber: item.rowNumber, reason: duplicateReason || "уже есть", source: normalized });
       continue;
     }
     const responsible = cleanText(source[FIELD.responsible]);
-    const caseId = makeCaseId(data.cases);
+    const caseId = `CASE-${String(nextCaseNumber).padStart(4, "0")}`;
+    nextCaseNumber += 1;
     const created = {
       case_id: caseId,
       "Номер дела": normalized["Номер дела"],
@@ -1482,6 +1494,7 @@ export function importCasesFromRows(data, rows, date = new Date()) {
       "Движение дела": normalized["Движение дела"],
     };
     data.cases.push(created);
+    duplicateIndex.set(duplicateKey, created);
     added.push(created);
   }
   return { added, skipped };

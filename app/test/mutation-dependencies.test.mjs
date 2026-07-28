@@ -22,3 +22,7 @@ test("automatic assignment refreshes the distribution snapshot without dashboard
   assert.equal(tables.includes("queues"), true);
   assert.equal(tables.includes("loadCoefficients"), false);
 });
+
+test("case import apply manages its cached preview snapshot inside the route", () => {
+  assert.deepEqual(mutationReadTables("POST", "/api/cases/import-apply"), []);
+});

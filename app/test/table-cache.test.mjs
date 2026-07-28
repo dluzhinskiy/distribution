@@ -65,6 +65,21 @@ test("successful mutation can replace one cached table without reading storage",
   assert.equal(cache.status().cachedTables.employees.version, 2);
 });
 
+test("cache exposes lightweight table versions for import preview snapshots", async () => {
+  const cache = createTableCache({
+    readFresh: async ([key]) => ({ [key]: [] }),
+    tableKeys: ["cases", "employees"],
+    bootstrapKeys: ["cases", "employees"],
+    ttlByTable: {},
+    defaultTtl: 60_000,
+  });
+  assert.deepEqual(cache.versions(["cases", "employees"]), { cases: 0, employees: 0 });
+  await cache.read(["cases"]);
+  assert.deepEqual(cache.versions(["cases", "employees"]), { cases: 1, employees: 0 });
+  cache.replace("employees", []);
+  assert.deepEqual(cache.versions(["cases", "employees"]), { cases: 1, employees: 1 });
+});
+
 test("cache snapshot returns only loaded tables and never triggers missing reads", async () => {
   let reads = 0;
   const cache = createTableCache({

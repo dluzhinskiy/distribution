@@ -134,6 +134,11 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
     for (const key of normalizeKeys(keys)) cache.loadedAt.delete(key);
   }
 
+  function versions(keys = tableKeys) {
+    const requested = Array.isArray(keys) ? keys : [keys];
+    return Object.fromEntries(requested.map((key) => [key, cache.versions.get(key) || 0]));
+  }
+
   function status() {
     return {
       enabled: true,
@@ -161,5 +166,5 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
     };
   }
 
-  return { read, replace, snapshot, invalidate, status };
+  return { read, replace, snapshot, versions, invalidate, status };
 }

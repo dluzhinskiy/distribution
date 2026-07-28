@@ -380,6 +380,13 @@ async function createRows(table, rows) {
   }
 }
 
+export async function createTableRows(key, rows = []) {
+  const table = TABLES[key];
+  if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  await createRows(table, rows);
+  return rows;
+}
+
 async function updateRows(table, updates) {
   for (const chunk of chunks(updates, 10)) {
     await request(table, "PATCH", {

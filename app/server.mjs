@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
 import { canManageYuc } from "./lib/access-policy.mjs";
 import { FIELD, cleanText, enrichData, normalizeYuc, nameMatches } from "./lib/domain.mjs";
-import { patchTableRow, patchTableRows, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
+import { createTableRows, patchTableRow, patchTableRows, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { loadRuntimeConfig } from "./lib/runtime-config.mjs";
 import { readBinaryBody, readJsonBody as readBody, sendJson, serveStatic } from "./lib/http-utils.mjs";
@@ -68,7 +68,10 @@ async function readRouteData(keys = ALL_TABLE_KEYS, options = {}) {
   return tableCache.snapshot();
 }
 const writeCoordinator = createWriteCoordinator({
-  beforeWrite: ({ method, pathname } = {}) => readData(mutationReadTables(method, pathname), { force: true }),
+  beforeWrite: ({ method, pathname } = {}) => {
+    const tables = mutationReadTables(method, pathname);
+    return tables.length ? readData(tables, { force: true }) : undefined;
+  },
 });
 
 
@@ -198,7 +201,9 @@ const handleCaseImportRoute = createCaseImportRoutes({
   readBinaryBody,
   readData: readRouteData,
   readDirectories,
-  saveAndConfirm: confirmedDataAfterSave,
+  createTableRows,
+  patchTableRows,
+  cacheVersions: tableCache.versions,
   sendJson,
   requireManageYuc,
   requireEmployeeInYuc,

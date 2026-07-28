@@ -1,6 +1,6 @@
 import path from "node:path";
 import zlib from "node:zlib";
-import { caseImportDuplicateReason, caseImportKey as domainCaseImportKey, cleanMultilineText, cleanText, nameMatches, normalizeType, normalizeYuc, toISODate } from "./domain.mjs";
+import { caseImportDuplicateReason, caseImportKey as domainCaseImportKey, cleanMultilineText, cleanText, nameMatches, normalizeType, normalizeYuc, shortName, toISODate } from "./domain.mjs";
 import { caseproBranchKey } from "./directories.mjs";
 import { normalizeRegionName } from "./regions.mjs";
 
@@ -250,16 +250,36 @@ function resolveReportRegion(value, directories, yuc) {
   return directories?.regionByCaseproBranch?.[caseproBranchKey(value)] ?? "";
 }
 
-function resolveResponsible(sourceName, employees, yuc) {
+function buildEmployeeLookup(employees = []) {
+  const aliases = new Map();
+  const managersByYuc = new Map();
+  for (const employee of employees) {
+    const name = cleanText(employee["ФИО"]);
+    for (const alias of new Set([name, shortName(name)].filter(Boolean))) {
+      if (!aliases.has(alias)) aliases.set(alias, []);
+      aliases.get(alias).push(employee);
+    }
+    if (cleanText(employee["Роль доступа"]).toLowerCase() === "руководитель") {
+      const normalizedYuc = normalizeYuc(employee["ЮЦ"]);
+      if (!managersByYuc.has(normalizedYuc)) managersByYuc.set(normalizedYuc, []);
+      managersByYuc.get(normalizedYuc).push(employee);
+    }
+  }
+  return { aliases, managersByYuc };
+}
+
+function resolveResponsible(sourceName, employees, yuc, lookup = buildEmployeeLookup(employees)) {
   const normalized = reportEmployeeName(sourceName);
-  const matchingEmployees = (employees ?? []).filter((employee) => nameMatches(employee["ФИО"], normalized));
+  const matchingEmployees = [...new Map([
+    ...(lookup.aliases.get(normalized) ?? []),
+    ...(lookup.aliases.get(shortName(normalized)) ?? []),
+  ].map((employee) => [employee.employee_id || employee["ФИО"], employee])).values()]
+    .filter((employee) => nameMatches(employee["ФИО"], normalized));
   if (matchingEmployees.length === 1) return { responsible: cleanText(matchingEmployees[0]["ФИО"]), mode: "matched" };
   if (matchingEmployees.length > 1) {
     return { responsible: "", mode: "manual", options: matchingEmployees.map((employee) => cleanText(employee["ФИО"])) };
   }
-  const managers = (employees ?? []).filter((employee) =>
-    normalizeYuc(employee["ЮЦ"]) === normalizeYuc(yuc) && cleanText(employee["Роль доступа"]).toLowerCase() === "руководитель"
-  );
+  const managers = lookup.managersByYuc.get(normalizeYuc(yuc)) ?? [];
   if (managers.length === 1) return { responsible: cleanText(managers[0]["ФИО"]), mode: "leader-fallback" };
   if (managers.length > 1) return { responsible: "", mode: "manual", options: managers.map((employee) => cleanText(employee["ФИО"])), fallback: true };
   return { responsible: "", mode: "missing" };
@@ -274,7 +294,7 @@ function sourceCaseFromRow(row, headerMap, rowNumber, options = {}) {
   // сопоставлении со справочником.
   const rawRegion = isReport ? cell(row, headerMap.customerUnit) : cell(row, headerMap.region);
   const originalResponsible = cell(row, headerMap.responsible);
-  const responsibleInfo = isReport ? resolveResponsible(originalResponsible, options.employees, importYuc) : {
+  const responsibleInfo = isReport ? resolveResponsible(originalResponsible, options.employees, importYuc, options.employeeLookup) : {
     responsible: cleanText(originalResponsible), mode: "legacy",
   };
   const type = isReport ? reportType(cell(row, headerMap.type)) : normalizeType(cell(row, headerMap.type));
@@ -371,12 +391,26 @@ export function caseImportKey(row) {
   return domainCaseImportKey(row);
 }
 
-function findDuplicate(source, rows, options = {}) {
-  for (const row of rows ?? []) {
-    const reason = caseImportDuplicateReason(source, row.source ?? row, options);
-    if (reason) return { row, reason };
+function duplicateLookupKey(row) {
+  const source = row?.source ?? row;
+  const link = cleanText(source?.["Ссылка"]);
+  return link ? `link:${link}` : `fields:${caseImportKey(source)}`;
+}
+
+function buildDuplicateIndex(rows = []) {
+  const index = new Map();
+  for (const row of rows) {
+    const key = duplicateLookupKey(row);
+    if (!index.has(key)) index.set(key, row);
   }
-  return null;
+  return index;
+}
+
+function findDuplicate(source, index, options = {}) {
+  const row = index.get(duplicateLookupKey(source));
+  if (!row) return null;
+  const reason = caseImportDuplicateReason(source, row.source ?? row, options);
+  return reason ? { row, reason } : null;
 }
 
 export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
@@ -407,13 +441,16 @@ export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
   const existing = [];
   const invalid = [];
   const duplicateInFile = [];
-
-  const excluded = [];
+  const existingIndex = buildDuplicateIndex(existingCases);
+  const fileIndex = new Map();
+  const employeeLookup = buildEmployeeLookup(options.employees ?? []);
+  let existingCasesCount = 0;
+  let excludedRows = 0;
   rows.slice(headerIndex + 1).forEach((row, offset) => {
-    const parsed = sourceCaseFromRow(row, headerMap, headerIndex + offset + 2, options);
+    const parsed = sourceCaseFromRow(row, headerMap, headerIndex + offset + 2, { ...options, employeeLookup });
     if (!hasMeaningfulSourceData(parsed.source)) return;
     if (parsed.isReport && parsed.sourceYuc !== normalizeYuc(options.yuc || "Дальний Восток")) {
-      excluded.push({ rowNumber: parsed.rowNumber, reason: !cleanText(parsed.sourceYuc) ? "ЮЦ не указан" : `другой ЮЦ: ${parsed.sourceYuc}`, source: parsed.source });
+      excludedRows += 1;
       return;
     }
     if (parsed.errors.length) {
@@ -427,32 +464,38 @@ export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
       });
       return;
     }
-    const existingDuplicate = findDuplicate(parsed.source, existingCases);
+    const existingDuplicate = findDuplicate(parsed.source, existingIndex);
     if (existingDuplicate) {
-      existing.push({
-        rowNumber: parsed.rowNumber,
-        reason: existingDuplicate.reason,
-        source: parsed.source,
-        caseId: cleanText(existingDuplicate.row.case_id),
-        changes: caseImportChanges(existingDuplicate.row, parsed.source),
-      });
+      existingCasesCount += 1;
+      const changes = caseImportChanges(existingDuplicate.row, parsed.source);
+      if (changes.length) {
+        existing.push({
+          rowNumber: parsed.rowNumber,
+          reason: existingDuplicate.reason,
+          source: parsed.source,
+          caseId: cleanText(existingDuplicate.row.case_id),
+          changes,
+        });
+      }
       return;
     }
-    const fileDuplicate = findDuplicate(parsed.source, toAdd, { strictOnly: true });
+    const fileDuplicate = findDuplicate(parsed.source, fileIndex, { strictOnly: true });
     if (fileDuplicate) {
       duplicateInFile.push({ rowNumber: parsed.rowNumber, duplicateOfRow: fileDuplicate.row.rowNumber, reason: fileDuplicate.reason, source: parsed.source });
       return;
     }
-    toAdd.push({
+    const newItem = {
       rowNumber: parsed.rowNumber,
       source: parsed.source,
       responsibleMode: parsed.responsibleInfo.mode,
       responsibleOptions: parsed.responsibleInfo.options ?? [],
       rawResponsible: parsed.rawResponsible,
-    });
+    };
+    toAdd.push(newItem);
+    fileIndex.set(duplicateLookupKey(parsed.source), newItem);
   });
 
-  const processedRows = toAdd.length + existing.length + invalid.length + duplicateInFile.length + excluded.length;
+  const processedRows = toAdd.length + existingCasesCount + invalid.length + duplicateInFile.length + excludedRows;
   return {
     sheetName: sheet.name,
     sourceRows: processedRows,
@@ -460,15 +503,15 @@ export function parseCaseWorkbook(buffer, existingCases = [], options = {}) {
     existing,
     invalid,
     duplicateInFile,
-    excluded,
+    excluded: [],
     stats: {
       sourceRows: processedRows,
       newCases: toAdd.length,
-      existingCases: existing.length,
-      updateCandidates: existing.filter((item) => item.changes.length).length,
+      existingCases: existingCasesCount,
+      updateCandidates: existing.length,
       invalidRows: invalid.length,
       duplicateRows: duplicateInFile.length,
-      excludedRows: excluded.length,
+      excludedRows,
     },
   };
 }

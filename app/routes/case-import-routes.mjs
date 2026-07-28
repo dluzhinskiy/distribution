@@ -1,4 +1,4 @@
-import { FIELD, cleanText, importCasesFromRows, normalizeYuc } from "../lib/domain.mjs";
+import { FIELD, cleanText, enrichData, importCasesFromRows, normalizeYuc } from "../lib/domain.mjs";
 import { CASE_IMPORT_UPDATE_FIELDS, caseImportChanges, parseCaseWorkbook } from "../lib/xlsx-case-import.mjs";
 
 export function createCaseImportRoutes({
@@ -6,7 +6,9 @@ export function createCaseImportRoutes({
   readBinaryBody,
   readData,
   readDirectories,
-  saveAndConfirm,
+  createTableRows,
+  patchTableRows,
+  cacheVersions,
   sendJson,
   requireManageYuc,
   requireEmployeeInYuc,
@@ -29,6 +31,7 @@ export function createCaseImportRoutes({
         employees: data.employees ?? [],
         directories,
       });
+      plan.cacheVersions = cacheVersions(["cases", "employees"]);
       sendJson(res, 200, { ok: true, plan });
       return true;
     }
@@ -42,6 +45,11 @@ export function createCaseImportRoutes({
         return true;
       }
       const data = await readData(["cases", "employees"]);
+      const previewVersions = body.cacheVersions ?? {};
+      const currentVersions = cacheVersions(["cases", "employees"]);
+      const previewSnapshotCurrent = ["cases", "employees"].every((key) => (
+        Number(previewVersions[key] || 0) === Number(currentVersions[key] || 0)
+      ));
       for (const row of rows) {
         const yuc = row?.source?.[FIELD.yuc] ?? row[FIELD.yuc];
         requireManageYuc(user, yuc);
@@ -54,6 +62,7 @@ export function createCaseImportRoutes({
       }
 
       const updated = [];
+      const rowsToPatch = [];
       for (const item of updates) {
         const source = item?.source ?? item;
         const caseId = cleanText(item?.caseId);
@@ -70,6 +79,7 @@ export function createCaseImportRoutes({
           if (change) current[field] = source[field];
         }
         updated.push({ caseId, changes });
+        rowsToPatch.push({ row: current, changedFields: changes.map((change) => change.field) });
       }
 
       const result = importCasesFromRows(data, rows);
@@ -84,13 +94,29 @@ export function createCaseImportRoutes({
             movement: item.changes.find((change) => change.field === FIELD.caseMovement)?.next,
           })),
       ];
-      const confirmedData = await saveAndConfirm(data, ["cases"], (freshData) => (
+      if (rowsToPatch.length) await patchTableRows("cases", rowsToPatch);
+      if (result.added.length) await createTableRows("cases", result.added);
+
+      const importConfirmed = (freshData) => (
         result.added.every((item) => Boolean(findCase(freshData, item.case_id))) &&
-        movementExpected.every((item) => cleanText(findCase(freshData, item.caseId)?.[FIELD.caseMovement]) === cleanText(item.movement))
-      ));
+        movementExpected.every((item) => {
+          const saved = findCase(freshData, item.caseId);
+          return saved && !caseImportChanges(saved, { [FIELD.caseMovement]: item.movement }).length;
+        })
+      );
+      let confirmedData = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (attempt) await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+        confirmedData = enrichData(await readData(["cases"], { force: true }));
+        if (importConfirmed(confirmedData)) break;
+      }
       const missingMovement = movementExpected.filter((item) => (
-        cleanText(findCase(confirmedData, item.caseId)?.[FIELD.caseMovement]) !== cleanText(item.movement)
+        caseImportChanges(findCase(confirmedData, item.caseId) ?? {}, { [FIELD.caseMovement]: item.movement }).length
       ));
+      const missingAdded = result.added.filter((item) => !findCase(confirmedData, item.case_id));
+      if (missingAdded.length) {
+        throw new Error(`MTS Tabs не подтвердил создание ${missingAdded.length} дел. Проверьте таблицу и повторите импорт.`);
+      }
       if (missingMovement.length) {
         throw new Error(`MTS Tabs не подтвердил сохранение поля «Движение дела» для ${missingMovement.length} дел. Изменения не считаются завершёнными; проверьте настройки поля и повторите импорт.`);
       }
@@ -103,8 +129,12 @@ export function createCaseImportRoutes({
           movementConfirmed: movementExpected.length,
           firstCaseId: result.added[0]?.case_id ?? "",
           lastCaseId: result.added.at(-1)?.case_id ?? "",
+          previewSnapshotCurrent,
         },
-        data: confirmedData,
+        cases: [...result.added.map((item) => item.case_id), ...updated.map((item) => item.caseId)]
+          .map((caseId) => findCase(confirmedData, caseId))
+          .filter(Boolean),
+        employees: confirmedData.employees ?? [],
       });
       return true;
     }

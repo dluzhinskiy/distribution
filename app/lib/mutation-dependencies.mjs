@@ -17,7 +17,9 @@ export function mutationReadTables(method = "", pathname = "") {
   if (path.startsWith("/api/regional-assignments/")) return ["employees", "regionalAssignments"];
   if (path.startsWith("/api/regional-substitutions/")) return ["employees", "regionalSubstitutions"];
   if (path.startsWith("/api/vacations/")) return ["employees", "vacations"];
-  if (path === "/api/cases/import-apply") return ["cases", "employees"];
+  // Preview уже сформировал актуальный снимок. Route сама проверит TTL/версии
+  // кэша и дочитает таблицы, только если они успели устареть.
+  if (path === "/api/cases/import-apply") return [];
   if (verb === "PATCH" && /^\/api\/cases\/[^/]+$/.test(path)) return ["cases", "employees"];
   if (/^\/api\/cases\/[^/]+\/documents$/.test(path)) return ["cases", "employees"];
   if (path.endsWith("/responsible")) return ["cases", "employees"];
