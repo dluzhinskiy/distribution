@@ -15,6 +15,7 @@ export function loadRuntimeConfig(env = process.env) {
     port: finiteNumber(env.PORT, 8766, { min: 1 }),
     render,
     fileLogging: enabled(env.FILE_LOGGING, !render),
+    cacheWarmupEnabled: enabled(env.FAST_ENGINE_CACHE_WARMUP, true),
     caseDocumentMaxBytes: finiteNumber(env.CASE_DOCUMENT_MAX_BYTES, 12_000_000, { min: 1 }),
     officePreviewMaxBytes: finiteNumber(env.OFFICE_PREVIEW_MAX_BYTES, 12_000_000, { min: 1 }),
     cacheTtl: {

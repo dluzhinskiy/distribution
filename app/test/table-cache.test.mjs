@@ -49,6 +49,28 @@ test("parallel requests for the same table share an in-flight read", async () =>
   assert.equal(reads, 1);
 });
 
+test("overlapping requests share in-flight reads per table", async () => {
+  const reads = new Map();
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const cache = createTableCache({
+    readFresh: async ([key]) => {
+      reads.set(key, (reads.get(key) ?? 0) + 1);
+      await pending;
+      return { [key]: [] };
+    },
+    tableKeys: ["cases", "employees"],
+    bootstrapKeys: ["cases", "employees"],
+    ttlByTable: {},
+    defaultTtl: 60_000,
+  });
+  const first = cache.read(["cases", "employees"]);
+  const second = cache.read(["employees"]);
+  release();
+  await Promise.all([first, second]);
+  assert.deepEqual(Object.fromEntries(reads), { cases: 1, employees: 1 });
+});
+
 test("successful mutation can replace one cached table without reading storage", async () => {
   let reads = 0;
   const cache = createTableCache({

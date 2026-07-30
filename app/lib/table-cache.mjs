@@ -80,17 +80,18 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
 
   async function refresh(keys) {
     const requested = normalizeKeys(keys);
-    const signature = requested.slice().sort().join(",");
-    if (!cache.pending.has(signature)) {
-      cache.pending.set(signature, Promise.all(requested.map(readFreshTable))
-        .then((items) => {
-          const data = Object.assign({}, ...items);
-          merge(data);
-          return data;
-        })
-        .finally(() => cache.pending.delete(signature)));
-    }
-    return cache.pending.get(signature);
+    await Promise.all(requested.map((key) => {
+      if (!cache.pending.has(key)) {
+        cache.pending.set(key, readFreshTable(key)
+          .then((data) => {
+            merge(data);
+            return data;
+          })
+          .finally(() => cache.pending.delete(key)));
+      }
+      return cache.pending.get(key);
+    }));
+    return snapshot(requested);
   }
 
   async function read(keys = bootstrapKeys, options = {}) {
@@ -156,6 +157,7 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
           stale: !cache.tables.has(key) || currentAge > ttl(key),
           rows: Array.isArray(cache.tables.get(key)) ? cache.tables.get(key).length : 0,
           version: cache.versions.get(key) || 0,
+          pending: cache.pending.has(key),
         }];
       })),
       performance: {

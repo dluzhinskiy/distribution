@@ -19,6 +19,7 @@ import { normalizeError } from "./lib/errors.mjs";
 import { assertAllowedFields } from "./lib/validation.mjs";
 import { mutationReadTables } from "./lib/mutation-dependencies.mjs";
 import { managerScopedData, tableKeysForView } from "./lib/view-data.mjs";
+import { createCacheWarmup } from "./lib/cache-warmup.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -62,10 +63,19 @@ const tableCache = createTableCache({
   defaultTtl: CACHE_TTL.default,
 });
 const readData = tableCache.read;
-const cacheStatus = tableCache.status;
 async function readRouteData(keys = ALL_TABLE_KEYS, options = {}) {
   await readData(keys, options);
   return tableCache.snapshot();
+}
+const CACHE_WARMUP_TABLE_KEYS = tableKeysForView("dashboard", ALL_TABLE_KEYS);
+const cacheWarmup = createCacheWarmup({
+  enabled: runtime.cacheWarmupEnabled,
+  tableKeys: CACHE_WARMUP_TABLE_KEYS,
+  readData,
+  readDirectories,
+});
+function cacheStatus() {
+  return { ...tableCache.status(), warmup: cacheWarmup.status() };
 }
 const writeCoordinator = createWriteCoordinator({
   beforeWrite: ({ method, pathname } = {}) => {
@@ -234,6 +244,7 @@ async function api(req, res, url) {
       service: "load-distribution",
       storage: "mts-tabs",
       persistentLocalStorage: false,
+      cacheWarmup: cacheWarmup.status(),
     });
   }
   if (await auth.handleAuth(req, res, url)) return;
@@ -400,6 +411,11 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Приложение запущено: http://${HOST}:${PORT}`);
   console.log(`MTS Tabs API: ${storagePath()}`);
+  void cacheWarmup.run().then((warmup) => {
+    const message = `Прогрев кэша: ${warmup.state}, ${warmup.durationMs ?? 0} мс`;
+    if (warmup.errors.length) console.warn(message, warmup.errors);
+    else console.log(message);
+  });
 });
 
 function shutdown(signal) {

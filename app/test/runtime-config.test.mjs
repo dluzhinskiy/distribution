@@ -7,6 +7,7 @@ test("local runtime binds only to loopback and allows file logs", () => {
   assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 8766);
   assert.equal(config.fileLogging, true);
+  assert.equal(config.cacheWarmupEnabled, true);
 });
 
 test("Render runtime is stateless and listens on the platform interface", () => {
@@ -20,4 +21,8 @@ test("invalid numeric settings fall back to safe defaults", () => {
   const config = loadRuntimeConfig({ PORT: "invalid", CASE_DOCUMENT_MAX_BYTES: "-1" });
   assert.equal(config.port, 8766);
   assert.equal(config.caseDocumentMaxBytes, 12_000_000);
+});
+
+test("cache warmup can be disabled from environment", () => {
+  assert.equal(loadRuntimeConfig({ FAST_ENGINE_CACHE_WARMUP: "0" }).cacheWarmupEnabled, false);
 });
