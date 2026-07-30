@@ -19,7 +19,7 @@ import { normalizeError } from "./lib/errors.mjs";
 import { assertAllowedFields } from "./lib/validation.mjs";
 import { mutationReadTables } from "./lib/mutation-dependencies.mjs";
 import { managerScopedData, tableKeysForView } from "./lib/view-data.mjs";
-import { createCacheWarmup } from "./lib/cache-warmup.mjs";
+import { createCacheWarmup, createDeferredWarmup } from "./lib/cache-warmup.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -30,6 +30,7 @@ const PORT = runtime.port;
 const HOST = runtime.host;
 const CACHE_TTL = {
   default: runtime.cacheTtl.default,
+  cases: runtime.cacheTtl.cases,
   employees: runtime.cacheTtl.employees,
   vacations: runtime.cacheTtl.vacations,
   settings: runtime.cacheTtl.static,
@@ -89,8 +90,28 @@ const cacheWarmup = createCacheWarmup({
   readData: () => readDashboardData(),
   readDirectories,
 });
+const fullCasesWarmup = createDeferredWarmup({
+  enabled: runtime.fullCasesWarmupEnabled,
+  delayMs: runtime.fullCasesWarmupDelayMs,
+  run: () => readData(["cases"]),
+  onComplete: (result) => {
+    const message = `Фоновый прогрев полного реестра дел: ${result.state}, ${result.durationMs ?? 0} мс`;
+    if (result.errors.length) console.warn(message, result.errors);
+    else console.log(message);
+  },
+});
 function cacheStatus() {
-  return { ...tableCache.status(), dashboardCases: dashboardCaseCache.status(), warmup: cacheWarmup.status() };
+  return {
+    ...tableCache.status(),
+    dashboardCases: dashboardCaseCache.status(),
+    warmup: cacheWarmup.status(),
+    fullCasesWarmup: fullCasesWarmup.status(),
+  };
+}
+
+function scheduleFullCasesWarmup(view) {
+  if (view !== "dashboard") return;
+  void fullCasesWarmup.schedule();
 }
 const writeCoordinator = createWriteCoordinator({
   beforeWrite: ({ method, pathname } = {}) => {
@@ -291,7 +312,9 @@ async function api(req, res, url) {
     if (auth.isManager(user)) {
       const directories = await readDirectories({ force: url.searchParams.get("refreshDirectories") === "1" });
       const data = { ...managerScopedData(rawData), directories };
-      return sendJson(res, 200, { ok: true, user, data, loadedTables, view: requestedView || "all", storagePath: storagePath(), tabsStorageStatus: tabsStorageStatus(), cacheStatus: cacheStatus(), directoriesPath: directoriesPath() });
+      sendJson(res, 200, { ok: true, user, data, loadedTables, view: requestedView || "all", storagePath: storagePath(), tabsStorageStatus: tabsStorageStatus(), cacheStatus: cacheStatus(), directoriesPath: directoriesPath() });
+      scheduleFullCasesWarmup(requestedView);
+      return;
     }
     const employee = rawData.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
     if (!employee) {
@@ -300,7 +323,9 @@ async function api(req, res, url) {
       throw error;
     }
     const directories = await readDirectories();
-    return sendJson(res, 200, { ok: true, user, data: { ...employeeScopedData(rawData, employee), directories }, loadedTables, view: requestedView || "all", storagePath: storagePath(), cacheStatus: cacheStatus() });
+    sendJson(res, 200, { ok: true, user, data: { ...employeeScopedData(rawData, employee), directories }, loadedTables, view: requestedView || "all", storagePath: storagePath(), cacheStatus: cacheStatus() });
+    scheduleFullCasesWarmup(requestedView);
+    return;
   }
 
   if (await handleCaseRoute(req, res, url, user)) return;

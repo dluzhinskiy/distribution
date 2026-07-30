@@ -8,6 +8,9 @@ test("local runtime binds only to loopback and allows file logs", () => {
   assert.equal(config.port, 8766);
   assert.equal(config.fileLogging, true);
   assert.equal(config.cacheWarmupEnabled, true);
+  assert.equal(config.fullCasesWarmupEnabled, false);
+  assert.equal(config.fullCasesWarmupDelayMs, 3000);
+  assert.equal(config.cacheTtl.cases, 120_000);
 });
 
 test("Render runtime is stateless and listens on the platform interface", () => {
@@ -25,4 +28,15 @@ test("invalid numeric settings fall back to safe defaults", () => {
 
 test("cache warmup can be disabled from environment", () => {
   assert.equal(loadRuntimeConfig({ FAST_ENGINE_CACHE_WARMUP: "0" }).cacheWarmupEnabled, false);
+});
+
+test("deferred full-case warmup is configured independently", () => {
+  const config = loadRuntimeConfig({
+    FAST_ENGINE_FULL_CASES_WARMUP: "1",
+    FAST_ENGINE_FULL_CASES_WARMUP_DELAY_MS: "4500",
+    FAST_ENGINE_CASES_CACHE_TTL_MS: "180000",
+  });
+  assert.equal(config.fullCasesWarmupEnabled, true);
+  assert.equal(config.fullCasesWarmupDelayMs, 4500);
+  assert.equal(config.cacheTtl.cases, 180_000);
 });

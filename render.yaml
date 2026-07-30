@@ -23,6 +23,14 @@ services:
         value: "45000"
       - key: TABS_REQUEST_RETRIES
         value: "3"
+      - key: FAST_ENGINE_CACHE_WARMUP
+        value: "true"
+      - key: FAST_ENGINE_FULL_CASES_WARMUP
+        value: "true"
+      - key: FAST_ENGINE_FULL_CASES_WARMUP_DELAY_MS
+        value: "3000"
+      - key: FAST_ENGINE_CASES_CACHE_TTL_MS
+        value: "120000"
       - key: TABS_API_TOKEN
         sync: false
       - key: TABS_LOAD_COEFFICIENTS_DATASHEET_ID
