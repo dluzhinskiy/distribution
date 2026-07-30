@@ -10,7 +10,11 @@ test("local runtime binds only to loopback and allows file logs", () => {
   assert.equal(config.cacheWarmupEnabled, true);
   assert.equal(config.fullCasesWarmupEnabled, false);
   assert.equal(config.fullCasesWarmupDelayMs, 3000);
-  assert.equal(config.cacheTtl.cases, 120_000);
+  assert.equal(config.cacheTtl.default, 300_000);
+  assert.equal(config.cacheTtl.cases, 600_000);
+  assert.equal(config.cacheTtl.employees, 300_000);
+  assert.equal(config.operationIdTtlMs, 600_000);
+  assert.equal(config.slowRequestLogMs, 2_000);
 });
 
 test("Render runtime is stateless and listens on the platform interface", () => {

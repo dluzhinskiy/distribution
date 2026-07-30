@@ -57,14 +57,16 @@ export function sanitizeApiPayload(value, key = "") {
 }
 
 export function sendJson(res, status, payload, headers = {}) {
+  const body = JSON.stringify(sanitizeApiPayload(payload));
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
     "Cache-Control": "no-store, no-cache, must-revalidate, private",
     "Pragma": "no-cache",
     "Expires": "0",
     ...headers,
   });
-  res.end(JSON.stringify(sanitizeApiPayload(payload)));
+  res.end(body);
 }
 
 export function readJsonBody(req, maxBytes = 2_000_000) {
@@ -127,12 +129,23 @@ export async function serveStatic(req, res, url, publicDir) {
     return res.end("Forbidden");
   }
   try {
-    const data = await fs.readFile(filePath);
-    const headers = { "Content-Type": MIME[path.extname(filePath)] ?? "application/octet-stream" };
+    const [data, stat] = await Promise.all([fs.readFile(filePath), fs.stat(filePath)]);
+    const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
+    const headers = {
+      "Content-Type": MIME[path.extname(filePath)] ?? "application/octet-stream",
+      "Content-Length": data.length,
+      ETag: etag,
+    };
     if (requested === "/index.html") {
       headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private";
       headers.Pragma = "no-cache";
       headers.Expires = "0";
+    } else {
+      headers["Cache-Control"] = "public, max-age=300, must-revalidate";
+    }
+    if (req.headers?.["if-none-match"] === etag) {
+      res.writeHead(304, { ETag: etag, "Cache-Control": headers["Cache-Control"] });
+      return res.end();
     }
     res.writeHead(200, headers);
     res.end(data);

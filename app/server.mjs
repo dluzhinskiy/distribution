@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
 import { canManageYuc } from "./lib/access-policy.mjs";
 import { FIELD, cleanText, enrichData, normalizeYuc, nameMatches } from "./lib/domain.mjs";
-import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
+import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readOperationalCases, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { loadRuntimeConfig } from "./lib/runtime-config.mjs";
 import { readBinaryBody, readJsonBody as readBody, sendJson, serveStatic } from "./lib/http-utils.mjs";
@@ -18,8 +18,10 @@ import { createWriteCoordinator, isMutationRequest } from "./lib/write-coordinat
 import { normalizeError } from "./lib/errors.mjs";
 import { assertAllowedFields } from "./lib/validation.mjs";
 import { mutationReadTables } from "./lib/mutation-dependencies.mjs";
-import { managerScopedData, tableKeysForView } from "./lib/view-data.mjs";
+import { managerScopedData, readRequestedTables, tableKeysForView } from "./lib/view-data.mjs";
 import { createCacheWarmup, createDeferredWarmup } from "./lib/cache-warmup.mjs";
+import { createOperationGuard } from "./lib/operation-guard.mjs";
+import { paginateCaseRegister } from "./lib/case-register.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -70,10 +72,16 @@ const dashboardCaseCache = createTableCache({
   ttlByTable: { cases: CACHE_TTL.default },
   defaultTtl: CACHE_TTL.default,
 });
+const operationalCaseCache = createTableCache({
+  readFresh: async () => ({ cases: await readOperationalCases() }),
+  tableKeys: ["cases"],
+  bootstrapKeys: ["cases"],
+  ttlByTable: { cases: CACHE_TTL.cases },
+  defaultTtl: CACHE_TTL.cases,
+});
 const readData = tableCache.read;
 async function readRouteData(keys = ALL_TABLE_KEYS, options = {}) {
-  await readData(keys, options);
-  return tableCache.snapshot();
+  return readRequestedTables(readData, keys, options);
 }
 const CACHE_WARMUP_TABLE_KEYS = tableKeysForView("dashboard", ALL_TABLE_KEYS);
 async function readDashboardData(options = {}) {
@@ -93,7 +101,10 @@ const cacheWarmup = createCacheWarmup({
 const fullCasesWarmup = createDeferredWarmup({
   enabled: runtime.fullCasesWarmupEnabled,
   delayMs: runtime.fullCasesWarmupDelayMs,
-  run: () => readData(["cases"]),
+  run: async () => {
+    await operationalCaseCache.read(["cases"]);
+    await readData(["cases"]);
+  },
   onComplete: (result) => {
     const message = `Фоновый прогрев полного реестра дел: ${result.state}, ${result.durationMs ?? 0} мс`;
     if (result.errors.length) console.warn(message, result.errors);
@@ -101,24 +112,34 @@ const fullCasesWarmup = createDeferredWarmup({
   },
 });
 function cacheStatus() {
+  const tableStatus = tableCache.status();
+  const fullWarmupStatus = fullCasesWarmup.status();
+  const fullCasesStale = tableStatus.cachedTables.cases?.stale ?? true;
   return {
-    ...tableCache.status(),
+    ...tableStatus,
     dashboardCases: dashboardCaseCache.status(),
+    operationalCases: operationalCaseCache.status(),
     warmup: cacheWarmup.status(),
-    fullCasesWarmup: fullCasesWarmup.status(),
+    fullCasesWarmup: {
+      ...fullWarmupStatus,
+      state: fullWarmupStatus.state === "ready" && fullCasesStale ? "stale" : fullWarmupStatus.state,
+      cacheStale: fullCasesStale,
+    },
   };
 }
 
 function scheduleFullCasesWarmup(view) {
   if (view !== "dashboard") return;
-  void fullCasesWarmup.schedule();
+  const casesStale = tableCache.status().cachedTables.cases?.stale ?? true;
+  void fullCasesWarmup.schedule({ force: casesStale });
 }
 const writeCoordinator = createWriteCoordinator({
   beforeWrite: ({ method, pathname } = {}) => {
     const tables = mutationReadTables(method, pathname);
-    return tables.length ? readData(tables, { force: true }) : undefined;
+    return tables.length ? readData(tables) : undefined;
   },
 });
+const operationGuard = createOperationGuard({ ttlMs: runtime.operationIdTtlMs });
 
 
 const EMPLOYEE_MANAGER_EDIT_FIELDS = new Set(["Активен", "Судебные", "Административные", "Претензии"]);
@@ -201,7 +222,10 @@ async function confirmedDataAfterSave(data, changedTables = null, confirm = null
   const tablesToSave = changedTables ?? ALL_TABLE_KEYS;
   const currentData = await readData(tablesToSave, { cacheOnly: true });
   await saveData(data, tablesToSave, { currentData });
-  if (tablesToSave.includes("cases")) dashboardCaseCache.invalidate(["cases"]);
+  if (tablesToSave.includes("cases")) {
+    dashboardCaseCache.invalidate(["cases"]);
+    operationalCaseCache.invalidate(["cases"]);
+  }
   let lastData = null;
   const refreshTables = changedTables;
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -250,12 +274,18 @@ const handleCaseImportRoute = createCaseImportRoutes({
   readDirectories,
   createTableRows: async (...args) => {
     const result = await createTableRows(...args);
-    if (args[0] === "cases") dashboardCaseCache.invalidate(["cases"]);
+    if (args[0] === "cases") {
+      dashboardCaseCache.invalidate(["cases"]);
+      operationalCaseCache.invalidate(["cases"]);
+    }
     return result;
   },
   patchTableRows: async (...args) => {
     const result = await patchTableRows(...args);
-    if (args[0] === "cases") dashboardCaseCache.invalidate(["cases"]);
+    if (args[0] === "cases") {
+      dashboardCaseCache.invalidate(["cases"]);
+      operationalCaseCache.invalidate(["cases"]);
+    }
     return result;
   },
   cacheVersions: tableCache.versions,
@@ -278,6 +308,7 @@ const handleCaseRoute = createCaseRoutes({
     await patchTableRow(table, row, fields);
     tableCache.replace(table, data[table]);
     if (table === "cases") dashboardCaseCache.invalidate(["cases"]);
+    if (table === "cases") operationalCaseCache.invalidate(["cases"]);
   },
   caseDocumentMaxBytes: CASE_DOCUMENT_MAX_BYTES,
   officePreviewMaxBytes: OFFICE_PREVIEW_MAX_BYTES,
@@ -326,6 +357,22 @@ async function api(req, res, url) {
     sendJson(res, 200, { ok: true, user, data: { ...employeeScopedData(rawData, employee), directories }, loadedTables, view: requestedView || "all", storagePath: storagePath(), cacheStatus: cacheStatus() });
     scheduleFullCasesWarmup(requestedView);
     return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/case-register") {
+    const forceRefresh = url.searchParams.get("refresh") === "1";
+    if (forceRefresh) {
+      tableCache.invalidate(["cases"]);
+      dashboardCaseCache.invalidate(["cases"]);
+    }
+    const readOptions = { force: forceRefresh };
+    const [caseData, otherData] = await Promise.all([
+      operationalCaseCache.read(["cases"], readOptions),
+      readRouteData(["settings", "vacations"], readOptions),
+    ]);
+    const cases = enrichData({ ...otherData, cases: caseData.cases }).cases ?? [];
+    const result = paginateCaseRegister(cases, Object.fromEntries(url.searchParams), user);
+    return sendJson(res, 200, { ok: true, ...result, cacheStatus: cacheStatus() });
   }
 
   if (await handleCaseRoute(req, res, url, user)) return;
@@ -391,7 +438,7 @@ async function api(req, res, url) {
     Object.assign(row, patch);
     await patchTableRow("queues", row, [FIELD.debt]);
     tableCache.replace("queues", data.queues);
-    return sendJson(res, 200, { ok: true, queue: row, data: enrichData(data) });
+    return sendJson(res, 200, { ok: true, queue: row });
   }
 
   return sendJson(res, 404, { ok: false, error: "Метод API не найден." });
@@ -427,6 +474,13 @@ async function writeServerErrorLog({ id, req, url, error }) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const requestStarted = performance.now();
+  res.once("finish", () => {
+    const durationMs = Math.max(0, performance.now() - requestStarted);
+    if (url.pathname.startsWith("/api/") && durationMs >= runtime.slowRequestLogMs) {
+      const bytes = Number(res.getHeader("content-length")) || 0;
+      console.warn(`[slow-api] ${req.method} ${url.pathname} ${res.statusCode} ${durationMs.toFixed(0)} мс ${bytes} байт`);
+    }
+  });
   const originalWriteHead = res.writeHead.bind(res);
   res.writeHead = (statusCode, statusMessageOrHeaders, maybeHeaders) => {
     const timing = `app;dur=${Math.max(0, performance.now() - requestStarted).toFixed(1)}`;
@@ -438,7 +492,9 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname.startsWith("/api/")) {
       if (isMutationRequest(req.method, url.pathname)) {
-        await writeCoordinator.run(() => api(req, res, url), { method: req.method, pathname: url.pathname });
+        await operationGuard.run(req.headers["x-operation-id"], () => (
+          writeCoordinator.run(() => api(req, res, url), { method: req.method, pathname: url.pathname })
+        ));
       }
       else await api(req, res, url);
     } else {

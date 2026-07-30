@@ -17,10 +17,14 @@ import { fetchTextWithRetry } from "./fetch-retry.mjs";
 const API_BASE = process.env.TABS_API_BASE || "https://tabs.mts.ru/fusion/v1";
 const TOKEN = process.env.TABS_API_TOKEN;
 const FIELD_KEY = "name";
-const PAGE_SIZE = Number(process.env.TABS_PAGE_SIZE || 1000);
-const DASHBOARD_PAGE_SIZE = Number(process.env.TABS_DASHBOARD_PAGE_SIZE || 1000);
-const REQUEST_TIMEOUT_MS = Number(process.env.TABS_REQUEST_TIMEOUT_MS || 30000);
-const REQUEST_RETRIES = Number(process.env.TABS_REQUEST_RETRIES || 3);
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+const PAGE_SIZE = positiveInteger(process.env.TABS_PAGE_SIZE, 1000);
+const DASHBOARD_PAGE_SIZE = positiveInteger(process.env.TABS_DASHBOARD_PAGE_SIZE, 1000);
+const REQUEST_TIMEOUT_MS = positiveInteger(process.env.TABS_REQUEST_TIMEOUT_MS, 30000);
+const REQUEST_RETRIES = positiveInteger(process.env.TABS_REQUEST_RETRIES, 3);
 const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 export const DASHBOARD_CASE_HEADERS = Object.freeze([
@@ -36,6 +40,13 @@ export const DASHBOARD_CASE_HEADERS = Object.freeze([
   "Дата предупреждения о завершении",
   "Ответственный",
   "Дата распределения",
+]);
+
+const OPERATIONAL_CASE_DETAIL_HEADERS = Object.freeze([
+  "case_id", "Номер дела", "Предмет", "Истец", "Ответчик", "Третье лицо", "Ссылка",
+]);
+export const OPERATIONAL_CASE_HEADERS = Object.freeze([
+  ...new Set([...DASHBOARD_CASE_HEADERS, ...OPERATIONAL_CASE_DETAIL_HEADERS]),
 ]);
 
 const TABLES = {
@@ -221,12 +232,27 @@ async function deleteRecords(table, recordIds) {
 
 async function fetchText(url, options = {}) {
   try {
+    const method = String(options.method || "GET").toUpperCase();
     return await fetchTextWithRetry(url, options, {
       retries: REQUEST_RETRIES,
       timeoutMs: REQUEST_TIMEOUT_MS,
+      retryable: ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE"].includes(method),
     });
   } catch (error) {
-    throw new Error(formatNetworkError(url, error), { cause: error });
+    const unknownWriteResult = Boolean(error?.resultUnknown);
+    const wrapped = new Error(
+      unknownWriteResult
+        ? `${formatNetworkError(url, error)} Результат операции требует проверки.`
+        : formatNetworkError(url, error),
+      { cause: error },
+    );
+    if (unknownWriteResult) {
+      wrapped.status = 502;
+      wrapped.code = "WRITE_RESULT_UNKNOWN";
+      wrapped.resultUnknown = true;
+      wrapped.details = { method: error.method || options.method || "POST" };
+    }
+    throw wrapped;
   }
 }
 
@@ -407,10 +433,31 @@ async function readTable(table, { fields = null, pageSize = PAGE_SIZE } = {}) {
 
 async function createRows(table, rows) {
   for (const chunk of chunks(rows, 1000)) {
-    await request(table, "POST", {
-      records: chunk.map((row) => ({ fields: normalizeToTabs(table, row) })),
-      fieldKey: tableFieldKey(table),
-    });
+    let pendingRows = chunk;
+    for (let dispatch = 0; dispatch < 2 && pendingRows.length; dispatch += 1) {
+      try {
+        await request(table, "POST", {
+          records: pendingRows.map((row) => ({ fields: normalizeToTabs(table, row) })),
+          fieldKey: tableFieldKey(table),
+        });
+        pendingRows = [];
+      } catch (error) {
+        if (!error?.resultUnknown) throw error;
+        let currentRows;
+        try {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            if (attempt) await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+            currentRows = await readTable(table);
+            const existingKeys = new Set(currentRows.map((row) => rowKey(table, row)));
+            pendingRows = pendingRows.filter((row) => !existingKeys.has(rowKey(table, row)));
+            if (!pendingRows.length) break;
+          }
+        } catch {
+          throw error;
+        }
+        if (pendingRows.length && dispatch >= 1) throw error;
+      }
+    }
   }
 }
 
@@ -625,6 +672,31 @@ export async function readDashboardCases() {
   };
   const fields = DASHBOARD_CASE_HEADERS.map((header) => outboundFieldName(table, header));
   return readTable(table, { fields, pageSize: DASHBOARD_PAGE_SIZE });
+}
+
+export async function readOperationalCases() {
+  const baseTable = {
+    ...TABLES.cases,
+    viewId: "",
+    headers: DASHBOARD_CASE_HEADERS,
+  };
+  const detailTable = {
+    ...TABLES.cases,
+    viewId: "",
+    headers: OPERATIONAL_CASE_DETAIL_HEADERS,
+  };
+  const [baseRows, detailRows] = await Promise.all([
+    readTable(baseTable, {
+      fields: DASHBOARD_CASE_HEADERS.map((header) => outboundFieldName(baseTable, header)),
+      pageSize: DASHBOARD_PAGE_SIZE,
+    }),
+    readTable(detailTable, {
+      fields: OPERATIONAL_CASE_DETAIL_HEADERS.map((header) => outboundFieldName(detailTable, header)),
+      pageSize: DASHBOARD_PAGE_SIZE,
+    }),
+  ]);
+  const detailsByRecordId = new Map(detailRows.map((row) => [row._recordId, row]));
+  return baseRows.map((row) => defineRecordMeta({ ...row, ...(detailsByRecordId.get(row._recordId) ?? {}) }, row._recordId));
 }
 
 export async function saveData(data, keys = TABLE_KEYS, { currentData = null } = {}) {

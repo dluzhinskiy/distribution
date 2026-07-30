@@ -15,7 +15,9 @@ function wait(milliseconds) {
  * оставаться внутри того же цикла повторов и общего таймаута.
  */
 export async function fetchTextWithRetry(url, options = {}, config = {}) {
-  const retries = positiveInteger(config.retries, 3);
+  const method = String(options.method || "GET").toUpperCase();
+  const retryable = config.retryable ?? ["GET", "HEAD", "OPTIONS"].includes(method);
+  const retries = retryable ? positiveInteger(config.retries, 3) : 1;
   const timeoutMs = positiveInteger(config.timeoutMs, 30_000);
   const retryDelayMs = Math.max(0, Number(config.retryDelayMs ?? 600) || 0);
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
@@ -34,6 +36,10 @@ export async function fetchTextWithRetry(url, options = {}, config = {}) {
       return { response, text };
     } catch (error) {
       lastError = error;
+      if (!retryable) {
+        error.resultUnknown = true;
+        error.method = method;
+      }
       if (attempt >= retries) break;
       await sleep(retryDelayMs * attempt);
     } finally {

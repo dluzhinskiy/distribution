@@ -127,9 +127,10 @@ export function createDeferredWarmup({
     return result;
   }
 
-  function schedule() {
+  function schedule({ force = false } = {}) {
     if (!enabled) return Promise.resolve(status());
-    if (["scheduled", "running", "ready", "failed"].includes(state.state)) return pending ?? Promise.resolve(status());
+    if (["scheduled", "running"].includes(state.state)) return pending ?? Promise.resolve(status());
+    if (!force && ["ready", "failed"].includes(state.state)) return Promise.resolve(status());
     pending = execute();
     return pending;
   }

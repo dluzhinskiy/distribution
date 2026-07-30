@@ -30,5 +30,6 @@ test("JSON responses are never cached", () => {
   sendJson(response, 200, { ok: true });
   assert.equal(response.status, 200);
   assert.match(response.headers["Cache-Control"], /no-store/);
+  assert.equal(response.headers["Content-Length"], Buffer.byteLength(response.body));
   assert.deepEqual(JSON.parse(response.body), { ok: true });
 });

@@ -103,3 +103,18 @@ test("disabled deferred warmup does not run", async () => {
   assert.equal((await warmup.schedule()).state, "disabled");
   assert.equal(calls, 0);
 });
+
+test("deferred warmup can be scheduled again after its cache becomes stale", async () => {
+  let runs = 0;
+  const warmup = createDeferredWarmup({
+    enabled: true,
+    delayMs: 0,
+    delay: async () => {},
+    run: async () => { runs += 1; },
+  });
+  await warmup.schedule();
+  await warmup.schedule();
+  assert.equal(runs, 1);
+  await warmup.schedule({ force: true });
+  assert.equal(runs, 2);
+});

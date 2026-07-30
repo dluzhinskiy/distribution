@@ -107,7 +107,8 @@ export function createCaseImportRoutes({
       let confirmedData = null;
       for (let attempt = 0; attempt < 4; attempt += 1) {
         if (attempt) await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
-        confirmedData = enrichData(await readData(["cases"], { force: true }));
+        const freshCases = await readData(["cases"], { force: true });
+        confirmedData = enrichData({ ...data, ...freshCases });
         if (importConfirmed(confirmedData)) break;
       }
       const missingMovement = movementExpected.filter((item) => (

@@ -3,13 +3,17 @@ import { enrichData } from "./domain.mjs";
 export const VIEW_TABLE_KEYS = Object.freeze({
   dashboard: ["cases", "employees", "vacations", "settings", "yucSettings", "loadCoefficients"],
   distribution: ["cases", "employees", "queues", "state", "vacations", "settings", "yucSettings", "regionalAssignments", "regionalSubstitutions"],
-  cases: ["cases", "employees", "vacations", "settings"],
+  cases: ["employees", "vacations", "settings"],
   employees: ["cases", "employees", "queues", "vacations", "settings"],
   settings: ["settings", "yucSettings", "regionalAssignments", "regionalSubstitutions", "loadCoefficients"],
 });
 
 export function tableKeysForView(view, fallback) {
   return VIEW_TABLE_KEYS[view] ?? fallback;
+}
+
+export function readRequestedTables(readData, keys, options = {}) {
+  return readData(keys, options);
 }
 
 export function managerScopedData(rawData, date = new Date()) {

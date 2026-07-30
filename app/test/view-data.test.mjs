@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { managerScopedData, tableKeysForView } from "../lib/view-data.mjs";
+import { managerScopedData, readRequestedTables, tableKeysForView } from "../lib/view-data.mjs";
 
 test("each screen declares only its required MTS Tabs tables", () => {
   assert.deepEqual(tableKeysForView("settings", []), [
@@ -17,4 +17,15 @@ test("partial screen response never invents empty tables", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(result, "cases"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(result, "employees"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(result, "vacations"), false);
+});
+
+test("route reads return only explicitly requested tables", async () => {
+  const calls = [];
+  const result = await readRequestedTables(async (keys, options) => {
+    calls.push({ keys, options });
+    return { settings: [{ value: 1 }] };
+  }, ["settings"], { force: true });
+  assert.deepEqual(calls, [{ keys: ["settings"], options: { force: true } }]);
+  assert.deepEqual(result, { settings: [{ value: 1 }] });
+  assert.equal(Object.prototype.hasOwnProperty.call(result, "cases"), false);
 });

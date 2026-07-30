@@ -184,10 +184,7 @@ export function createCaseRoutes({
     await patchCachedRow("cases", caseRow, changedFields, data);
     const confirmedData = enrichData(data);
     const confirmedCase = assertConfirmedCase(confirmedData, id, "обновление дела");
-    const responseData = manager
-      ? confirmedData
-      : employeeScopedData(confirmedData, confirmedData.employees.find((item) => cleanText(item.employee_id) === user.employeeId));
-    sendJson(res, 200, { ok: true, case: confirmedCase, data: responseData });
+    sendJson(res, 200, { ok: true, case: confirmedCase });
   }
 
   return async function handleCaseRoute(req, res, url, user) {
@@ -227,10 +224,7 @@ export function createCaseRoutes({
       await patchCachedRow("cases", caseRow, [FIELD.documents], data);
       const confirmedData = enrichData(data);
       const confirmedCase = assertConfirmedCase(confirmedData, caseId, "добавление документа");
-      const responseData = auth.isManager(user)
-        ? confirmedData
-        : employeeScopedData(confirmedData, confirmedData.employees.find((item) => cleanText(item.employee_id) === user.employeeId));
-      sendJson(res, 200, { ok: true, attachment: publicAttachment(attachment), case: confirmedCase, data: responseData });
+      sendJson(res, 200, { ok: true, attachment: publicAttachment(attachment), case: confirmedCase });
       return true;
     }
 
@@ -273,7 +267,12 @@ export function createCaseRoutes({
       requireManageYuc(user, draft[FIELD.yuc]);
       const created = assignAutomatically(data, draft);
       const confirmedData = await saveAndConfirm(data, ["cases", "queues", "state"], (freshData) => Boolean(findCase(freshData, created.case.case_id)));
-      sendJson(res, 200, { ok: true, ...created, case: assertConfirmedCase(confirmedData, created.case.case_id, "автоназначение нового дела"), data: confirmedData });
+      sendJson(res, 200, {
+        ok: true,
+        ...created,
+        case: assertConfirmedCase(confirmedData, created.case.case_id, "автоназначение нового дела"),
+        data: { queues: confirmedData.queues ?? [], state: confirmedData.state ?? [] },
+      });
       return true;
     }
 
@@ -284,7 +283,12 @@ export function createCaseRoutes({
       requireManageYuc(user, draft[FIELD.yuc]);
       const created = assignManually(data, draft, body.responsible, body.comment);
       const confirmedData = await saveAndConfirm(data, ["cases", "state"], (freshData) => Boolean(findCase(freshData, created.case.case_id)));
-      sendJson(res, 200, { ok: true, ...created, case: assertConfirmedCase(confirmedData, created.case.case_id, "ручное назначение нового дела"), data: confirmedData });
+      sendJson(res, 200, {
+        ok: true,
+        ...created,
+        case: assertConfirmedCase(confirmedData, created.case.case_id, "ручное назначение нового дела"),
+        data: { state: confirmedData.state ?? [] },
+      });
       return true;
     }
 
@@ -303,7 +307,15 @@ export function createCaseRoutes({
       } else {
         confirmedData = await saveAndConfirm(data, tables, (freshData) => Boolean(findCase(freshData, caseId)));
       }
-      sendJson(res, 200, { ok: true, ...result, case: assertConfirmedCase(confirmedData, caseId, label), data: confirmedData });
+      const responseData = {};
+      if (tables.includes("queues")) responseData.queues = confirmedData.queues ?? [];
+      if (tables.includes("state")) responseData.state = confirmedData.state ?? [];
+      sendJson(res, 200, {
+        ok: true,
+        ...result,
+        case: assertConfirmedCase(confirmedData, caseId, label),
+        ...(Object.keys(responseData).length ? { data: responseData } : {}),
+      });
       return true;
     };
 

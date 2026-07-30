@@ -20,7 +20,7 @@ export function normalizeError(error) {
   return new AppError(
     error?.message || "Ошибка сервера.",
     status,
-    status >= 500 ? "INTERNAL_ERROR" : `HTTP_${status}`,
+    error?.code || (status >= 500 ? "INTERNAL_ERROR" : `HTTP_${status}`),
     error?.details,
   );
 }

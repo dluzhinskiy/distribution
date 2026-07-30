@@ -190,6 +190,11 @@ async function logOut() {
   state.accessUsers = [];
   state.loadedViews.clear();
   state.loadingViews.clear();
+  state.caseRegistryRows = [];
+  state.caseRegistryTotal = 0;
+  state.caseRegistryTotalPages = 1;
+  state.caseRegistryLoaded = false;
+  state.caseRegistryRequestId += 1;
   state.accessExpandedYucs.clear();
   state.accessYucExpansionInitialized = false;
   showAuthGate("Вы вышли из приложения.");
@@ -515,9 +520,48 @@ async function loadData({ view = activeDataViewName(), force = false } = {}) {
     const payload = await api(`/api/data?${query}`);
     applyDataPayload(payload);
     state.loadedViews.add(view);
+    if (view === "cases") await loadCaseRegistry({ page: state.casesPage, force });
     setStatus("Готово");
   } finally {
     state.loadingViews.delete(view);
+  }
+}
+
+async function loadCaseRegistry({ page = 1, force = false } = {}) {
+  if (!state.data) return;
+  const requestId = ++state.caseRegistryRequestId;
+  state.caseRegistryLoading = true;
+  const query = new URLSearchParams({
+    page: String(page),
+    pageSize: String(state.casesPageSize),
+    scope: state.caseListScope,
+    yuc: selectedYuc(),
+  });
+  const search = String($("#casesSearch")?.value ?? "").trim();
+  if (search) query.set("search", search);
+  if (state.casesQuickFilter) query.set("quickFilter", state.casesQuickFilter);
+  if (state.casesResponsibleFilter) query.set("responsible", state.casesResponsibleFilter);
+  if (state.casesCellFilter?.field && state.casesCellFilter?.value) {
+    query.set("cellField", state.casesCellFilter.field);
+    query.set("cellValue", state.casesCellFilter.value);
+  }
+  if (state.showDeletedCases) query.set("showDeleted", "1");
+  if (force) query.set("refresh", "1");
+  try {
+    const payload = await api(`/api/case-register?${query}`);
+    if (requestId !== state.caseRegistryRequestId) return;
+    state.caseRegistryRows = payload.rows ?? [];
+    state.caseRegistryTotal = Number(payload.total) || 0;
+    state.caseRegistryTotalPages = Math.max(1, Number(payload.totalPages) || 1);
+    state.casesPage = Math.max(1, Number(payload.page) || 1);
+    state.caseRegistryLoaded = true;
+    const rowsById = new Map((state.data.cases ?? []).map((row) => [row.case_id, row]));
+    for (const row of state.caseRegistryRows) rowsById.set(row.case_id, row);
+    state.data.cases = [...rowsById.values()];
+    markDataViewsDirty(["cases"]);
+    renderCases();
+  } finally {
+    if (requestId === state.caseRegistryRequestId) state.caseRegistryLoading = false;
   }
 }
 
@@ -540,6 +584,23 @@ function setDataFromPayload(payload) {
   if (payload.data) {
     applyDataPayload(payload);
   }
+  if (payload.case && state.data) {
+    const index = (state.data.cases ?? []).findIndex((row) => row.case_id === payload.case.case_id);
+    if (index >= 0) state.data.cases[index] = payload.case;
+    else state.data.cases = [...(state.data.cases ?? []), payload.case];
+    const registryIndex = state.caseRegistryRows.findIndex((row) => row.case_id === payload.case.case_id);
+    if (registryIndex >= 0) state.caseRegistryRows[registryIndex] = payload.case;
+    markDataViewsDirty(["dashboard", "distribution", "cases", "employees"]);
+    renderAll();
+  }
+  if (payload.queue && state.data) {
+    const key = `${payload.queue.queue_id}::${payload.queue.employee_id}`;
+    state.data.queues = (state.data.queues ?? []).map((row) => (
+      `${row.queue_id}::${row.employee_id}` === key ? payload.queue : row
+    ));
+    markDataViewsDirty(["distribution", "employees"]);
+    renderAll();
+  }
 }
 
 function mergeChangedCases(changedCases = [], employees = null) {
@@ -550,6 +611,8 @@ function mergeChangedCases(changedCases = [], employees = null) {
   for (const row of changedCases) {
     if (!existingIds.has(row.case_id)) state.data.cases.push(row);
   }
+  const registryChanges = new Map(changedCases.map((row) => [row.case_id, row]));
+  state.caseRegistryRows = state.caseRegistryRows.map((row) => registryChanges.get(row.case_id) ?? row);
   if (Array.isArray(employees)) state.data.employees = employees;
   markDataViewsDirty(["dashboard", "distribution", "cases", "employees"]);
   renderAll();
@@ -682,6 +745,7 @@ function canUseMyCasesScope() {
 }
 
 function casesForRegistry() {
+  if (state.caseRegistryLoaded) return state.caseRegistryRows;
   if (state.caseListScope === "mine" && canUseMyCasesScope()) {
     return (state.data?.cases ?? []).filter((row) => nameMatches(row["Ответственный"], state.authUser?.name));
   }
@@ -697,7 +761,9 @@ function selectCaseListScope(scope) {
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
   renderYucTabs();
-  renderCases();
+  if (state.loadedViews.has("cases")) {
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
+  }
 }
 
 function queuesForSelectedYuc() {
@@ -845,6 +911,9 @@ function setSelectedYuc(yuc, options = {}) {
   if (isExternalReadOnlyYuc()) showView("cases");
   applyRoleUi();
   renderAll();
+  if (changed && activeDataViewName() === "cases" && state.caseRegistryLoaded) {
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
+  }
   scheduleRecommendation();
 }
 
@@ -1837,22 +1906,27 @@ function renderCases() {
   renderCaseColumnsToggles(profile, visibility);
   renderCasesQuickFilter();
   const term = ($("#casesSearch")?.value ?? "").toLowerCase();
-  const filteredRows = casesForRegistry()
-    .filter((row) => state.showDeletedCases || !isDeletedCase(row))
-    .filter(caseMatchesQuickFilter)
-    .filter(caseMatchesResponsibleFilter)
-    .filter(caseMatchesCellFilter)
-    .filter((row) => !term || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(term)))
-    .slice()
-    .reverse();
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / state.casesPageSize));
+  const filteredRows = state.caseRegistryLoaded
+    ? casesForRegistry()
+    : casesForRegistry()
+      .filter((row) => state.showDeletedCases || !isDeletedCase(row))
+      .filter(caseMatchesQuickFilter)
+      .filter(caseMatchesResponsibleFilter)
+      .filter(caseMatchesCellFilter)
+      .filter((row) => !term || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(term)))
+      .slice()
+      .reverse();
+  const totalCount = state.caseRegistryLoaded ? state.caseRegistryTotal : filteredRows.length;
+  const totalPages = state.caseRegistryLoaded
+    ? state.caseRegistryTotalPages
+    : Math.max(1, Math.ceil(filteredRows.length / state.casesPageSize));
   state.casesPage = Math.min(Math.max(1, state.casesPage), totalPages);
   const pageStart = (state.casesPage - 1) * state.casesPageSize;
-  const rows = filteredRows.slice(pageStart, pageStart + state.casesPageSize);
+  const rows = state.caseRegistryLoaded ? filteredRows : filteredRows.slice(pageStart, pageStart + state.casesPageSize);
   const pagination = $("#casesPagination");
   if (pagination) {
-    pagination.innerHTML = filteredRows.length ? `
-      <span>Показано ${pageStart + 1}–${Math.min(pageStart + rows.length, filteredRows.length)} из ${filteredRows.length}</span>
+    pagination.innerHTML = totalCount ? `
+      <span>Показано ${pageStart + 1}–${Math.min(pageStart + rows.length, totalCount)} из ${totalCount}</span>
       <div>
         <button class="tiny-btn light cases-page-button" type="button" data-cases-page="${state.casesPage - 1}" ${state.casesPage <= 1 ? "disabled" : ""}>Назад</button>
         <span>Страница ${state.casesPage} из ${totalPages}</span>
@@ -1876,7 +1950,7 @@ function scheduleCasesRender() {
   state.casesSearchTimer = window.setTimeout(() => {
     state.casesSearchTimer = null;
     state.casesPage = 1;
-    renderCases();
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
   }, 180);
 }
 
@@ -1886,7 +1960,9 @@ function applyCasesQuickFilter(filter) {
   state.casesResponsibleFilter = "";
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
-  renderCases();
+  if (state.loadedViews.has("cases")) {
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
+  }
 }
 
 function applyCasesResponsibleFilter(responsible) {
@@ -1895,7 +1971,9 @@ function applyCasesResponsibleFilter(responsible) {
   state.casesQuickFilter = "";
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
-  renderCases();
+  if (state.loadedViews.has("cases")) {
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
+  }
 }
 
 function applyCasesCellFilter(field, value) {
@@ -1906,13 +1984,15 @@ function applyCasesCellFilter(field, value) {
   state.casesPage = 1;
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
-  renderCases();
+  if (state.loadedViews.has("cases")) {
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
+  }
 }
 
 function clearCasesCellFilter() {
   state.casesCellFilter = null;
   state.casesPage = 1;
-  renderCases();
+  loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
 }
 
 function closeCaseImportModal() {
@@ -3451,7 +3531,8 @@ function setDeleteEditEnabled(enabled) {
 
 function setShowDeletedCases(enabled) {
   state.showDeletedCases = enabled;
-  renderCases();
+  state.casesPage = 1;
+  loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
 }
 
 function updateResponsibleDraft(caseId, responsible) {
@@ -4034,6 +4115,8 @@ async function refreshCaseModal(caseId) {
     if (state.caseModalCaseId !== caseId || !payload.case) return;
     const index = state.data?.cases?.findIndex((item) => item.case_id === caseId) ?? -1;
     if (index >= 0) state.data.cases[index] = payload.case;
+    const registryIndex = state.caseRegistryRows.findIndex((item) => item.case_id === caseId);
+    if (registryIndex >= 0) state.caseRegistryRows[registryIndex] = payload.case;
   } catch (error) {
     if (state.caseModalCaseId === caseId) {
       toast(`Не удалось обновить карточку: ${error.message}`, "error");
@@ -4546,7 +4629,8 @@ function bindEvents() {
     const input = $("#casesSearch");
     if (!input) return;
     input.value = "";
-    renderCases();
+    state.casesPage = 1;
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
     input.focus();
   });
   $("#caseColumnsInline")?.addEventListener("click", (event) => {
@@ -4555,11 +4639,13 @@ function bindEvents() {
   $("#casesQuickFilterStrip")?.addEventListener("click", (event) => {
     if (event.target.closest("#clearCasesQuickFilter")) {
       state.casesQuickFilter = "";
-      renderCases();
+      state.casesPage = 1;
+      loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
     }
     if (event.target.closest("#clearCasesResponsibleFilter")) {
       state.casesResponsibleFilter = "";
-      renderCases();
+      state.casesPage = 1;
+      loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
     }
     if (event.target.closest("#clearCasesCellFilter")) {
       clearCasesCellFilter();
@@ -4649,7 +4735,7 @@ function bindEvents() {
     const casesPageButton = event.target.closest(".cases-page-button");
     if (casesPageButton && !casesPageButton.disabled) {
       state.casesPage = Math.max(1, Number(casesPageButton.dataset.casesPage) || 1);
-      renderCases();
+      loadCaseRegistry({ page: state.casesPage }).catch((error) => toast(error.message, "error"));
       return;
     }
     const historicalSegmentButton = event.target.closest(".historical-segment");
