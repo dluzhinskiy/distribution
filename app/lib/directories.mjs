@@ -1,5 +1,6 @@
 import { cleanText, normalizeYuc } from "./domain.mjs";
 import { normalizeRegionName } from "./regions.mjs";
+import { fetchTextWithRetry } from "./fetch-retry.mjs";
 
 const API_BASE = process.env.TABS_API_BASE || "https://tabs.mts.ru/fusion/v1";
 const TOKEN = process.env.TABS_API_TOKEN;
@@ -59,34 +60,15 @@ function tableUrl(extra = {}) {
   return url;
 }
 
-async function fetchWithRetry(url, options = {}) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= REQUEST_RETRIES; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      return await fetch(url, {
-        ...options,
-        signal: controller.signal,
-      });
-    } catch (error) {
-      lastError = error;
-      if (attempt >= REQUEST_RETRIES) break;
-      await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw lastError;
-}
-
 async function requestDirectoriesPage(pageNum) {
   requireToken();
-  const response = await fetchWithRetry(tableUrl({ pageNum, pageSize: PAGE_SIZE }), {
+  const { response, text } = await fetchTextWithRetry(tableUrl({ pageNum, pageSize: PAGE_SIZE }), {
     method: "GET",
     headers: { Authorization: `Bearer ${TOKEN}` },
+  }, {
+    retries: REQUEST_RETRIES,
+    timeoutMs: REQUEST_TIMEOUT_MS,
   });
-  const text = await response.text();
   let payload;
   try {
     payload = text ? JSON.parse(text) : {};

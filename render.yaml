@@ -14,6 +14,13 @@ services:
         value: "true"
       - key: FILE_LOGGING
         value: "false"
+      # Для внешнего соединения Render с MTS Tabs используем меньшие ответы.
+      - key: TABS_PAGE_SIZE
+        value: "250"
+      - key: TABS_REQUEST_TIMEOUT_MS
+        value: "45000"
+      - key: TABS_REQUEST_RETRIES
+        value: "3"
       - key: TABS_API_TOKEN
         sync: false
       - key: TABS_LOAD_COEFFICIENTS_DATASHEET_ID

@@ -12,6 +12,7 @@ import {
 } from "./domain.mjs";
 import { LOAD_COEFFICIENT_HEADERS } from "./load-coefficients.mjs";
 import { inboundFieldValue, outboundFieldName, tableFieldKey } from "./tabs-fields.mjs";
+import { fetchTextWithRetry } from "./fetch-retry.mjs";
 
 const API_BASE = process.env.TABS_API_BASE || "https://tabs.mts.ru/fusion/v1";
 const TOKEN = process.env.TABS_API_TOKEN;
@@ -161,7 +162,8 @@ function tableUrl(table, extra = {}) {
 
 async function request(table, method, body = null, extra = {}) {
   requireToken();
-  const response = await fetchWithRetry(tableUrl(table, extra), {
+  const url = tableUrl(table, extra);
+  const { response, text } = await fetchText(url, {
     method,
     headers: {
       Authorization: `Bearer ${TOKEN}`,
@@ -169,7 +171,6 @@ async function request(table, method, body = null, extra = {}) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  const text = await response.text();
   let payload;
   try {
     payload = text ? JSON.parse(text) : {};
@@ -188,15 +189,25 @@ async function deleteRecords(table, recordIds) {
   for (const chunk of chunks(recordIds, 10)) {
     const url = new URL(`${API_BASE}/datasheets/${table.datasheetId}/records`);
     chunk.forEach((recordId) => url.searchParams.append("recordIds", recordId));
-    const response = await fetchWithRetry(url, {
+    const { response, text } = await fetchText(url, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
-    const text = await response.text();
     const payload = text ? JSON.parse(text) : {};
     if (!response.ok || payload.success === false || (payload.code && payload.code !== 200)) {
       throw new Error(`DELETE ${table.name}: ${response.status}; ${payload.message || text}`);
     }
+  }
+}
+
+async function fetchText(url, options = {}) {
+  try {
+    return await fetchTextWithRetry(url, options, {
+      retries: REQUEST_RETRIES,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
+  } catch (error) {
+    throw new Error(formatNetworkError(url, error), { cause: error });
   }
 }
 
@@ -546,12 +557,11 @@ export async function uploadAttachment(tableKey, { buffer, name, mimeType = "app
   if (!buffer?.length) throw new Error("Нельзя загрузить пустой файл.");
   const form = new FormData();
   form.append("file", new Blob([buffer], { type: mimeType }), name || "document");
-  const response = await fetchWithRetry(attachmentEndpoint(table), {
+  const { response, text } = await fetchText(attachmentEndpoint(table), {
     method: "POST",
     headers: { Authorization: `Bearer ${TOKEN}` },
     body: form,
   });
-  const text = await response.text();
   let payload;
   try {
     payload = text ? JSON.parse(text) : {};
