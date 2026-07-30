@@ -18,9 +18,25 @@ const API_BASE = process.env.TABS_API_BASE || "https://tabs.mts.ru/fusion/v1";
 const TOKEN = process.env.TABS_API_TOKEN;
 const FIELD_KEY = "name";
 const PAGE_SIZE = Number(process.env.TABS_PAGE_SIZE || 1000);
+const DASHBOARD_PAGE_SIZE = Number(process.env.TABS_DASHBOARD_PAGE_SIZE || 1000);
 const REQUEST_TIMEOUT_MS = Number(process.env.TABS_REQUEST_TIMEOUT_MS || 30000);
 const REQUEST_RETRIES = Number(process.env.TABS_REQUEST_RETRIES || 3);
 const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+export const DASHBOARD_CASE_HEADERS = Object.freeze([
+  "case_id",
+  "ЮЦ",
+  "Регион",
+  "Тип дела",
+  "Дата поступления",
+  "Статус",
+  "Дата завершения",
+  "Отложить завершение до",
+  "Причина отложения завершения дела",
+  "Дата предупреждения о завершении",
+  "Ответственный",
+  "Дата распределения",
+]);
 
 const TABLES = {
   cases: {
@@ -34,6 +50,9 @@ const TABLES = {
     keyFields: ["case_id"],
     dateFields: ["Дата поступления", "Дата завершения", "Отложить завершение до", "Дата предупреждения о завершении", "Дата распределения"],
     attachmentFields: ["Документы"],
+    writeFieldNames: {
+      "Дата предупреждения о завершении": "Дата предупрежедения о завершении",
+    },
   },
   employees: {
     name: "Сотрудники",
@@ -366,12 +385,16 @@ function normalizeTableKeys(keys = TABLE_KEYS) {
   return unique.length ? unique : TABLE_KEYS;
 }
 
-async function readTable(table) {
+async function readTable(table, { fields = null, pageSize = PAGE_SIZE } = {}) {
   const rows = [];
   let pageNum = 1;
   let total = 0;
   do {
-    const payload = await request(table, "GET", null, { pageNum, pageSize: PAGE_SIZE });
+    const payload = await request(table, "GET", null, {
+      pageNum,
+      pageSize,
+      ...(fields?.length ? { "fields[]": fields } : {}),
+    });
     const pageRows = payload?.data?.records ?? [];
     total = Number(payload?.data?.total ?? pageRows.length);
     for (const record of pageRows) {
@@ -592,6 +615,16 @@ export async function readData(keys = TABLE_KEYS) {
   const tableKeys = normalizeTableKeys(keys);
   const entries = await Promise.all(tableKeys.map(async (key) => [key, await readTable(TABLES[key])]));
   return Object.fromEntries(entries);
+}
+
+export async function readDashboardCases() {
+  const table = {
+    ...TABLES.cases,
+    viewId: "",
+    headers: DASHBOARD_CASE_HEADERS,
+  };
+  const fields = DASHBOARD_CASE_HEADERS.map((header) => outboundFieldName(table, header));
+  return readTable(table, { fields, pageSize: DASHBOARD_PAGE_SIZE });
 }
 
 export async function saveData(data, keys = TABLE_KEYS, { currentData = null } = {}) {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
 import { canManageYuc } from "./lib/access-policy.mjs";
 import { FIELD, cleanText, enrichData, normalizeYuc, nameMatches } from "./lib/domain.mjs";
-import { createTableRows, patchTableRow, patchTableRows, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
+import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { loadRuntimeConfig } from "./lib/runtime-config.mjs";
 import { readBinaryBody, readJsonBody as readBody, sendJson, serveStatic } from "./lib/http-utils.mjs";
@@ -62,20 +62,35 @@ const tableCache = createTableCache({
   ttlByTable: CACHE_TTL,
   defaultTtl: CACHE_TTL.default,
 });
+const dashboardCaseCache = createTableCache({
+  readFresh: async () => ({ cases: await readDashboardCases() }),
+  tableKeys: ["cases"],
+  bootstrapKeys: ["cases"],
+  ttlByTable: { cases: CACHE_TTL.default },
+  defaultTtl: CACHE_TTL.default,
+});
 const readData = tableCache.read;
 async function readRouteData(keys = ALL_TABLE_KEYS, options = {}) {
   await readData(keys, options);
   return tableCache.snapshot();
 }
 const CACHE_WARMUP_TABLE_KEYS = tableKeysForView("dashboard", ALL_TABLE_KEYS);
+async function readDashboardData(options = {}) {
+  const otherKeys = CACHE_WARMUP_TABLE_KEYS.filter((key) => key !== "cases");
+  const [caseData, otherData] = await Promise.all([
+    dashboardCaseCache.read(["cases"], options),
+    readData(otherKeys, options),
+  ]);
+  return { ...otherData, cases: caseData.cases };
+}
 const cacheWarmup = createCacheWarmup({
   enabled: runtime.cacheWarmupEnabled,
   tableKeys: CACHE_WARMUP_TABLE_KEYS,
-  readData,
+  readData: () => readDashboardData(),
   readDirectories,
 });
 function cacheStatus() {
-  return { ...tableCache.status(), warmup: cacheWarmup.status() };
+  return { ...tableCache.status(), dashboardCases: dashboardCaseCache.status(), warmup: cacheWarmup.status() };
 }
 const writeCoordinator = createWriteCoordinator({
   beforeWrite: ({ method, pathname } = {}) => {
@@ -165,6 +180,7 @@ async function confirmedDataAfterSave(data, changedTables = null, confirm = null
   const tablesToSave = changedTables ?? ALL_TABLE_KEYS;
   const currentData = await readData(tablesToSave, { cacheOnly: true });
   await saveData(data, tablesToSave, { currentData });
+  if (tablesToSave.includes("cases")) dashboardCaseCache.invalidate(["cases"]);
   let lastData = null;
   const refreshTables = changedTables;
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -211,8 +227,16 @@ const handleCaseImportRoute = createCaseImportRoutes({
   readBinaryBody,
   readData: readRouteData,
   readDirectories,
-  createTableRows,
-  patchTableRows,
+  createTableRows: async (...args) => {
+    const result = await createTableRows(...args);
+    if (args[0] === "cases") dashboardCaseCache.invalidate(["cases"]);
+    return result;
+  },
+  patchTableRows: async (...args) => {
+    const result = await patchTableRows(...args);
+    if (args[0] === "cases") dashboardCaseCache.invalidate(["cases"]);
+    return result;
+  },
   cacheVersions: tableCache.versions,
   sendJson,
   requireManageYuc,
@@ -232,6 +256,7 @@ const handleCaseRoute = createCaseRoutes({
   patchCachedRow: async (table, row, fields, data) => {
     await patchTableRow(table, row, fields);
     tableCache.replace(table, data[table]);
+    if (table === "cases") dashboardCaseCache.invalidate(["cases"]);
   },
   caseDocumentMaxBytes: CASE_DOCUMENT_MAX_BYTES,
   officePreviewMaxBytes: OFFICE_PREVIEW_MAX_BYTES,
@@ -258,7 +283,10 @@ async function api(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/data") {
     const requestedView = cleanText(url.searchParams.get("view"));
     const requestedKeys = tableKeysForView(requestedView, ALL_TABLE_KEYS);
-    const rawData = await readData(requestedKeys, { force: url.searchParams.get("refresh") === "1" });
+    const readOptions = { force: url.searchParams.get("refresh") === "1" };
+    const rawData = requestedView === "dashboard"
+      ? await readDashboardData(readOptions)
+      : await readData(requestedKeys, readOptions);
     const loadedTables = Object.keys(rawData);
     if (auth.isManager(user)) {
       const directories = await readDirectories({ force: url.searchParams.get("refreshDirectories") === "1" });
