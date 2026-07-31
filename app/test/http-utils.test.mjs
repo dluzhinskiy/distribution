@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeApiPayload, sendJson } from "../lib/http-utils.mjs";
+import { publicAttachment, sanitizeApiPayload, sendJson } from "../lib/http-utils.mjs";
 import { FIELD } from "../lib/domain.mjs";
 
 test("API payload removes authentication secrets and attachment storage tokens", () => {
@@ -17,6 +17,13 @@ test("API payload removes authentication secrets and attachment storage tokens",
     width: 0,
     height: 0,
   }]);
+});
+
+test("new attachment receives an opaque public id without exposing its storage token", () => {
+  const attachment = publicAttachment({ token: "private/storage/token", name: "new.pdf", size: 42 });
+  assert.match(attachment.id, /^doc_[a-f0-9]{24}$/);
+  assert.equal(JSON.stringify(attachment).includes("private/storage/token"), false);
+  assert.equal(attachment.name, "new.pdf");
 });
 
 test("JSON responses are never cached", () => {

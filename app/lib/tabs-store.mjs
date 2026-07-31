@@ -500,6 +500,81 @@ export async function patchTableRow(key, row, changedFields = []) {
   return row;
 }
 
+function attachmentFingerprint(attachment = {}) {
+  return cleanText(attachment.token || attachment.url)
+    || [cleanText(attachment.name), Number(attachment.size) || 0, cleanText(attachment.mimeType)].join("::");
+}
+
+function sameAttachments(left = [], right = []) {
+  const a = normalizeAttachments(left).map(attachmentFingerprint);
+  const b = normalizeAttachments(right).map(attachmentFingerprint);
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * MTS Tabs does not remove one attachment when an attachment array is shortened.
+ * It also rejects null inside the array. A selective replacement therefore has
+ * to clear the whole cell first and then bind the retained attachment tokens.
+ */
+export async function replaceTableAttachments(key, row, field, attachments = []) {
+  const table = TABLES[key];
+  if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  if (!(table.attachmentFields ?? []).includes(field)) {
+    throw new Error(`Поле «${field}» не является полем вложений таблицы «${table.name}».`);
+  }
+  if (!row?._recordId) throw new Error(`Для изменения вложений «${table.name}» не найден recordId.`);
+
+  const original = normalizeAttachments(row[field]);
+  const desired = normalizeAttachments(attachments);
+  const outboundField = outboundFieldName(table, field);
+  const writeValue = async (value) => request(table, "PATCH", {
+    records: [{ recordId: row._recordId, fields: { [outboundField]: value } }],
+    fieldKey: tableFieldKey(table),
+  });
+  const readConfirmed = async () => {
+    const rows = await readTable(table);
+    return rows.find((item) => item._recordId === row._recordId) ?? null;
+  };
+  const restoreOriginal = async () => {
+    await writeValue(null);
+    if (original.length) await writeValue(original);
+    return readConfirmed();
+  };
+
+  try {
+    await writeValue(null);
+    if (desired.length) await writeValue(desired);
+    const confirmed = await readConfirmed();
+    if (confirmed && sameAttachments(confirmed[field], desired)) return confirmed;
+    const restored = await restoreOriginal();
+    const error = new Error("MTS Tabs не подтвердил новый состав вложений. Исходный список восстановлен.");
+    error.status = 502;
+    error.code = "ATTACHMENTS_NOT_CONFIRMED";
+    error.restored = Boolean(restored && sameAttachments(restored[field], original));
+    throw error;
+  } catch (error) {
+    if (error?.code === "ATTACHMENTS_NOT_CONFIRMED") throw error;
+    let current = null;
+    try { current = await readConfirmed(); } catch {}
+    if (current && sameAttachments(current[field], desired)) return current;
+    let restored = false;
+    try {
+      const restoredRow = current && sameAttachments(current[field], original)
+        ? current
+        : await restoreOriginal();
+      restored = Boolean(restoredRow && sameAttachments(restoredRow[field], original));
+    } catch {}
+    const wrapped = new Error(restored
+      ? `Не удалось изменить состав вложений. Исходный список восстановлен. ${error.message}`
+      : `Результат изменения вложений требует проверки. ${error.message}`,
+    { cause: error });
+    wrapped.status = 502;
+    wrapped.code = restored ? "ATTACHMENTS_RESTORED" : "WRITE_RESULT_UNKNOWN";
+    wrapped.resultUnknown = !restored;
+    throw wrapped;
+  }
+}
+
 function comparableFields(table, row) {
   return JSON.stringify(normalizeToTabs(table, row));
 }

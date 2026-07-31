@@ -17,7 +17,7 @@ import {
   recommendWithPreview,
   restoreCase,
 } from "../lib/domain.mjs";
-import { publicAttachment } from "../lib/http-utils.mjs";
+import { publicAttachment, publicAttachmentId, publicAttachmentStorageId } from "../lib/http-utils.mjs";
 import { previewDocx, previewXlsx } from "../lib/office-preview.mjs";
 import { downloadAttachment, uploadAttachment } from "../lib/tabs-store.mjs";
 import { assertAllowedFields } from "../lib/validation.mjs";
@@ -55,6 +55,11 @@ function attachmentId(attachment = {}) {
   return cleanText(attachment.id || attachment.token || attachment.url);
 }
 
+function attachmentMatchesId(attachment, documentId) {
+  const expected = cleanText(documentId);
+  return Boolean(expected) && [attachmentId(attachment), publicAttachmentId(attachment), publicAttachmentStorageId(attachment)].includes(expected);
+}
+
 function attachmentDownloadHeaders(attachment, upstream, disposition = "attachment") {
   const name = safeAttachmentName(attachment?.name || "document");
   return {
@@ -84,13 +89,18 @@ export function createCaseRoutes({
   requireManageCase,
   employeeScopedData,
   patchCachedRow = async (table, _row, _fields, data) => saveAndConfirm(data, [table]),
+  replaceAttachments = async (table, row, field, attachments, data) => {
+    row[field] = attachments;
+    await patchCachedRow(table, row, [field], data);
+    return row;
+  },
   caseDocumentMaxBytes,
   officePreviewMaxBytes,
 }) {
   function requireCaseDocumentWrite(user, data, caseRow) {
     const employee = data.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
     if (!canEditCase(user, employee, caseRow)) {
-      const error = new Error("Добавлять документы можно только в собственное дело своего ЮЦ.");
+      const error = new Error("Изменять документы можно только в собственном деле своего ЮЦ.");
       error.status = 403;
       throw error;
     }
@@ -105,7 +115,7 @@ export function createCaseRoutes({
       throw error;
     }
     const attachment = (Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : [])
-      .find((item) => attachmentId(item) === documentId);
+      .find((item) => attachmentMatchesId(item, documentId));
     if (!attachment) {
       const error = new Error("Документ не найден.");
       error.status = 404;
@@ -225,6 +235,42 @@ export function createCaseRoutes({
       const confirmedData = enrichData(data);
       const confirmedCase = assertConfirmedCase(confirmedData, caseId, "добавление документа");
       sendJson(res, 200, { ok: true, attachment: publicAttachment(attachment), case: confirmedCase });
+      return true;
+    }
+
+    if (req.method === "DELETE" && /^\/api\/cases\/[^/]+\/documents$/.test(url.pathname)) {
+      const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
+      const body = await readBody(req);
+      const documentIds = [...new Set((Array.isArray(body.documentIds) ? body.documentIds : [])
+        .map(cleanText).filter(Boolean))];
+      if (!documentIds.length) {
+        const error = new Error("Не выбраны документы для удаления.");
+        error.status = 400;
+        throw error;
+      }
+      const data = await readData(["cases", "employees", "settings", "vacations"]);
+      const caseRow = findCase(data, caseId);
+      if (!caseRow) {
+        const error = new Error("Дело не найдено.");
+        error.status = 404;
+        throw error;
+      }
+      if (isDeletedCase(caseRow)) {
+        const error = new Error("Нельзя удалять документы из удалённого дела.");
+        error.status = 409;
+        throw error;
+      }
+      requireCaseDocumentWrite(user, data, caseRow);
+      const documents = Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : [];
+      const missing = documentIds.filter((id) => !documents.some((attachment) => attachmentMatchesId(attachment, id)));
+      if (missing.length) {
+        const error = new Error("Состав документов изменился. Обновите карточку и повторите удаление.");
+        error.status = 409;
+        throw error;
+      }
+      const retained = documents.filter((attachment) => !documentIds.some((id) => attachmentMatchesId(attachment, id)));
+      const confirmedCase = await replaceAttachments("cases", caseRow, FIELD.documents, retained, data);
+      sendJson(res, 200, { ok: true, removedCount: documentIds.length, case: confirmedCase });
       return true;
     }
 

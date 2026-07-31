@@ -3203,7 +3203,9 @@ textarea:disabled {
 }
 
 .case-document-preview,
-.case-document-download {
+.case-document-download,
+.case-document-delete,
+.case-document-unstage {
   width: 36px;
   min-width: 36px;
   height: 36px;
@@ -3228,8 +3230,26 @@ textarea:disabled {
 }
 
 .case-document-preview:hover,
-.case-document-download:hover {
+.case-document-download:hover,
+.case-document-delete:hover,
+.case-document-unstage:hover {
   filter: brightness(0.96);
+}
+
+.case-document-delete,
+.case-document-unstage {
+  color: #c83d4f;
+  background: rgba(200, 61, 79, 0.1);
+}
+
+.case-document-unstage {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.case-document-item-pending {
+  border: 1px dashed rgba(47, 141, 246, 0.36);
+  background: rgba(239, 248, 255, 0.58);
 }
 
 .document-preview-card {

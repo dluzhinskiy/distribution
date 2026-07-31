@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
 import { canManageYuc } from "./lib/access-policy.mjs";
 import { FIELD, cleanText, enrichData, normalizeYuc, nameMatches } from "./lib/domain.mjs";
-import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readOperationalCases, readData as readDataFresh, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
+import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readOperationalCases, readData as readDataFresh, replaceTableAttachments, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { loadRuntimeConfig } from "./lib/runtime-config.mjs";
 import { readBinaryBody, readJsonBody as readBody, sendJson, serveStatic } from "./lib/http-utils.mjs";
@@ -309,6 +309,15 @@ const handleCaseRoute = createCaseRoutes({
     tableCache.replace(table, data[table]);
     if (table === "cases") dashboardCaseCache.invalidate(["cases"]);
     if (table === "cases") operationalCaseCache.invalidate(["cases"]);
+  },
+  replaceAttachments: async (table, row, field, attachments, data) => {
+    const confirmed = await replaceTableAttachments(table, row, field, attachments);
+    const index = data[table].findIndex((item) => item._recordId === confirmed._recordId);
+    if (index >= 0) data[table][index] = confirmed;
+    tableCache.replace(table, data[table]);
+    if (table === "cases") dashboardCaseCache.invalidate(["cases"]);
+    if (table === "cases") operationalCaseCache.invalidate(["cases"]);
+    return confirmed;
   },
   caseDocumentMaxBytes: CASE_DOCUMENT_MAX_BYTES,
   officePreviewMaxBytes: OFFICE_PREVIEW_MAX_BYTES,

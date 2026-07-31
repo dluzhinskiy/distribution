@@ -35,6 +35,21 @@ export function isAdminRole(role) {
   return normalizeRole(role) === ROLE.admin;
 }
 
+export function accessRoleOptionsFor(user = {}, employee = {}) {
+  const actorRole = normalizeRole(user.role);
+  if (actorRole === ROLE.admin) return [ROLE.employee, ROLE.manager, ROLE.deputy, ROLE.admin];
+  if (actorRole !== ROLE.manager) return [];
+  const actorId = String(user.employeeId ?? "").trim();
+  const employeeId = String(employee.employee_id ?? employee.employeeId ?? "").trim();
+  const currentRole = normalizeRole(employee["Роль доступа"] ?? employee.role);
+  if (!employeeId || actorId === employeeId || [ROLE.manager, ROLE.admin].includes(currentRole)) return [];
+  return [ROLE.employee, ROLE.deputy];
+}
+
+export function canAssignAccessRole(user, employee, role) {
+  return accessRoleOptionsFor(user, employee).includes(normalizeRole(role));
+}
+
 export function isSystemEmployee(employee = {}) {
   return String(employee.employee_id ?? "").trim() === SYSTEM_EMPLOYEE_ID;
 }

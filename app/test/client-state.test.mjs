@@ -10,10 +10,14 @@ test("each client state owns independent mutable collections", () => {
   first.loadedViews.add("cases");
   first.loadingViews.add("settings");
   first.responsibleDrafts.CASE = "Иванов";
+  first.caseDocumentPendingFiles.push({ name: "draft.pdf" });
+  first.caseDocumentPendingDeletes.push("DOC-1");
   assert.equal(second.caseImportSelectedRows.size, 0);
   assert.deepEqual(second.responsibleDrafts, {});
   assert.equal(second.dirtyViews.has("dashboard"), true);
   assert.equal(second.loadedViews.size, 0);
   assert.equal(second.loadingViews.size, 0);
+  assert.deepEqual(second.caseDocumentPendingFiles, []);
+  assert.deepEqual(second.caseDocumentPendingDeletes, []);
   assert.equal(viewTitles.settings, "Настройки региональных правил");
 });

@@ -120,7 +120,9 @@ function applyRoleUi() {
   const accessDescription = $("#accessDescription");
   if (accessDescription) accessDescription.textContent = isAdminUser()
     ? "Выдавайте одноразовые коды первичного входа и назначайте роли. Код показывается один раз."
-    : "Выдавайте одноразовые коды первичного входа сотрудникам своего ЮЦ. Код показывается один раз.";
+    : currentRole() === "Руководитель"
+      ? "Выдавайте коды сотрудникам своего ЮЦ и назначайте им роли «Сотрудник» или «Заместитель». Код показывается один раз."
+      : "Выдавайте одноразовые коды первичного входа сотрудникам своего ЮЦ. Код показывается один раз.";
   if (employee || readOnly) {
     state.responsibleEditEnabled = false;
     state.deleteEditEnabled = false;
@@ -216,8 +218,6 @@ function formatAccessExpiry(value) {
 function renderAccessUsers() {
   const target = $("#accessUsersTable");
   if (!target || (!isAdminUser() && !isManagerUser())) return;
-  const admin = isAdminUser();
-  const roles = ["Сотрудник", "Руководитель", "Заместитель", "Администратор"];
   const groups = groupAccessUsers(state.accessUsers);
   if (!state.accessYucExpansionInitialized && groups.length) {
     const ownYuc = userYuc();
@@ -232,12 +232,12 @@ function renderAccessUsers() {
     <tr class="access-user-row ${expanded ? "" : "is-collapsed"}" data-access-yuc="${escapeHtml(groupKey)}">
       <td><strong>${escapeHtml(user.name || user.employeeId)}</strong><div class="muted">${escapeHtml(user.employeeId)}</div></td>
       <td>${escapeHtml(user.login || "—")}</td>
-      <td>${admin
-        ? `<select class="inline-select access-role-select" data-employee-id="${escapeHtml(user.employeeId)}">${roles.map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}</select>`
+      <td>${user.canManageRole
+        ? `<select class="inline-select access-role-select" data-employee-id="${escapeHtml(user.employeeId)}">${(user.roleOptions ?? []).map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}</select>`
         : escapeHtml(user.role)}</td>
       <td>${user.hasPassword ? badge("установлен", "green") : badge("не задан", "gray")}</td>
       <td>${escapeHtml(formatAccessExpiry(user.firstAccessExpiresAt))}</td>
-      <td><div class="access-actions">${admin ? `<button class="tiny-btn light save-access-role" data-employee-id="${escapeHtml(user.employeeId)}">Сохранить роль</button>` : ""}${user.hasPassword
+      <td><div class="access-actions">${user.canManageRole ? `<button class="tiny-btn light save-access-role" data-employee-id="${escapeHtml(user.employeeId)}">Сохранить роль</button>` : ""}${user.hasPassword
         ? `<button class="tiny-btn red reset-access-password" data-employee-id="${escapeHtml(user.employeeId)}">Сбросить пароль</button>`
         : `<button class="tiny-btn issue-access-code" data-employee-id="${escapeHtml(user.employeeId)}">Выдать код</button>`}</div></td>
     </tr>`).join("");
@@ -308,7 +308,7 @@ async function resetAccessPassword(employeeId) {
 }
 
 async function saveAccessRole(employeeId) {
-  if (!isAdminUser()) return;
+  if (!isAdminUser() && currentRole() !== "Руководитель") return;
   const select = $(`.access-role-select[data-employee-id="${CSS.escape(employeeId)}"]`);
   if (!select) return;
   const payload = await api(`/api/access/users/${encodeURIComponent(employeeId)}`, {
@@ -316,7 +316,12 @@ async function saveAccessRole(employeeId) {
     body: JSON.stringify({ role: select.value }),
   });
   state.accessUsers = state.accessUsers.map((item) => item.employeeId === employeeId
-    ? { ...item, role: payload.user?.role ?? select.value }
+    ? {
+      ...item,
+      role: payload.user?.role ?? select.value,
+      canManageRole: payload.user?.canManageRole ?? item.canManageRole,
+      roleOptions: payload.user?.roleOptions ?? item.roleOptions,
+    }
     : item);
   renderAccessUsers();
   toast("Роль доступа сохранена.");
@@ -3882,8 +3887,10 @@ function caseDocumentKey(document) {
 }
 
 function caseDocumentsSection(row, canEdit) {
-  const documents = caseDocuments(row);
-  const items = documents.length
+  const pendingDeletes = new Set(state.caseDocumentPendingDeletes ?? []);
+  const documents = caseDocuments(row).filter((document) => !pendingDeletes.has(caseDocumentKey(document)));
+  const pendingFiles = state.caseDocumentPendingFiles ?? [];
+  const savedItems = documents.length
     ? documents.map((document) => {
       const key = caseDocumentKey(document);
       const downloadUrl = key
@@ -3898,23 +3905,39 @@ function caseDocumentsSection(row, canEdit) {
           </div>
           ${key ? `<button class="icon-btn case-document-preview" type="button" data-case-id="${escapeHtml(row.case_id)}" data-document-id="${escapeHtml(key)}" title="Открыть для просмотра" aria-label="Открыть ${escapeHtml(document.name || "документ")} для просмотра"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.75h7l5 5v13.5H6zM13 2.75v5h5M9 12h6M9 15.5h6" /></svg></button>` : ""}
           ${downloadUrl ? `<a class="icon-btn case-document-download" href="${downloadUrl}" title="Скачать документ" aria-label="Скачать ${escapeHtml(document.name || "документ")}"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.5m0 0 4-4m-4 4-4-4M5 15.5v4.75h14V15.5" /></svg></a>` : ""}
+          ${state.caseModalEditing && canEdit && key ? `<button class="icon-btn case-document-delete" type="button" data-document-id="${escapeHtml(key)}" data-document-name="${escapeHtml(document.name || "Документ")}" title="Удалить документ" aria-label="Удалить ${escapeHtml(document.name || "документ")}"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.5h6V7m-8 0 .8 13h8.4L17 7M10 10.5v6M14 10.5v6" /></svg></button>` : ""}
         </div>
       `;
     }).join("")
+    : "";
+  const pendingItems = pendingFiles.map((file, index) => `
+    <div class="case-document-item case-document-item-pending">
+      <span class="case-document-icon" aria-hidden="true">＋</span>
+      <div class="case-document-info">
+        <strong title="${escapeHtml(file.name || "Документ")}">${escapeHtml(file.name || "Документ")}</strong>
+        <span>${escapeHtml(formatDocumentSize(file.size))} · будет загружен после сохранения</span>
+      </div>
+      <button class="icon-btn case-document-unstage" type="button" data-pending-index="${index}" title="Убрать из загрузки" aria-label="Убрать ${escapeHtml(file.name || "документ")} из загрузки">×</button>
+    </div>
+  `).join("");
+  const items = savedItems || pendingItems
+    ? `${savedItems}${pendingItems}`
     : `<div class="case-documents-empty">Документы не приложены.</div>`;
+  const resultCount = documents.length + pendingFiles.length;
   return `
     <section class="case-documents-section">
       <div class="case-documents-head">
         <div>
           <span>Документы</span>
-          <small>${documents.length ? `${documents.length} ${documents.length === 1 ? "файл" : "файлов"}` : ""}</small>
+          <small>${resultCount ? `${resultCount} ${resultCount === 1 ? "файл" : "файлов"} после сохранения` : ""}</small>
         </div>
+        ${pendingDeletes.size ? `<button class="tiny-btn light case-document-restore-deletes" type="button">Отменить удаление (${pendingDeletes.size})</button>` : ""}
       </div>
       <div class="case-documents-list">${items}</div>
       ${state.caseModalEditing && canEdit ? `
         <button class="case-document-dropzone" type="button" ${state.caseDocumentUploading ? "disabled" : ""}>
           <svg class="case-document-drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14V3.5m0 0 4 4m-4-4-4 4M5 15.5v4.75h14V15.5" /></svg>
-          <span><strong>${state.caseDocumentUploading ? "Загрузка файлов…" : "Перетащите файлы сюда"}</strong><small>${state.caseDocumentUploading ? "Дождитесь завершения операции" : "или нажмите, чтобы выбрать с устройства"}</small></span>
+          <span><strong>${state.caseDocumentUploading ? "Загрузка файлов…" : "Перетащите файлы сюда"}</strong><small>${state.caseDocumentUploading ? "Дождитесь завершения операции" : "Файлы загрузятся только после нажатия «Сохранить»"}</small></span>
         </button>
       ` : ""}
       ${state.caseModalEditing && canEdit ? `<input id="caseDocumentInput" class="hidden" type="file" multiple />` : ""}
@@ -3995,10 +4018,35 @@ function openDocumentPreview(caseId, documentId) {
   if (["docx", "xlsx"].includes(kind)) loadOfficeDocumentPreview(caseId, documentId);
 }
 
-async function uploadCaseDocuments(files) {
+function stageCaseDocuments(files) {
   const pendingFiles = [...(files ?? [])].filter((file) => file?.size >= 0);
   const row = caseModalRow();
   if (!pendingFiles.length || state.caseDocumentUploading || !row || !canEditCaseRow(row) || !state.caseModalEditing) return;
+  state.caseDocumentPendingFiles.push(...pendingFiles);
+  renderCaseModal();
+  toast(pendingFiles.length === 1
+    ? `Файл «${pendingFiles[0].name || "Документ"}» добавлен в черновик.`
+    : `Файлов добавлено в черновик: ${pendingFiles.length}.`);
+}
+
+function unstageCaseDocument(index) {
+  if (!state.caseModalEditing) return;
+  state.caseDocumentPendingFiles.splice(Number(index), 1);
+  renderCaseModal();
+}
+
+function stageCaseDocumentDeletion(documentId, name) {
+  const row = caseModalRow();
+  if (!row || !state.caseModalEditing || !canEditCaseRow(row)) return;
+  if (!window.confirm(`Удалить документ «${name || "Документ"}» из карточки после нажатия «Сохранить»?`)) return;
+  if (!state.caseDocumentPendingDeletes.includes(documentId)) state.caseDocumentPendingDeletes.push(documentId);
+  renderCaseModal();
+}
+
+async function commitCaseDocumentUploads(files) {
+  const pendingFiles = [...(files ?? [])];
+  const row = caseModalRow();
+  if (!pendingFiles.length || !row) return 0;
   const caseId = row.case_id;
   const successful = [];
   const failed = [];
@@ -4026,18 +4074,14 @@ async function uploadCaseDocuments(files) {
         state.caseModalCaseId = payload.case?.case_id || caseId;
         successful.push(file.name || "Документ");
       } catch (error) {
-        failed.push({ name: file.name || "Документ", error: error.message || "Неизвестная ошибка" });
+        failed.push({ file, name: file.name || "Документ", error: error.message || "Неизвестная ошибка" });
       }
     }
-    if (failed.length) {
-      setStatus("Ошибка");
-      toast(successful.length
-        ? `Добавлено файлов: ${successful.length} из ${pendingFiles.length}. Не удалось: ${failed.map((item) => item.name).join(", ")}.`
-        : `Не удалось загрузить файлы: ${failed.map((item) => item.name).join(", ")}.`, "error");
-    } else {
-      setStatus("Сохранено");
-      toast(pendingFiles.length === 1 ? `Документ «${successful[0]}» добавлен.` : `Добавлено файлов: ${successful.length}.`);
-    }
+    state.caseDocumentPendingFiles = failed.map((item) => item.file);
+    if (failed.length) throw new Error(successful.length
+      ? `Добавлено файлов: ${successful.length} из ${pendingFiles.length}. Не удалось: ${failed.map((item) => item.name).join(", ")}.`
+      : `Не удалось загрузить файлы: ${failed.map((item) => item.name).join(", ")}.`);
+    return successful.length;
   } finally {
     state.caseDocumentUploading = false;
     endWriteLock();
@@ -4046,10 +4090,7 @@ async function uploadCaseDocuments(files) {
 }
 
 function uploadDroppedCaseDocument(event) {
-  uploadCaseDocuments(event.dataTransfer?.files).catch((error) => {
-    setStatus("Ошибка");
-    toast(error.message, "error");
-  });
+  stageCaseDocuments(event.dataTransfer?.files);
 }
 
 function renderCaseModal() {
@@ -4101,6 +4142,8 @@ function openCaseModal(caseId) {
   state.caseModalEditing = false;
   state.caseModalDraft = null;
   state.caseDocumentUploading = false;
+  state.caseDocumentPendingFiles = [];
+  state.caseDocumentPendingDeletes = [];
   state.caseModalLoading = true;
   renderCaseModal();
   $("#caseModal").classList.add("show");
@@ -4139,6 +4182,8 @@ function closeCaseModal() {
   state.caseModalEditing = false;
   state.caseModalDraft = null;
   state.caseDocumentUploading = false;
+  state.caseDocumentPendingFiles = [];
+  state.caseDocumentPendingDeletes = [];
   state.caseModalLoading = false;
 }
 
@@ -4155,12 +4200,16 @@ function startCaseModalEdit() {
   }
   state.caseModalEditing = true;
   state.caseModalDraft = caseModalInitialDraft(row);
+  state.caseDocumentPendingFiles = [];
+  state.caseDocumentPendingDeletes = [];
   renderCaseModal();
 }
 
 function cancelCaseModalEdit() {
   state.caseModalEditing = false;
   state.caseModalDraft = null;
+  state.caseDocumentPendingFiles = [];
+  state.caseDocumentPendingDeletes = [];
   renderCaseModal();
 }
 
@@ -4182,7 +4231,9 @@ function hasCaseModalChanges() {
   const row = caseModalRow();
   if (!row || !state.caseModalDraft) return false;
   const initial = caseModalInitialDraft(row);
-  return editableCaseModalFields().some((field) =>
+  return state.caseDocumentPendingFiles.length > 0
+    || state.caseDocumentPendingDeletes.length > 0
+    || editableCaseModalFields().some((field) =>
     normalizedCaseModalValue(field, state.caseModalDraft[field]) !== normalizedCaseModalValue(field, initial[field])
   );
 }
@@ -4199,7 +4250,9 @@ async function saveCaseModal() {
       patch[field] = nextValue;
     }
   }
-  if (!Object.keys(patch).length) {
+  const pendingDeletes = [...state.caseDocumentPendingDeletes];
+  const pendingFiles = [...state.caseDocumentPendingFiles];
+  if (!Object.keys(patch).length && !pendingDeletes.length && !pendingFiles.length) {
     cancelCaseModalEdit();
     return;
   }
@@ -4207,18 +4260,36 @@ async function saveCaseModal() {
     patch["Дата завершения"] = today();
   }
   setStatus("Сохраняю карточку дела…");
-  const payload = await api(`/api/cases/${encodeURIComponent(row.case_id)}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  });
-  setDataFromPayload(payload);
+  let payload = null;
+  if (Object.keys(patch).length) {
+    payload = await api(`/api/cases/${encodeURIComponent(row.case_id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    setDataFromPayload(payload);
+  }
+  if (pendingDeletes.length) {
+    setStatus("Удаляю выбранные документы…");
+    payload = await api(`/api/cases/${encodeURIComponent(row.case_id)}/documents`, {
+      method: "DELETE",
+      body: JSON.stringify({ documentIds: pendingDeletes }),
+    });
+    setDataFromPayload(payload);
+    state.caseDocumentPendingDeletes = [];
+  }
+  const uploadedCount = pendingFiles.length ? await commitCaseDocumentUploads(pendingFiles) : 0;
   state.lastRecommendation = null;
-  state.caseModalCaseId = payload.case?.case_id || row.case_id;
+  state.caseModalCaseId = payload?.case?.case_id || row.case_id;
   state.caseModalEditing = false;
   state.caseModalDraft = null;
+  state.caseDocumentPendingFiles = [];
+  state.caseDocumentPendingDeletes = [];
   renderCaseModal();
   setStatus("Сохранено");
-  toast(`Карточка ${row.case_id} сохранена.`);
+  const documentChanges = pendingDeletes.length + uploadedCount;
+  toast(documentChanges
+    ? `Карточка ${row.case_id} сохранена. Изменений документов: ${documentChanges}.`
+    : `Карточка ${row.case_id} сохранена.`);
 }
 
 function openQueueManualAssignModal(name = "") {
@@ -4792,6 +4863,22 @@ function bindEvents() {
       $("#caseDocumentInput")?.click();
       return;
     }
+    const deleteCaseDocumentButton = event.target.closest(".case-document-delete");
+    if (deleteCaseDocumentButton) {
+      stageCaseDocumentDeletion(deleteCaseDocumentButton.dataset.documentId, deleteCaseDocumentButton.dataset.documentName);
+      return;
+    }
+    const unstageCaseDocumentButton = event.target.closest(".case-document-unstage");
+    if (unstageCaseDocumentButton) {
+      unstageCaseDocument(unstageCaseDocumentButton.dataset.pendingIndex);
+      return;
+    }
+    const restoreCaseDocumentDeletesButton = event.target.closest(".case-document-restore-deletes");
+    if (restoreCaseDocumentDeletesButton) {
+      state.caseDocumentPendingDeletes = [];
+      renderCaseModal();
+      return;
+    }
     const previewCaseDocumentButton = event.target.closest(".case-document-preview");
     if (previewCaseDocumentButton) {
       openDocumentPreview(previewCaseDocumentButton.dataset.caseId, previewCaseDocumentButton.dataset.documentId);
@@ -4960,10 +5047,7 @@ function bindEvents() {
     if (event.target.matches("#caseDocumentInput")) {
       const files = [...(event.target.files ?? [])];
       event.target.value = "";
-      uploadCaseDocuments(files).catch((error) => {
-        setStatus("Ошибка");
-        toast(error.message, "error");
-      });
+      stageCaseDocuments(files);
       return;
     }
     if (event.target.matches("[data-case-modal-field]")) {

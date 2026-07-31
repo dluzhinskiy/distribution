@@ -66,6 +66,8 @@ export function createAppState() {
     vacationDrafts: {},
     queueManualCandidate: null,
     caseDocumentUploading: false,
+    caseDocumentPendingFiles: [],
+    caseDocumentPendingDeletes: [],
     documentPreviewKey: "",
     lastApiError: null,
   };

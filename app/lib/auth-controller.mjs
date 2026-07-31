@@ -2,7 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import {
   ROLE,
   SYSTEM_EMPLOYEE_ID,
+  accessRoleOptionsFor,
   assertPasswordPolicy,
+  canAssignAccessRole,
   cleanLogin,
   createSessionToken,
   generateFirstAccessCode,
@@ -188,14 +190,19 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
       const data = await readData(["employees"], { force: true });
       const users = data.employees
         .filter((employee) => !isSystemEmployee(employee) && canManageAccessForEmployee(user, employee))
-        .map((employee) => ({
-          ...publicUser(employee),
-          hasPassword: Boolean(cleanText(employee["Хэш-пароля"])),
-          firstAccessExpiresAt: firstAccessExpiresAt(employee),
-          firstAccessDays: Number(employee["Срок действия кода"]) || 0,
-        }))
+        .map((employee) => {
+          const roleOptions = accessRoleOptionsFor(user, employee);
+          return {
+            ...publicUser(employee),
+            hasPassword: Boolean(cleanText(employee["Хэш-пароля"])),
+            firstAccessExpiresAt: firstAccessExpiresAt(employee),
+            firstAccessDays: Number(employee["Срок действия кода"]) || 0,
+            canManageRole: roleOptions.length > 0,
+            roleOptions,
+          };
+        })
         .sort((a, b) => Number(b.system) - Number(a.system) || a.name.localeCompare(b.name, "ru"));
-      sendJson(res, 200, { ok: true, users, canManageRoles: admin });
+      sendJson(res, 200, { ok: true, users, canManageRoles: admin || normalizeRole(user.role) === ROLE.manager });
       return true;
     }
 
@@ -212,11 +219,25 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     if (!canManageAccessForEmployee(user, employee)) throw Object.assign(new Error("Можно выдавать доступ только сотрудникам своего ЮЦ."), { status: 403 });
 
     if (req.method === "PATCH" && parts.length === 4) {
-      if (!admin) throw Object.assign(new Error("Изменять роли может только администратор."), { status: 403 });
       const body = await readBody(req);
-      employee["Роль доступа"] = normalizeRole(body.role);
+      const requestedRole = cleanText(body.role);
+      const nextRole = normalizeRole(requestedRole);
+      if (requestedRole.toLowerCase() !== nextRole.toLowerCase()) {
+        throw Object.assign(new Error("Указана неизвестная роль доступа."), { status: 400 });
+      }
+      if (!canAssignAccessRole(user, employee, nextRole)) {
+        const message = admin
+          ? "Эту роль изменить нельзя."
+          : "Руководитель может назначать сотрудникам своего ЮЦ только роли «Сотрудник» и «Заместитель» и не может изменять роль руководителя или администратора.";
+        throw Object.assign(new Error(message), { status: 403 });
+      }
+      employee["Роль доступа"] = nextRole;
       const confirmed = await saveEmployee(data, employee);
-      sendJson(res, 200, { ok: true, user: publicUser(confirmed) });
+      const roleOptions = accessRoleOptionsFor(user, confirmed);
+      sendJson(res, 200, {
+        ok: true,
+        user: { ...publicUser(confirmed), canManageRole: roleOptions.length > 0, roleOptions },
+      });
       return true;
     }
 

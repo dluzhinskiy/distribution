@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { FIELD, cleanText } from "./domain.mjs";
 
 const PRIVATE_EMPLOYEE_FIELDS = new Set(["Хэш-пароля", "Хэш кода первичного входа"]);
@@ -16,9 +17,20 @@ const MIME = {
   ".ico": "image/x-icon",
 };
 
+export function publicAttachmentStorageId(attachment = {}) {
+  const storageKey = cleanText(attachment.token || attachment.url);
+  return storageKey
+    ? `doc_${createHash("sha256").update(storageKey).digest("hex").slice(0, 24)}`
+    : "";
+}
+
+export function publicAttachmentId(attachment = {}) {
+  return cleanText(attachment.id) || publicAttachmentStorageId(attachment);
+}
+
 export function publicAttachment(attachment = {}) {
   return {
-    id: cleanText(attachment.id),
+    id: publicAttachmentId(attachment),
     name: cleanText(attachment.name) || "Документ",
     size: Number(attachment.size) || 0,
     mimeType: cleanText(attachment.mimeType) || "application/octet-stream",
