@@ -1,23 +1,53 @@
 import {
   CASE_HEADERS,
   EMPLOYEE_HEADERS,
-  JOURNAL_HEADERS,
   QUEUE_HEADERS,
   REGIONAL_ASSIGNMENT_HEADERS,
+  REGIONAL_SUBSTITUTION_HEADERS,
   SETTINGS_HEADERS,
   STATE_HEADERS,
   VACATION_HEADERS,
   YUC_SETTINGS_HEADERS,
   cleanText,
 } from "./domain.mjs";
+import { LOAD_COEFFICIENT_HEADERS } from "./load-coefficients.mjs";
+import { inboundFieldValue, outboundFieldName, tableFieldKey } from "./tabs-fields.mjs";
+import { fetchTextWithRetry } from "./fetch-retry.mjs";
 
 const API_BASE = process.env.TABS_API_BASE || "https://tabs.mts.ru/fusion/v1";
 const TOKEN = process.env.TABS_API_TOKEN;
 const FIELD_KEY = "name";
-const PAGE_SIZE = Number(process.env.TABS_PAGE_SIZE || 1000);
-const REQUEST_TIMEOUT_MS = Number(process.env.TABS_REQUEST_TIMEOUT_MS || 30000);
-const REQUEST_RETRIES = Number(process.env.TABS_REQUEST_RETRIES || 3);
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+const PAGE_SIZE = positiveInteger(process.env.TABS_PAGE_SIZE, 1000);
+const DASHBOARD_PAGE_SIZE = positiveInteger(process.env.TABS_DASHBOARD_PAGE_SIZE, 1000);
+const REQUEST_TIMEOUT_MS = positiveInteger(process.env.TABS_REQUEST_TIMEOUT_MS, 30000);
+const REQUEST_RETRIES = positiveInteger(process.env.TABS_REQUEST_RETRIES, 3);
 const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+export const DASHBOARD_CASE_HEADERS = Object.freeze([
+  "case_id",
+  "ЮЦ",
+  "Регион",
+  "Тип дела",
+  "Дата поступления",
+  "Статус",
+  "Дата завершения",
+  "Отложить завершение до",
+  "Причина отложения завершения дела",
+  "Дата предупреждения о завершении",
+  "Ответственный",
+  "Дата распределения",
+]);
+
+const OPERATIONAL_CASE_DETAIL_HEADERS = Object.freeze([
+  "case_id", "Номер дела", "Предмет", "Истец", "Ответчик", "Третье лицо", "Ссылка",
+]);
+export const OPERATIONAL_CASE_HEADERS = Object.freeze([
+  ...new Set([...DASHBOARD_CASE_HEADERS, ...OPERATIONAL_CASE_DETAIL_HEADERS]),
+]);
 
 const TABLES = {
   cases: {
@@ -31,6 +61,9 @@ const TABLES = {
     keyFields: ["case_id"],
     dateFields: ["Дата поступления", "Дата завершения", "Отложить завершение до", "Дата предупреждения о завершении", "Дата распределения"],
     attachmentFields: ["Документы"],
+    writeFieldNames: {
+      "Дата предупреждения о завершении": "Дата предупрежедения о завершении",
+    },
   },
   employees: {
     name: "Сотрудники",
@@ -67,15 +100,6 @@ const TABLES = {
     keyFields: ["employee_id", "Дата начала"],
     dateFields: ["Дата начала", "Дата окончания"],
   },
-  journal: {
-    name: "Журнал",
-    datasheetId: process.env.TABS_JOURNAL_DATASHEET_ID || "dstpntgUBUkCe8Jvv9",
-    viewId: process.env.TABS_JOURNAL_VIEW_ID || "viwuyr7QieusY",
-    headers: JOURNAL_HEADERS,
-    keyFields: [],
-    dateFields: ["Дата события"],
-    appendOnly: true,
-  },
   settings: {
     name: "Настройки",
     datasheetId: process.env.TABS_SETTINGS_DATASHEET_ID || "dstS9sVx6XlxNASvuh",
@@ -89,19 +113,11 @@ const TABLES = {
     name: "Настройки ЮЦ",
     datasheetId: process.env.TABS_YUC_SETTINGS_DATASHEET_ID || "dstGXdrV1Mb3Rkc57E",
     viewId: process.env.TABS_YUC_SETTINGS_VIEW_ID || "viwzMFn8hWD2U",
-    // Режим расчёта перегруза отсутствует в настроенном представлении,
-    // поэтому небольшую таблицу настроек читаем со всеми полями.
-    readAllFields: true,
     headers: YUC_SETTINGS_HEADERS,
     keyFields: ["ЮЦ"],
     dateFields: [],
     numberFields: ["Порог перегруза"],
     readOnlyFields: ["Название"],
-    fieldAliases: {
-      // В действующей таблице MTS Tabs имя поля создано с опечаткой.
-      // Внутри приложения сохраняем корректное бизнес-название.
-      "Считать перегруз по": ["Считать перезгруз по"],
-    },
   },
   regionalAssignments: {
     name: "Региональные закрепления",
@@ -110,6 +126,24 @@ const TABLES = {
     headers: REGIONAL_ASSIGNMENT_HEADERS,
     keyFields: ["ЮЦ", "Регион", "Сотрудник", "Тип нагрузки"],
     dateFields: [],
+    readOnlyFields: ["Название"],
+  },
+  regionalSubstitutions: {
+    name: "Региональные замещения",
+    datasheetId: process.env.TABS_REGIONAL_SUBSTITUTIONS_DATASHEET_ID || "dstZng9NVviKd5PhnZ",
+    viewId: process.env.TABS_REGIONAL_SUBSTITUTIONS_VIEW_ID || "viwMkyAsobxjs",
+    headers: REGIONAL_SUBSTITUTION_HEADERS,
+    keyFields: ["ЮЦ", "Регион", "Основной сотрудник", "Замещающий сотрудник", "Тип нагрузки"],
+    dateFields: [],
+    readOnlyFields: ["Название"],
+  },
+  loadCoefficients: {
+    name: "Коэффициенты нагрузки",
+    datasheetId: process.env.TABS_LOAD_COEFFICIENTS_DATASHEET_ID || "dstMwyNHdQBXtX4hzP",
+    viewId: process.env.TABS_LOAD_COEFFICIENTS_VIEW_ID || "viwj6WawdPEJM",
+    headers: LOAD_COEFFICIENT_HEADERS,
+    keyFields: ["Тип нагрузки"],
+    numberFields: ["Коэффициент"],
     readOnlyFields: ["Название"],
   },
 };
@@ -145,7 +179,7 @@ function requireToken() {
 function tableUrl(table, extra = {}) {
   const url = new URL(`${API_BASE}/datasheets/${table.datasheetId}/records`);
   if (table.viewId && !table.readAllFields) url.searchParams.set("viewId", table.viewId);
-  url.searchParams.set("fieldKey", FIELD_KEY);
+  url.searchParams.set("fieldKey", tableFieldKey(table));
   for (const [key, value] of Object.entries(extra)) {
     if (Array.isArray(value)) {
       value.forEach((item) => url.searchParams.append(key, item));
@@ -158,7 +192,8 @@ function tableUrl(table, extra = {}) {
 
 async function request(table, method, body = null, extra = {}) {
   requireToken();
-  const response = await fetchWithRetry(tableUrl(table, extra), {
+  const url = tableUrl(table, extra);
+  const { response, text } = await fetchText(url, {
     method,
     headers: {
       Authorization: `Bearer ${TOKEN}`,
@@ -166,7 +201,6 @@ async function request(table, method, body = null, extra = {}) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  const text = await response.text();
   let payload;
   try {
     payload = text ? JSON.parse(text) : {};
@@ -185,15 +219,40 @@ async function deleteRecords(table, recordIds) {
   for (const chunk of chunks(recordIds, 10)) {
     const url = new URL(`${API_BASE}/datasheets/${table.datasheetId}/records`);
     chunk.forEach((recordId) => url.searchParams.append("recordIds", recordId));
-    const response = await fetchWithRetry(url, {
+    const { response, text } = await fetchText(url, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
-    const text = await response.text();
     const payload = text ? JSON.parse(text) : {};
     if (!response.ok || payload.success === false || (payload.code && payload.code !== 200)) {
       throw new Error(`DELETE ${table.name}: ${response.status}; ${payload.message || text}`);
     }
+  }
+}
+
+async function fetchText(url, options = {}) {
+  try {
+    const method = String(options.method || "GET").toUpperCase();
+    return await fetchTextWithRetry(url, options, {
+      retries: REQUEST_RETRIES,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      retryable: ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE"].includes(method),
+    });
+  } catch (error) {
+    const unknownWriteResult = Boolean(error?.resultUnknown);
+    const wrapped = new Error(
+      unknownWriteResult
+        ? `${formatNetworkError(url, error)} Результат операции требует проверки.`
+        : formatNetworkError(url, error),
+      { cause: error },
+    );
+    if (unknownWriteResult) {
+      wrapped.status = 502;
+      wrapped.code = "WRITE_RESULT_UNKNOWN";
+      wrapped.resultUnknown = true;
+      wrapped.details = { method: error.method || options.method || "POST" };
+    }
+    throw wrapped;
   }
 }
 
@@ -288,19 +347,23 @@ function toTabsUrl(value) {
   };
 }
 
+function normalizeAttachments(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({ ...item }));
+}
+
 function normalizeFromTabs(table, fields = {}) {
   const dateSet = new Set(table.dateFields);
+  const attachmentSet = new Set(table.attachmentFields ?? []);
   const row = {};
   for (const header of table.headers) {
-    const fieldNames = [header, ...(table.fieldAliases?.[header] ?? [])];
-    const sourceFieldName = fieldNames.find((name) => Object.prototype.hasOwnProperty.call(fields, name)) ?? header;
-    if (sourceFieldName !== header) {
-      table.resolvedFieldNames ??= {};
-      table.resolvedFieldNames[header] = sourceFieldName;
-    }
-    const value = fields[sourceFieldName];
+    const value = inboundFieldValue(table, fields, header);
     if (table.name === "Дела" && header === "Ссылка") {
       row[header] = fromTabsUrl(value);
+    } else if (attachmentSet.has(header)) {
+      row[header] = normalizeAttachments(value);
     } else {
       row[header] = dateSet.has(header)
         ? fromTabsDate(value, header === "Дата события")
@@ -313,16 +376,18 @@ function normalizeFromTabs(table, fields = {}) {
 function normalizeToTabs(table, row = {}) {
   const dateSet = new Set(table.dateFields);
   const numberSet = new Set(table.numberFields ?? []);
+  const attachmentSet = new Set(table.attachmentFields ?? []);
   const readOnlySet = new Set(table.readOnlyFields ?? []);
   const fields = {};
   for (const header of table.headers) {
     if (readOnlySet.has(header)) continue;
-    const targetFieldName = table.resolvedFieldNames?.[header] ?? header;
     const value = row[header];
     if (table.name === "Дела" && header === "Ссылка") {
-      fields[targetFieldName] = toTabsUrl(value);
+      fields[outboundFieldName(table, header)] = toTabsUrl(value);
+    } else if (attachmentSet.has(header)) {
+      fields[outboundFieldName(table, header)] = normalizeAttachments(value);
     } else {
-      fields[targetFieldName] = dateSet.has(header)
+      fields[outboundFieldName(table, header)] = dateSet.has(header)
         ? toTabsDate(value, header === "Дата события")
         : numberSet.has(header)
           ? (value === "" || value === null || value === undefined ? null : Number(value))
@@ -346,54 +411,16 @@ function normalizeTableKeys(keys = TABLE_KEYS) {
   return unique.length ? unique : TABLE_KEYS;
 }
 
-async function resolveFieldAliasesFromSchema(table) {
-  const aliases = table.fieldAliases ?? {};
-  const canonicalNames = Object.keys(aliases);
-  if (!canonicalNames.length) return;
-  if (table.fieldAliasesResolved) return;
-  if (table.fieldAliasesPromise) return table.fieldAliasesPromise;
-
-  table.fieldAliasesPromise = (async () => {
-    requireToken();
-    const response = await fetchWithRetry(new URL(`${API_BASE}/datasheets/${table.datasheetId}/fields`), {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    });
-    const text = await response.text();
-    let payload;
-    try {
-      payload = text ? JSON.parse(text) : {};
-    } catch {
-      throw new Error(`GET поля «${table.name}»: API вернул не JSON (${response.status}).`);
-    }
-    if (!response.ok || payload.success === false || (payload.code && payload.code !== 200)) {
-      throw new Error(`GET поля «${table.name}»: ${response.status}; ${payload.message || text}`);
-    }
-    const availableNames = new Set((payload?.data?.fields ?? []).map((field) => field.name));
-    table.resolvedFieldNames ??= {};
-    for (const canonicalName of canonicalNames) {
-      const actualName = [canonicalName, ...aliases[canonicalName]].find((name) => availableNames.has(name));
-      if (!actualName) {
-        throw new Error(`В таблице «${table.name}» отсутствует поле «${canonicalName}».`);
-      }
-      table.resolvedFieldNames[canonicalName] = actualName;
-    }
-    table.fieldAliasesResolved = true;
-  })();
-
-  try {
-    await table.fieldAliasesPromise;
-  } finally {
-    table.fieldAliasesPromise = null;
-  }
-}
-
-async function readTable(table) {
-  await resolveFieldAliasesFromSchema(table);
+async function readTable(table, { fields = null, pageSize = PAGE_SIZE } = {}) {
   const rows = [];
   let pageNum = 1;
   let total = 0;
   do {
-    const payload = await request(table, "GET", null, { pageNum, pageSize: PAGE_SIZE });
+    const payload = await request(table, "GET", null, {
+      pageNum,
+      pageSize,
+      ...(fields?.length ? { "fields[]": fields } : {}),
+    });
     const pageRows = payload?.data?.records ?? [];
     total = Number(payload?.data?.total ?? pageRows.length);
     for (const record of pageRows) {
@@ -406,11 +433,39 @@ async function readTable(table) {
 
 async function createRows(table, rows) {
   for (const chunk of chunks(rows, 1000)) {
-    await request(table, "POST", {
-      records: chunk.map((row) => ({ fields: normalizeToTabs(table, row) })),
-      fieldKey: FIELD_KEY,
-    });
+    let pendingRows = chunk;
+    for (let dispatch = 0; dispatch < 2 && pendingRows.length; dispatch += 1) {
+      try {
+        await request(table, "POST", {
+          records: pendingRows.map((row) => ({ fields: normalizeToTabs(table, row) })),
+          fieldKey: tableFieldKey(table),
+        });
+        pendingRows = [];
+      } catch (error) {
+        if (!error?.resultUnknown) throw error;
+        let currentRows;
+        try {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            if (attempt) await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+            currentRows = await readTable(table);
+            const existingKeys = new Set(currentRows.map((row) => rowKey(table, row)));
+            pendingRows = pendingRows.filter((row) => !existingKeys.has(rowKey(table, row)));
+            if (!pendingRows.length) break;
+          }
+        } catch {
+          throw error;
+        }
+        if (pendingRows.length && dispatch >= 1) throw error;
+      }
+    }
   }
+}
+
+export async function createTableRows(key, rows = []) {
+  const table = TABLES[key];
+  if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  await createRows(table, rows);
+  return rows;
 }
 
 async function updateRows(table, updates) {
@@ -420,8 +475,103 @@ async function updateRows(table, updates) {
         recordId,
         fields: normalizeToTabs(table, row),
       })),
-      fieldKey: FIELD_KEY,
+      fieldKey: tableFieldKey(table),
     });
+  }
+}
+
+export async function patchTableRows(key, updates = []) {
+  const table = TABLES[key];
+  if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  const records = updates.map(({ row, changedFields = [] }) => {
+    if (!row?._recordId) throw new Error(`Для адресного обновления «${table.name}» не найден recordId.`);
+    const allowed = new Set(changedFields.map((field) => outboundFieldName(table, field)));
+    const fields = Object.fromEntries(Object.entries(normalizeToTabs(table, row)).filter(([field]) => allowed.has(field)));
+    return { recordId: row._recordId, fields };
+  }).filter((record) => Object.keys(record.fields).length);
+  for (const chunk of chunks(records, 10)) {
+    await request(table, "PATCH", { records: chunk, fieldKey: tableFieldKey(table) });
+  }
+  return updates.map(({ row }) => row);
+}
+
+export async function patchTableRow(key, row, changedFields = []) {
+  await patchTableRows(key, [{ row, changedFields }]);
+  return row;
+}
+
+function attachmentFingerprint(attachment = {}) {
+  return cleanText(attachment.token || attachment.url)
+    || [cleanText(attachment.name), Number(attachment.size) || 0, cleanText(attachment.mimeType)].join("::");
+}
+
+function sameAttachments(left = [], right = []) {
+  const a = normalizeAttachments(left).map(attachmentFingerprint);
+  const b = normalizeAttachments(right).map(attachmentFingerprint);
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * MTS Tabs does not remove one attachment when an attachment array is shortened.
+ * It also rejects null inside the array. A selective replacement therefore has
+ * to clear the whole cell first and then bind the retained attachment tokens.
+ */
+export async function replaceTableAttachments(key, row, field, attachments = []) {
+  const table = TABLES[key];
+  if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  if (!(table.attachmentFields ?? []).includes(field)) {
+    throw new Error(`Поле «${field}» не является полем вложений таблицы «${table.name}».`);
+  }
+  if (!row?._recordId) throw new Error(`Для изменения вложений «${table.name}» не найден recordId.`);
+
+  const original = normalizeAttachments(row[field]);
+  const desired = normalizeAttachments(attachments);
+  const outboundField = outboundFieldName(table, field);
+  const writeValue = async (value) => request(table, "PATCH", {
+    records: [{ recordId: row._recordId, fields: { [outboundField]: value } }],
+    fieldKey: tableFieldKey(table),
+  });
+  const readConfirmed = async () => {
+    const rows = await readTable(table);
+    return rows.find((item) => item._recordId === row._recordId) ?? null;
+  };
+  const restoreOriginal = async () => {
+    await writeValue(null);
+    if (original.length) await writeValue(original);
+    return readConfirmed();
+  };
+
+  try {
+    await writeValue(null);
+    if (desired.length) await writeValue(desired);
+    const confirmed = await readConfirmed();
+    if (confirmed && sameAttachments(confirmed[field], desired)) return confirmed;
+    const restored = await restoreOriginal();
+    const error = new Error("MTS Tabs не подтвердил новый состав вложений. Исходный список восстановлен.");
+    error.status = 502;
+    error.code = "ATTACHMENTS_NOT_CONFIRMED";
+    error.restored = Boolean(restored && sameAttachments(restored[field], original));
+    throw error;
+  } catch (error) {
+    if (error?.code === "ATTACHMENTS_NOT_CONFIRMED") throw error;
+    let current = null;
+    try { current = await readConfirmed(); } catch {}
+    if (current && sameAttachments(current[field], desired)) return current;
+    let restored = false;
+    try {
+      const restoredRow = current && sameAttachments(current[field], original)
+        ? current
+        : await restoreOriginal();
+      restored = Boolean(restoredRow && sameAttachments(restoredRow[field], original));
+    } catch {}
+    const wrapped = new Error(restored
+      ? `Не удалось изменить состав вложений. Исходный список восстановлен. ${error.message}`
+      : `Результат изменения вложений требует проверки. ${error.message}`,
+    { cause: error });
+    wrapped.status = 502;
+    wrapped.code = restored ? "ATTACHMENTS_RESTORED" : "WRITE_RESULT_UNKNOWN";
+    wrapped.resultUnknown = !restored;
+    throw wrapped;
   }
 }
 
@@ -429,7 +579,7 @@ function comparableFields(table, row) {
   return JSON.stringify(normalizeToTabs(table, row));
 }
 
-async function syncTable(key, desiredRows = []) {
+async function syncTable(key, desiredRows = [], knownCurrentRows = null) {
   const table = TABLES[key];
   const creates = [];
   const updates = [];
@@ -438,7 +588,7 @@ async function syncTable(key, desiredRows = []) {
     const existingRows = desiredRows.filter((row) => row._recordId);
     creates.push(...desiredRows.filter((row) => !row._recordId));
     if (existingRows.length) {
-      const currentRows = await readTable(table);
+      const currentRows = Array.isArray(knownCurrentRows) ? knownCurrentRows : await readTable(table);
       const currentByRecordId = new Map(currentRows.map((row) => [row._recordId, row]));
       for (const row of existingRows) {
         const current = currentByRecordId.get(row._recordId);
@@ -456,7 +606,7 @@ async function syncTable(key, desiredRows = []) {
     return;
   }
 
-  const currentRows = await readTable(table);
+  const currentRows = Array.isArray(knownCurrentRows) ? knownCurrentRows : await readTable(table);
   const currentByKey = new Map(currentRows.map((row) => [rowKey(table, row), row]));
   const desiredKeys = new Set();
   for (const row of desiredRows) {
@@ -552,12 +702,11 @@ export async function uploadAttachment(tableKey, { buffer, name, mimeType = "app
   if (!buffer?.length) throw new Error("Нельзя загрузить пустой файл.");
   const form = new FormData();
   form.append("file", new Blob([buffer], { type: mimeType }), name || "document");
-  const response = await fetchWithRetry(attachmentEndpoint(table), {
+  const { response, text } = await fetchText(attachmentEndpoint(table), {
     method: "POST",
     headers: { Authorization: `Bearer ${TOKEN}` },
     body: form,
   });
-  const text = await response.text();
   let payload;
   try {
     payload = text ? JSON.parse(text) : {};
@@ -590,8 +739,43 @@ export async function readData(keys = TABLE_KEYS) {
   return Object.fromEntries(entries);
 }
 
-export async function saveData(data, keys = TABLE_KEYS) {
+export async function readDashboardCases() {
+  const table = {
+    ...TABLES.cases,
+    viewId: "",
+    headers: DASHBOARD_CASE_HEADERS,
+  };
+  const fields = DASHBOARD_CASE_HEADERS.map((header) => outboundFieldName(table, header));
+  return readTable(table, { fields, pageSize: DASHBOARD_PAGE_SIZE });
+}
+
+export async function readOperationalCases() {
+  const baseTable = {
+    ...TABLES.cases,
+    viewId: "",
+    headers: DASHBOARD_CASE_HEADERS,
+  };
+  const detailTable = {
+    ...TABLES.cases,
+    viewId: "",
+    headers: OPERATIONAL_CASE_DETAIL_HEADERS,
+  };
+  const [baseRows, detailRows] = await Promise.all([
+    readTable(baseTable, {
+      fields: DASHBOARD_CASE_HEADERS.map((header) => outboundFieldName(baseTable, header)),
+      pageSize: DASHBOARD_PAGE_SIZE,
+    }),
+    readTable(detailTable, {
+      fields: OPERATIONAL_CASE_DETAIL_HEADERS.map((header) => outboundFieldName(detailTable, header)),
+      pageSize: DASHBOARD_PAGE_SIZE,
+    }),
+  ]);
+  const detailsByRecordId = new Map(detailRows.map((row) => [row._recordId, row]));
+  return baseRows.map((row) => defineRecordMeta({ ...row, ...(detailsByRecordId.get(row._recordId) ?? {}) }, row._recordId));
+}
+
+export async function saveData(data, keys = TABLE_KEYS, { currentData = null } = {}) {
   for (const key of normalizeTableKeys(keys)) {
-    await syncTable(key, data[key] ?? []);
+    await syncTable(key, data[key] ?? [], currentData?.[key] ?? null);
   }
 }
