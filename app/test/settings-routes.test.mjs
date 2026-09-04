@@ -86,6 +86,47 @@ test("manager cannot change settings of another YUC", async () => {
   );
 });
 
+test("deputy may save overload thresholds by workload type in own YUC", async () => {
+  const body = {
+    yuc: "ЮЦ 1",
+    rows: [{
+      [FIELD.caseType]: "судебное",
+      "Активность, дни": 30,
+      "Автозавершение, дни": 360,
+      "Учитывать долг": "Нет",
+      "Максимальный долг": 0,
+      "Порог перегруза": 4,
+    }],
+  };
+  const data = { settings: [] };
+  const { handle, savedTables } = createHarness(body, data);
+  const res = responseCapture();
+  const matched = await handle(
+    { method: "POST" },
+    res,
+    new URL("http://localhost/api/deadline-settings"),
+    { role: "Заместитель", yuc: "ЮЦ 1" },
+  );
+  assert.equal(matched, true);
+  assert.equal(res.status, 200);
+  assert.deepEqual(savedTables, ["settings"]);
+  assert.equal(data.settings[0]["Порог перегруза"], 4);
+});
+
+test("employee cannot save workload settings", async () => {
+  const body = { yuc: "ЮЦ 1", rows: [] };
+  const { handle } = createHarness(body, { settings: [] });
+  await assert.rejects(
+    handle(
+      { method: "POST" },
+      responseCapture(),
+      new URL("http://localhost/api/deadline-settings"),
+      { role: "Сотрудник", yuc: "ЮЦ 1" },
+    ),
+    (error) => error.status === 403,
+  );
+});
+
 test("settings router ignores unrelated endpoints", async () => {
   const { handle } = createHarness({}, {});
   assert.equal(await handle({ method: "GET" }, responseCapture(), new URL("http://localhost/api/data"), {}), false);

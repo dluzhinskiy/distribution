@@ -358,24 +358,24 @@
             <section class="card">
               <div class="card-head">
                 <div>
-                  <h2>Сроки по типам нагрузки</h2>
-                  <p>Настройки действуют отдельно для выбранного ЮЦ. Срок активности влияет на нагрузку, срок автозавершения — на предупреждения руководителю.</p>
+                  <h2>Настройки по типам нагрузки</h2>
+                  <p>Настройки действуют отдельно для выбранного ЮЦ. Уголовные и банкротные дела используют настройки судебной нагрузки.</p>
                 </div>
                 <div class="settings-card-actions">
-                  <span class="badge badge-red">редактируемые сроки</span>
+                  <span class="badge badge-red">настройки своего ЮЦ</span>
                   <button class="settings-help-trigger" type="button" data-settings-help="deadlines" aria-label="Справка по срокам" title="Справка">?</button>
                 </div>
               </div>
               <div class="table-wrap compact">
                 <table>
                   <thead>
-                    <tr><th>Тип нагрузки</th><th>Активность, дни</th><th>Автозавершение, дни</th><th>Учитывать долг</th><th>Максимальный долг</th></tr>
+                    <tr><th>Тип нагрузки</th><th>Активность, дни</th><th>Автозавершение, дни</th><th>Учитывать долг</th><th>Максимальный долг</th><th>Порог перегруза</th></tr>
                   </thead>
                   <tbody id="deadlineSettingsTable"></tbody>
                 </table>
               </div>
               <div class="actions-row">
-                <button class="btn btn-primary" id="saveDeadlineSettingsBtn">Сохранить сроки</button>
+                <button class="btn btn-primary" id="saveDeadlineSettingsBtn">Сохранить настройки</button>
               </div>
             </section>
 
@@ -408,21 +408,6 @@
                     Региональные очереди выключены. Назначение идёт по общей очереди выбранного ЮЦ; настройки ниже сохранены, но временно не применяются.
                   </div>
                   <div class="form-grid">
-                    <label class="field">
-                      <span>Порог перегруза</span>
-                      <span class="settings-number-stepper">
-                        <button class="settings-number-step" type="button" data-settings-number-step="-1" aria-label="Уменьшить порог перегруза">−</button>
-                        <input class="settings-number-input" type="number" min="0" step="1" name="Порог перегруза" />
-                        <button class="settings-number-step" type="button" data-settings-number-step="1" aria-label="Увеличить порог перегруза">+</button>
-                      </span>
-                    </label>
-                    <label class="field">
-                      <span>Считать перегруз по</span>
-                      <select name="Считать перегруз по">
-                        <option value="общая нагрузка">общая нагрузка</option>
-                        <option value="тип нагрузки">тип нагрузки</option>
-                      </select>
-                    </label>
                     <label class="toggle-field">
                       <span>Автоназначение вне региона</span>
                       <input type="checkbox" name="Автоназначение вне региона вкл/выкл" />
@@ -556,7 +541,7 @@
                     <li>Если в регионе несколько доступных юристов, приложение сначала старается выбрать не предыдущего автополучателя.</li>
                     <li>Если доступен только предыдущий региональный юрист, дело может быть назначено ему повторно автоматически — пока региональная группа не перегружена сверх установленного порога.</li>
                     <li>В общую очередь приложение уходит только при недоступности региональных юристов или при существенном перегрузе всей региональной группы.</li>
-                    <li>Порог перегруза настраивается отдельно для каждого ЮЦ на вкладке «Настройки».</li>
+                    <li>Порог перегруза настраивается отдельно для судебной, административной и претензионной нагрузки. Уголовные и банкротные дела используют судебный порог.</li>
                   </ul>
                 </div>
               </div>

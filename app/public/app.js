@@ -796,8 +796,6 @@ function yucSettingsForSelectedYuc() {
   return rowsForSelectedYuc(state.data?.yucSettings)[0] ?? {
     "ЮЦ": selectedYuc(),
     "Региональные очереди вкл\\выкл": "Нет",
-    "Порог перегруза": 5,
-    "Считать перегруз по": "общая нагрузка",
     "Автоназначение вне региона вкл/выкл": "Да",
     "Учитывать неактивные незавершенные в нагрузке": "Нет",
     "Регион не настроен": "общая очередь",
@@ -829,6 +827,8 @@ function regionalSubstitutionsForSelectedYuc() {
 function deadlineSettingForType(type) {
   const normalized = String(type ?? "").trim().toLowerCase();
   const row = rowsForSelectedYuc(state.data?.settings).find((item) => normalizeCaseType(item["Тип дела"]) === normalized);
+  const rawOverloadThreshold = String(row?.["Порог перегруза"] ?? "").trim();
+  const overloadThreshold = Number(rawOverloadThreshold);
   const defaults = {
     "претензия": { activity: 5, autocompletion: 30, maxDebt: 0 },
     "административное": { activity: 10, autocompletion: 90, maxDebt: 0 },
@@ -841,6 +841,9 @@ function deadlineSettingForType(type) {
     "Автозавершение, дни": Number(row?.["Автозавершение, дни"]) || defaults[normalized]?.autocompletion || 1,
     "Учитывать долг": yes(row?.["Учитывать долг"]) ? "Да" : "Нет",
     "Максимальный долг": Number(row?.["Максимальный долг"]) || defaults[normalized]?.maxDebt || 0,
+    "Порог перегруза": rawOverloadThreshold && Number.isFinite(overloadThreshold) && overloadThreshold >= 0
+      ? overloadThreshold
+      : 5,
   };
 }
 
@@ -2793,6 +2796,7 @@ function renderDeadlineSettings() {
         checked: yes(row["Учитывать долг"]),
       })}</td>
       <td>${settingsNumberStepper({ value: row["Максимальный долг"], min: 0, inputClass: "deadline-input deadline-setting-field", inputAttributes: 'data-field="Максимальный долг"', label: `Максимальный долг: ${row["Тип дела"]}` })}</td>
+      <td>${settingsNumberStepper({ value: row["Порог перегруза"], min: 0, inputClass: "deadline-input deadline-setting-field", inputAttributes: 'data-field="Порог перегруза"', label: `Порог перегруза: ${row["Тип дела"]}` })}</td>
     </tr>
   `).join("");
 }
@@ -2803,8 +2807,6 @@ function renderYucSettingsForm() {
   const settings = yucSettingsForSelectedYuc();
   form.elements["Учитывать неактивные незавершенные в нагрузке"].checked = yes(settings["Учитывать неактивные незавершенные в нагрузке"]);
   form.elements["Региональные очереди вкл\\выкл"].checked = yes(settings["Региональные очереди вкл\\выкл"]);
-  form.elements["Порог перегруза"].value = settings["Порог перегруза"] || 5;
-  form.elements["Считать перегруз по"].value = settings["Считать перегруз по"] || "общая нагрузка";
   form.elements["Автоназначение вне региона вкл/выкл"].checked = yes(settings["Автоназначение вне региона вкл/выкл"]);
   form.elements["Регион не настроен"].value = settings["Регион не настроен"] || "общая очередь";
   form.elements["Региональные юристы недоступны"].value = settings["Региональные юристы недоступны"] || "заместитель затем общая очередь";
@@ -2944,7 +2946,7 @@ const settingsHelp = {
     `,
   },
   deadlines: {
-    title: "Сроки по типам нагрузки",
+    title: "Настройки по типам нагрузки",
     body: `
       <p>Значения задаются отдельно для выбранного ЮЦ и типа нагрузки.</p>
       <ul>
@@ -2952,6 +2954,7 @@ const settingsHelp = {
         <li><strong>Автозавершение, дни</strong> — срок контроля: после его истечения дело попадает в список «К завершению», где руководитель принимает решение.</li>
         <li><strong>Учитывать долг</strong> — включает приоритет сотрудника, который пропустил очередь из-за недоступности.</li>
         <li><strong>Максимальный долг</strong> — ограничивает размер такого приоритета; после назначения долг погашается.</li>
+        <li><strong>Порог перегруза</strong> — допустимая разница между минимальной нагрузкой региональной группы и общей очереди для этого типа. Уголовные и банкротные дела используют судебный порог.</li>
       </ul>
     `,
   },
@@ -2962,7 +2965,7 @@ const settingsHelp = {
       <ul>
         <li>Переключатель неактивных дел определяет, учитываются ли незавершённые, но уже неактивные дела при сравнении нагрузки сотрудников.</li>
         <li>Региональные очереди сначала ищут кандидата среди сотрудников, закреплённых за регионом дела.</li>
-        <li>Порог перегруза определяет, когда вся региональная группа может уступить назначение общей очереди.</li>
+        <li>Порог перегруза задаётся выше отдельно для судебной, административной и претензионной нагрузки.</li>
         <li>Нижние правила задают безопасный сценарий, если регион не настроен или его сотрудники недоступны.</li>
       </ul>
     `,
@@ -3376,8 +3379,6 @@ async function saveYucSettings() {
   const payloadBody = {
     "Учитывать неактивные незавершенные в нагрузке": formYesNo(form, "Учитывать неактивные незавершенные в нагрузке"),
     "Региональные очереди вкл\\выкл": formYesNo(form, "Региональные очереди вкл\\выкл"),
-    "Порог перегруза": form.elements["Порог перегруза"].value,
-    "Считать перегруз по": form.elements["Считать перегруз по"].value,
     "Автоназначение вне региона вкл/выкл": formYesNo(form, "Автоназначение вне региона вкл/выкл"),
     "Регион не настроен": form.elements["Регион не настроен"].value,
     "Региональные юристы недоступны": form.elements["Региональные юристы недоступны"].value,
@@ -3405,14 +3406,14 @@ async function saveDeadlineSettings() {
     });
     return row;
   });
-  setStatus("Сохраняю сроки…");
+  setStatus("Сохраняю настройки по типам нагрузки…");
   const payload = await api("/api/deadline-settings", {
     method: "POST",
     body: JSON.stringify({ yuc: selectedYuc(), rows }),
   });
   setDataFromPayload(payload);
   setStatus("Сохранено");
-  toast("Сроки по типам нагрузки сохранены.");
+  toast("Настройки по типам нагрузки сохранены.");
 }
 
 function rowFieldValue(input) {

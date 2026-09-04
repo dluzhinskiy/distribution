@@ -16,8 +16,6 @@ export const FIELD = {
 
 export const YUC_SETTING = {
   regionalEnabled: "Региональные очереди вкл\\выкл",
-  overloadThreshold: "Порог перегруза",
-  overloadMode: "Считать перегруз по",
   allowOutsideRegion: "Автоназначение вне региона вкл/выкл",
   includeInactiveLoad: "Учитывать неактивные незавершенные в нагрузке",
   missingRegionMode: "Регион не настроен",

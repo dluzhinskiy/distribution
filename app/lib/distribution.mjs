@@ -133,14 +133,12 @@ export const VACATION_HEADERS = [
   "Изменено",
 ];
 
-export const SETTINGS_HEADERS = ["ЮЦ", "Тип дела", "Активность, дни", "Автозавершение, дни", "Учитывать долг", "Максимальный долг"];
+export const SETTINGS_HEADERS = ["ЮЦ", "Тип дела", "Активность, дни", "Автозавершение, дни", "Учитывать долг", "Максимальный долг", "Порог перегруза"];
 
 export const YUC_SETTINGS_HEADERS = [
   "Название",
   "ЮЦ",
   "Региональные очереди вкл\\выкл",
-  "Порог перегруза",
-  "Считать перегруз по",
   "Автоназначение вне региона вкл/выкл",
   "Учитывать неактивные незавершенные в нагрузке",
   "Регион не настроен",
@@ -195,6 +193,7 @@ const DELETED_STATUS = "Удалено";
 const COMPLETE_STATUSES = new Set(["Завершено", "Отменено", DELETED_STATUS]);
 const LOAD_MODE_TOTAL = "общая нагрузка";
 const LOAD_MODE_BY_TYPE = "тип нагрузки";
+export const DEFAULT_OVERLOAD_THRESHOLD = 5;
 const REGIONAL_UNAVAILABLE_SUBSTITUTE_THEN_GENERAL = "заместитель затем общая очередь";
 const REGIONAL_MODE_ERROR = "ошибка";
 const REGIONAL_REPEAT_BASIS = "повтор допускается региональным правилом";
@@ -233,6 +232,13 @@ export function maxDebt(settings, yuc, type) {
   const row = typeSettings(settings, yuc, workloadType(type));
   const value = Number(row?.["Максимальный долг"]);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+export function overloadThreshold(settings, yuc, type) {
+  const raw = typeSettings(settings, yuc, workloadType(type))?.["Порог перегруза"];
+  if (!cleanText(raw)) return DEFAULT_OVERLOAD_THRESHOLD;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_OVERLOAD_THRESHOLD;
 }
 
 export function relevanceDays(settings, type, yuc = "") {
@@ -451,8 +457,6 @@ function yucRegionalSettings(data, yuc) {
   return (data.yucSettings ?? []).find((row) => normalizeYuc(row[FIELD.yuc]) === normalizedYuc) ?? {
     [FIELD.yuc]: normalizedYuc,
     [YUC_SETTING.regionalEnabled]: "Нет",
-    [YUC_SETTING.overloadThreshold]: 5,
-    [YUC_SETTING.overloadMode]: LOAD_MODE_TOTAL,
     [YUC_SETTING.allowOutsideRegion]: "Да",
     [YUC_SETTING.includeInactiveLoad]: "Нет",
     [YUC_SETTING.missingRegionMode]: "общая очередь",
@@ -1051,20 +1055,19 @@ export function recommend(data, draft, date = new Date()) {
     const outsideAvailability = availableCandidateRows(data, outsideRows, type, date, "");
     const outsideCandidates = outsideAvailability.candidates;
     const allowOutside = yes(settings[YUC_SETTING.allowOutsideRegion]);
-    const overloadThreshold = Number(settings[YUC_SETTING.overloadThreshold]) || 0;
-    const loadMode = cleanText(settings[YUC_SETTING.overloadMode]) || LOAD_MODE_TOTAL;
+    const threshold = overloadThreshold(data.settings ?? [], normalizedYuc, type);
 
     if (allowOutside && outsideCandidates.length) {
-      const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc, date)));
-      const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, loadMode, normalizedYuc, date)));
-      if (minRegionalLoad - minOutsideLoad > overloadThreshold) {
+      const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, LOAD_MODE_BY_TYPE, normalizedYuc, date)));
+      const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, LOAD_MODE_BY_TYPE, normalizedYuc, date)));
+      if (minRegionalLoad - minOutsideLoad > threshold) {
         const outside = recommendFromQueueRows(
           data,
           outsideRows,
           normalizedYuc,
           type,
           date,
-          `вне региона: перегруз региональной группы ${minRegionalLoad - minOutsideLoad} > ${overloadThreshold}`,
+          `вне региона: перегруз региональной группы ${minRegionalLoad - minOutsideLoad} > ${threshold}`,
         );
         return {
           ...outside,

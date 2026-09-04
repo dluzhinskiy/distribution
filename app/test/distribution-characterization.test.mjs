@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FIELD, assignAutomatically, assignManually, recommend } from "../lib/domain.mjs";
+import { FIELD, assignAutomatically, assignManually, overloadThreshold, recommend } from "../lib/domain.mjs";
 
 function distributionData() {
   return {
@@ -29,6 +29,62 @@ const draft = {
   "Предмет": "Характеристический тест",
   "Дата поступления": "2026-07-27",
 };
+
+test("criminal and bankruptcy cases use the judicial overload threshold", () => {
+  const settings = [
+    { [FIELD.yuc]: "Дальний Восток", [FIELD.caseType]: "судебное", "Порог перегруза": 4 },
+    { [FIELD.yuc]: "Дальний Восток", [FIELD.caseType]: "административное", "Порог перегруза": 2 },
+    { [FIELD.yuc]: "Дальний Восток", [FIELD.caseType]: "претензия", "Порог перегруза": 1 },
+  ];
+  assert.equal(overloadThreshold(settings, "Дальний Восток", "уголовное"), 4);
+  assert.equal(overloadThreshold(settings, "Дальний Восток", "банкротное"), 4);
+  assert.equal(overloadThreshold(settings, "Дальний Восток", "административное"), 2);
+  assert.equal(overloadThreshold([{ [FIELD.yuc]: "ЮЦ 1", [FIELD.caseType]: "судебное", "Порог перегруза": "" }], "ЮЦ 1", "судебное"), 5);
+});
+
+test("regional overload compares only the selected workload type and ignores legacy YUC threshold", () => {
+  const data = distributionData();
+  data.yucSettings = [{
+    [FIELD.yuc]: "Дальний Восток",
+    "Региональные очереди вкл\\выкл": "Да",
+    "Автоназначение вне региона вкл/выкл": "Да",
+    "Порог перегруза": 100,
+    "Считать перегруз по": "общая нагрузка",
+  }];
+  data.regionalAssignments = [{
+    [FIELD.yuc]: "Дальний Восток",
+    "Регион": "Хабаровский край",
+    "Сотрудник": "Иванов И.И.",
+    "Тип нагрузки": "судебное",
+    "Активно": "Да",
+  }];
+  data.settings = [
+    { [FIELD.yuc]: "Дальний Восток", [FIELD.caseType]: "судебное", "Активность, дни": 30, "Автозавершение, дни": 360, "Порог перегруза": 2 },
+    { [FIELD.yuc]: "Дальний Восток", [FIELD.caseType]: "административное", "Активность, дни": 30, "Автозавершение, дни": 90, "Порог перегруза": 9 },
+  ];
+  data.cases = [
+    ...Array.from({ length: 3 }, (_, index) => ({
+      case_id: `J-${index}`,
+      [FIELD.yuc]: "Дальний Восток",
+      [FIELD.caseType]: "судебное",
+      "Дата поступления": "2026-07-27",
+      [FIELD.status]: "В работе",
+      [FIELD.responsible]: "Иванов И.И.",
+    })),
+    ...Array.from({ length: 10 }, (_, index) => ({
+      case_id: `A-${index}`,
+      [FIELD.yuc]: "Дальний Восток",
+      [FIELD.caseType]: "административное",
+      "Дата поступления": "2026-07-27",
+      [FIELD.status]: "В работе",
+      [FIELD.responsible]: "Петров П.П.",
+    })),
+  ];
+  const result = recommend(data, draft, new Date(2026, 6, 27, 12, 0, 0));
+  assert.equal(result.ok, true);
+  assert.equal(result.candidate, "Петров П.П.");
+  assert.match(result.basis, /> 2/);
+});
 
 test("automatic assignment changes cases and queue state without creating a journal", () => {
   const data = distributionData();

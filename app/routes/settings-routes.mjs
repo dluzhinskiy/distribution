@@ -41,8 +41,6 @@ export function createSettingsRoutes({
           "Название": "",
           [FIELD.yuc]: yuc,
           [YUC_SETTING.regionalEnabled]: "Нет",
-          [YUC_SETTING.overloadThreshold]: 5,
-          [YUC_SETTING.overloadMode]: "общая нагрузка",
           [YUC_SETTING.allowOutsideRegion]: "Да",
           [YUC_SETTING.includeInactiveLoad]: "Нет",
           [YUC_SETTING.missingRegionMode]: "общая очередь",
@@ -52,8 +50,6 @@ export function createSettingsRoutes({
       }
       Object.assign(row, {
         [YUC_SETTING.regionalEnabled]: yesNo(patch[YUC_SETTING.regionalEnabled]),
-        [YUC_SETTING.overloadThreshold]: Number(patch[YUC_SETTING.overloadThreshold]) || 0,
-        [YUC_SETTING.overloadMode]: cleanText(patch[YUC_SETTING.overloadMode]) || "общая нагрузка",
         [YUC_SETTING.allowOutsideRegion]: yesNo(patch[YUC_SETTING.allowOutsideRegion]),
         [YUC_SETTING.includeInactiveLoad]: yesNo(patch[YUC_SETTING.includeInactiveLoad]),
         [YUC_SETTING.missingRegionMode]: cleanText(patch[YUC_SETTING.missingRegionMode]) || "общая очередь",
@@ -79,11 +75,15 @@ export function createSettingsRoutes({
         const autocompletionDays = Number(raw["Автозавершение, дни"]);
         const debtEnabledValue = yesNo(raw["Учитывать долг"]);
         const maxDebtValue = Math.max(0, Math.floor(Number(raw["Максимальный долг"]) || 0));
+        const overloadThresholdValue = Number(raw["Порог перегруза"]);
         if (!Number.isFinite(activityDays) || activityDays <= 0) {
           throw new Error(`Срок активности для «${type}» должен быть положительным числом.`);
         }
         if (!Number.isFinite(autocompletionDays) || autocompletionDays <= 0) {
           throw new Error(`Срок автозавершения для «${type}» должен быть положительным числом.`);
+        }
+        if (!Number.isFinite(overloadThresholdValue) || overloadThresholdValue < 0) {
+          throw new Error(`Порог перегруза для «${type}» должен быть неотрицательным числом.`);
         }
         let row = data.settings.find((item) => normalizeYuc(item[FIELD.yuc]) === yuc && normalizeType(item[FIELD.caseType]) === type);
         const next = {
@@ -93,6 +93,7 @@ export function createSettingsRoutes({
           "Автозавершение, дни": autocompletionDays,
           "Учитывать долг": debtEnabledValue,
           "Максимальный долг": maxDebtValue,
+          "Порог перегруза": overloadThresholdValue,
         };
         if (!row) data.settings.push(next);
         else Object.assign(row, next);

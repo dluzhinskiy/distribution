@@ -107,7 +107,7 @@ const TABLES = {
     headers: SETTINGS_HEADERS,
     keyFields: ["ЮЦ", "Тип дела"],
     dateFields: [],
-    numberFields: ["Активность, дни", "Автозавершение, дни", "Максимальный долг"],
+    numberFields: ["Активность, дни", "Автозавершение, дни", "Максимальный долг", "Порог перегруза"],
   },
   yucSettings: {
     name: "Настройки ЮЦ",
@@ -116,7 +116,7 @@ const TABLES = {
     headers: YUC_SETTINGS_HEADERS,
     keyFields: ["ЮЦ"],
     dateFields: [],
-    numberFields: ["Порог перегруза"],
+    numberFields: [],
     readOnlyFields: ["Название"],
   },
   regionalAssignments: {
