@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { publicAttachment, sanitizeApiPayload, sendJson } from "../lib/http-utils.mjs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { publicAttachment, sanitizeApiPayload, sendJson, serveStatic } from "../lib/http-utils.mjs";
 import { FIELD } from "../lib/domain.mjs";
 
 test("API payload removes authentication secrets and attachment storage tokens", () => {
@@ -39,4 +42,20 @@ test("JSON responses are never cached", () => {
   assert.match(response.headers["Cache-Control"], /no-store/);
   assert.equal(response.headers["Content-Length"], Buffer.byteLength(response.body));
   assert.deepEqual(JSON.parse(response.body), { ok: true });
+});
+
+test("JavaScript is revalidated so browser cannot mix application releases", async () => {
+  const publicDir = await fs.mkdtemp(path.join(os.tmpdir(), "mts-static-cache-"));
+  await fs.writeFile(path.join(publicDir, "app.js"), "export const version = 1;\n");
+  const response = {
+    status: 0,
+    headers: {},
+    body: Buffer.alloc(0),
+    writeHead(status, headers = {}) { this.status = status; this.headers = headers; },
+    end(body = Buffer.alloc(0)) { this.body = body; },
+  };
+  await serveStatic({ headers: {} }, response, new URL("http://localhost/app.js"), publicDir);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers["Cache-Control"], "public, no-cache, must-revalidate");
+  assert.match(response.headers.ETag, /^W\//);
 });

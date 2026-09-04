@@ -16,7 +16,6 @@ export const FIELD = {
 
 export const YUC_SETTING = {
   regionalEnabled: "Региональные очереди вкл\\выкл",
-  allowOutsideRegion: "Автоназначение вне региона вкл/выкл",
   includeInactiveLoad: "Учитывать неактивные незавершенные в нагрузке",
   missingRegionMode: "Регион не настроен",
   unavailableRegionalMode: "Региональные юристы недоступны",

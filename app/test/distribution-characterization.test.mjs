@@ -47,7 +47,6 @@ test("regional overload compares only the selected workload type and ignores leg
   data.yucSettings = [{
     [FIELD.yuc]: "Дальний Восток",
     "Региональные очереди вкл\\выкл": "Да",
-    "Автоназначение вне региона вкл/выкл": "Да",
     "Порог перегруза": 100,
     "Считать перегруз по": "общая нагрузка",
   }];

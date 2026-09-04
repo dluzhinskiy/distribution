@@ -139,7 +139,6 @@ export const YUC_SETTINGS_HEADERS = [
   "Название",
   "ЮЦ",
   "Региональные очереди вкл\\выкл",
-  "Автоназначение вне региона вкл/выкл",
   "Учитывать неактивные незавершенные в нагрузке",
   "Регион не настроен",
   "Региональные юристы недоступны",
@@ -457,7 +456,6 @@ function yucRegionalSettings(data, yuc) {
   return (data.yucSettings ?? []).find((row) => normalizeYuc(row[FIELD.yuc]) === normalizedYuc) ?? {
     [FIELD.yuc]: normalizedYuc,
     [YUC_SETTING.regionalEnabled]: "Нет",
-    [YUC_SETTING.allowOutsideRegion]: "Да",
     [YUC_SETTING.includeInactiveLoad]: "Нет",
     [YUC_SETTING.missingRegionMode]: "общая очередь",
     [YUC_SETTING.unavailableRegionalMode]: REGIONAL_UNAVAILABLE_SUBSTITUTE_THEN_GENERAL,
@@ -1054,10 +1052,9 @@ export function recommend(data, draft, date = new Date()) {
     const outsideRows = allRows.filter((row) => !regionalNames.some((name) => nameMatches(row[FIELD.name], name)));
     const outsideAvailability = availableCandidateRows(data, outsideRows, type, date, "");
     const outsideCandidates = outsideAvailability.candidates;
-    const allowOutside = yes(settings[YUC_SETTING.allowOutsideRegion]);
     const threshold = overloadThreshold(data.settings ?? [], normalizedYuc, type);
 
-    if (allowOutside && outsideCandidates.length) {
+    if (outsideCandidates.length) {
       const minRegionalLoad = Math.min(...availableRegional.map((item) => employeeLoad(data, item.employee, type, LOAD_MODE_BY_TYPE, normalizedYuc, date)));
       const minOutsideLoad = Math.min(...outsideCandidates.map((item) => employeeLoad(data, item.employee, type, LOAD_MODE_BY_TYPE, normalizedYuc, date)));
       if (minRegionalLoad - minOutsideLoad > threshold) {
@@ -1091,7 +1088,7 @@ export function recommend(data, draft, date = new Date()) {
     if (regional.ok) return regional;
     return {
       ...regional,
-      reason: `${regional.reason} Региональные очереди включены, уход вне региона не разрешён условиями перегруза.`,
+      reason: `${regional.reason} Учёт региона включён, а условия выхода в общую очередь по перегрузу не выполнены.`,
     };
   }
 

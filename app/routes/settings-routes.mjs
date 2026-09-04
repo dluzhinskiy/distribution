@@ -41,7 +41,6 @@ export function createSettingsRoutes({
           "Название": "",
           [FIELD.yuc]: yuc,
           [YUC_SETTING.regionalEnabled]: "Нет",
-          [YUC_SETTING.allowOutsideRegion]: "Да",
           [YUC_SETTING.includeInactiveLoad]: "Нет",
           [YUC_SETTING.missingRegionMode]: "общая очередь",
           [YUC_SETTING.unavailableRegionalMode]: "заместитель затем общая очередь",
@@ -50,7 +49,6 @@ export function createSettingsRoutes({
       }
       Object.assign(row, {
         [YUC_SETTING.regionalEnabled]: yesNo(patch[YUC_SETTING.regionalEnabled]),
-        [YUC_SETTING.allowOutsideRegion]: yesNo(patch[YUC_SETTING.allowOutsideRegion]),
         [YUC_SETTING.includeInactiveLoad]: yesNo(patch[YUC_SETTING.includeInactiveLoad]),
         [YUC_SETTING.missingRegionMode]: cleanText(patch[YUC_SETTING.missingRegionMode]) || "общая очередь",
         [YUC_SETTING.unavailableRegionalMode]: cleanText(patch[YUC_SETTING.unavailableRegionalMode]) || "заместитель затем общая очередь",
