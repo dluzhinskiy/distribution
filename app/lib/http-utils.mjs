@@ -148,10 +148,15 @@ export async function serveStatic(req, res, url, publicDir) {
       "Content-Length": data.length,
       ETag: etag,
     };
+    const extension = path.extname(filePath);
     if (requested === "/index.html") {
       headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private";
       headers.Pragma = "no-cache";
       headers.Expires = "0";
+    } else if ([".js", ".css"].includes(extension)) {
+      // HTML and executable assets must never come from different releases.
+      // Revalidation normally returns a lightweight 304 through the ETag above.
+      headers["Cache-Control"] = "public, no-cache, must-revalidate";
     } else {
       headers["Cache-Control"] = "public, max-age=300, must-revalidate";
     }
