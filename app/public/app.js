@@ -22,6 +22,7 @@ import {
   loadCoefficientTypes,
   weightedCases,
 } from "./lib/load-coefficients.js";
+import { caseIdFromPathname } from "./lib/case-deep-link.js";
 
 const state = createAppState();
 const rowsByYucIndex = new WeakMap();
@@ -168,6 +169,7 @@ async function logIn(event) {
   applyAuthUser(payload.user);
   hideAuthGate();
   await loadData();
+  await openCaseFromDeepLink();
 }
 
 async function completeFirstAccess(event) {
@@ -184,6 +186,7 @@ async function completeFirstAccess(event) {
   applyAuthUser(payload.user);
   hideAuthGate();
   await loadData();
+  await openCaseFromDeepLink();
 }
 
 async function logOut() {
@@ -4144,7 +4147,7 @@ function renderCaseModal() {
   $("#caseModalOk").textContent = state.caseModalEditing ? "Закрыть" : "Закрыть";
 }
 
-function openCaseModal(caseId) {
+function openCaseModal(caseId, { refresh = true } = {}) {
   const row = state.data.cases.find((item) => item.case_id === caseId);
   if (!row) return;
   state.caseModalCaseId = caseId;
@@ -4153,11 +4156,33 @@ function openCaseModal(caseId) {
   state.caseDocumentUploading = false;
   state.caseDocumentPendingFiles = [];
   state.caseDocumentPendingDeletes = [];
-  state.caseModalLoading = true;
+  state.caseModalLoading = refresh;
   renderCaseModal();
   $("#caseModal").classList.add("show");
   $("#caseModalEdit").focus();
-  refreshCaseModal(caseId);
+  if (refresh) refreshCaseModal(caseId);
+}
+
+async function openCaseFromDeepLink() {
+  const caseId = caseIdFromPathname(window.location.pathname);
+  if (!caseId || !state.data || state.caseModalCaseId === caseId) return;
+  setStatus(`Открываю карточку ${caseId}…`);
+  try {
+    const payload = await api(`/api/cases/${encodeURIComponent(caseId)}`);
+    if (!payload.case) throw new Error("Дело не найдено.");
+    const cases = Array.isArray(state.data.cases) ? state.data.cases : [];
+    const index = cases.findIndex((item) => item.case_id === caseId);
+    if (index >= 0) cases[index] = payload.case;
+    else cases.push(payload.case);
+    state.data.cases = cases;
+    const registryIndex = state.caseRegistryRows.findIndex((item) => item.case_id === caseId);
+    if (registryIndex >= 0) state.caseRegistryRows[registryIndex] = payload.case;
+    openCaseModal(caseId, { refresh: false });
+    setStatus("Готово");
+  } catch (error) {
+    setStatus("Ошибка");
+    toast(`Не удалось открыть карточку ${caseId}: ${error.message}`, "error");
+  }
 }
 
 async function refreshCaseModal(caseId) {
@@ -4186,6 +4211,7 @@ function closeCaseModal() {
     const confirmed = window.confirm("Закрыть карточку без сохранения изменений?");
     if (!confirmed) return;
   }
+  const openedFromDeepLink = caseIdFromPathname(window.location.pathname) === state.caseModalCaseId;
   $("#caseModal").classList.remove("show");
   state.caseModalCaseId = "";
   state.caseModalEditing = false;
@@ -4194,6 +4220,7 @@ function closeCaseModal() {
   state.caseDocumentPendingFiles = [];
   state.caseDocumentPendingDeletes = [];
   state.caseModalLoading = false;
+  if (openedFromDeepLink) window.history.replaceState(null, "", "/");
 }
 
 function startCaseModalEdit() {
@@ -5106,6 +5133,7 @@ async function init() {
     applyAuthUser(session.user);
     hideAuthGate();
     await loadData();
+    await openCaseFromDeepLink();
   } catch (error) {
     showAuthGate(error.message || "Не удалось проверить вход в приложение.");
   }
