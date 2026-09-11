@@ -132,7 +132,8 @@ export function readBinaryBody(req, maxBytes = 12_000_000) {
 }
 
 export async function serveStatic(req, res, url, publicDir) {
-  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+  const caseDeepLink = req.method === "GET" && /^\/case\/[^/]+\/?$/.test(url.pathname);
+  const requested = url.pathname === "/" || caseDeepLink ? "/index.html" : url.pathname;
   const relativePath = requested.replace(/^\/+/, "");
   const filePath = path.resolve(publicDir, relativePath);
   const publicRoot = `${path.resolve(publicDir)}${path.sep}`;
