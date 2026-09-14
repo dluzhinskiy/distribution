@@ -59,3 +59,19 @@ test("JavaScript is revalidated so browser cannot mix application releases", asy
   assert.equal(response.headers["Cache-Control"], "public, no-cache, must-revalidate");
   assert.match(response.headers.ETag, /^W\//);
 });
+
+test("case deep link serves the application entry point", async () => {
+  const publicDir = await fs.mkdtemp(path.join(os.tmpdir(), "mts-case-link-"));
+  await fs.writeFile(path.join(publicDir, "index.html"), "<main>application</main>\n");
+  const response = {
+    status: 0,
+    headers: {},
+    body: Buffer.alloc(0),
+    writeHead(status, headers = {}) { this.status = status; this.headers = headers; },
+    end(body = Buffer.alloc(0)) { this.body = body; },
+  };
+  await serveStatic({ method: "GET", headers: {} }, response, new URL("http://localhost/case/CASE-1549"), publicDir);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.toString(), "<main>application</main>\n");
+  assert.match(response.headers["Cache-Control"], /no-store/);
+});

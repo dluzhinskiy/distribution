@@ -1,3 +1,4 @@
+import { RESPONSIBLE_LINK, resolveResponsibleLink } from './responsible-link.mjs';
 import {
   CASE_HEADERS,
   EMPLOYEE_HEADERS,
@@ -57,7 +58,7 @@ const TABLES = {
     // Поле вложений может быть скрыто в пользовательском представлении. Для дел
     // читаем полный набор полей, чтобы обычное сохранение не потеряло документы.
     readAllFields: true,
-    headers: CASE_HEADERS,
+    headers: [...CASE_HEADERS, RESPONSIBLE_LINK],
     keyFields: ["case_id"],
     dateFields: ["Дата поступления", "Дата завершения", "Отложить завершение до", "Дата предупреждения о завершении", "Дата распределения"],
     attachmentFields: ["Документы"],
@@ -382,6 +383,10 @@ function normalizeToTabs(table, row = {}) {
   for (const header of table.headers) {
     if (readOnlySet.has(header)) continue;
     const value = row[header];
+    if (header === RESPONSIBLE_LINK) {
+      if (Array.isArray(value)) fields[outboundFieldName(table, header)] = value;
+      continue;
+    }
     if (table.name === "Дела" && header === "Ссылка") {
       fields[outboundFieldName(table, header)] = toTabsUrl(value);
     } else if (attachmentSet.has(header)) {
@@ -431,7 +436,16 @@ async function readTable(table, { fields = null, pageSize = PAGE_SIZE } = {}) {
   return rows;
 }
 
+async function prepareResponsibleLinks(table, rows) {
+  if (table.name !== "Дела" || !rows.length) return;
+  const employees = rows.some(row => cleanText(row["Ответственный"]))
+    ? await readTable(TABLES.employees) : [];
+  const links = rows.map(row => resolveResponsibleLink(row, employees));
+  rows.forEach((row, index) => { row[RESPONSIBLE_LINK] = links[index]; });
+}
+
 async function createRows(table, rows) {
+  await prepareResponsibleLinks(table, rows);
   for (const chunk of chunks(rows, 1000)) {
     let pendingRows = chunk;
     for (let dispatch = 0; dispatch < 2 && pendingRows.length; dispatch += 1) {
@@ -469,6 +483,7 @@ export async function createTableRows(key, rows = []) {
 }
 
 async function updateRows(table, updates) {
+  await prepareResponsibleLinks(table, updates.map(update => update.row));
   for (const chunk of chunks(updates, 10)) {
     await request(table, "PATCH", {
       records: chunk.map(({ recordId, row }) => ({
@@ -483,9 +498,14 @@ async function updateRows(table, updates) {
 export async function patchTableRows(key, updates = []) {
   const table = TABLES[key];
   if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  const linkedUpdates = key === "cases"
+    ? updates.filter(update => update.changedFields?.some(field => field === "Ответственный" || field === "ЮЦ"))
+    : [];
+  await prepareResponsibleLinks(table, linkedUpdates.map(update => update.row));
   const records = updates.map(({ row, changedFields = [] }) => {
     if (!row?._recordId) throw new Error(`Для адресного обновления «${table.name}» не найден recordId.`);
     const allowed = new Set(changedFields.map((field) => outboundFieldName(table, field)));
+    if (linkedUpdates.some(update => update.row === row)) allowed.add(outboundFieldName(table, RESPONSIBLE_LINK));
     const fields = Object.fromEntries(Object.entries(normalizeToTabs(table, row)).filter(([field]) => allowed.has(field)));
     return { recordId: row._recordId, fields };
   }).filter((record) => Object.keys(record.fields).length);
