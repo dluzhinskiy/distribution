@@ -13,10 +13,18 @@ export function canManageYuc(user, yuc) {
     normalizeYuc(user.yuc) === normalizeYuc(yuc);
 }
 
-export function canEditCase(user, employee, caseRow) {
+export function canEditCase(user, employee, caseRow, employees = []) {
   if (!user || !caseRow) return false;
   if (canManageYuc(user, caseRow[FIELD.yuc])) return true;
-  return normalizeRole(user.role) === ROLE.employee &&
-    normalizeYuc(user.yuc) === normalizeYuc(caseRow[FIELD.yuc]) &&
-    nameMatches(employee?.[FIELD.name], caseRow[FIELD.responsible]);
+  if (normalizeRole(user.role) !== ROLE.employee || !user.yuc || !caseRow[FIELD.yuc] ||
+      normalizeYuc(user.yuc) !== normalizeYuc(caseRow[FIELD.yuc])) return false;
+  const links = caseRow["ОтветственныйУЗ"];
+  if (Array.isArray(links) && links.length) {
+    return links.length === 1 && Boolean(employee?._recordId) && links[0] === employee._recordId;
+  }
+  if (!employees.length) return false;
+  const candidates = employees.filter(item =>
+    normalizeYuc(item[FIELD.yuc]) === normalizeYuc(caseRow[FIELD.yuc]) &&
+    nameMatches(item[FIELD.name], caseRow[FIELD.responsible]));
+  return candidates.length === 1 && candidates[0].employee_id === user.employeeId;
 }

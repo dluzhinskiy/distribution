@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
 import { canManageYuc } from "./lib/access-policy.mjs";
 import { FIELD, cleanText, enrichData, normalizeYuc, nameMatches } from "./lib/domain.mjs";
-import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readOperationalCases, readData as readDataFresh, replaceTableAttachments, saveData, storagePath, tabsStorageStatus } from "./lib/tabs-store.mjs";
+import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readOperationalCases, readData as readDataFresh, replaceTableAttachments, saveData, storagePath, tabsStorageStatus, setResponsibleEmployeesReader } from "./lib/tabs-store.mjs";
 import { directoriesPath, readDirectories } from "./lib/directories.mjs";
 import { loadRuntimeConfig } from "./lib/runtime-config.mjs";
 import { readBinaryBody, readJsonBody as readBody, sendJson, serveStatic } from "./lib/http-utils.mjs";
@@ -80,6 +80,7 @@ const operationalCaseCache = createTableCache({
   defaultTtl: CACHE_TTL.cases,
 });
 const readData = tableCache.read;
+setResponsibleEmployeesReader(async () => (await readData(["employees"])).employees);
 async function readRouteData(keys = ALL_TABLE_KEYS, options = {}) {
   return readRequestedTables(readData, keys, options);
 }

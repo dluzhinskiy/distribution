@@ -2,6 +2,38 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createTableCache } from "../lib/table-cache.mjs";
 
+test("an in-flight read cannot overwrite a subsequent cache replacement", async () => {
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const cache = createTableCache({
+    readFresh: async () => { await pending; return { cases:[{value:"old"}] }; },
+    tableKeys:["cases"], bootstrapKeys:["cases"], ttlByTable:{}, defaultTtl:60000,
+  });
+  const reading = cache.read();
+  cache.replace("cases", [{value:"new"}]);
+  release();
+  assert.equal((await reading).cases[0].value, "new");
+});
+
+test("invalidation during reading triggers a fresh read", async () => {
+  let release;
+  let calls = 0;
+  const pending = new Promise(resolve => { release = resolve; });
+  const cache = createTableCache({
+    readFresh: async () => {
+      calls++;
+      if (calls === 1) { await pending; return {cases:[{value:"old"}]}; }
+      return {cases:[{value:"new"}]};
+    },
+    tableKeys:["cases"], bootstrapKeys:["cases"], ttlByTable:{}, defaultTtl:60000,
+  });
+  const reading = cache.read();
+  cache.invalidate(["cases"]);
+  release();
+  assert.equal((await reading).cases[0].value, "new");
+  assert.equal(calls, 2);
+});
+
 test("table cache reuses reads, returns clones and supports forced refresh", async () => {
   let reads = 0;
   const source = [{ value: 1 }];

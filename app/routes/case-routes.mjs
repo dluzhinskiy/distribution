@@ -1,3 +1,4 @@
+import { applyCaseStatusPatch } from "../lib/case-status.mjs";
 import { Readable } from "node:stream";
 import { canEditCase } from "../lib/access-policy.mjs";
 import {
@@ -99,7 +100,7 @@ export function createCaseRoutes({
 }) {
   function requireCaseDocumentWrite(user, data, caseRow) {
     const employee = data.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
-    if (!canEditCase(user, employee, caseRow)) {
+    if (!canEditCase(user, employee, caseRow, data.employees)) {
       const error = new Error("Изменять документы можно только в собственном деле своего ЮЦ.");
       error.status = 403;
       throw error;
@@ -107,7 +108,7 @@ export function createCaseRoutes({
   }
 
   async function findCaseAttachment(caseId, documentId) {
-    const data = await readData(["cases"]);
+    const data = await readData(["cases", "employees"]);
     const caseRow = findCase(data, caseId);
     if (!caseRow) {
       const error = new Error("Дело не найдено.");
@@ -163,10 +164,11 @@ export function createCaseRoutes({
       error.status = 404;
       throw error;
     }
+    if (isDeletedCase(caseRow)) throw Object.assign(new Error("Сначала восстановите удалённое дело через действие восстановления."), { status: 409 });
     const manager = auth.isManager(user);
     if (!manager) {
       const employee = data.employees.find((item) => cleanText(item.employee_id) === user.employeeId);
-      if (!canEditCase(user, employee, caseRow)) {
+      if (!canEditCase(user, employee, caseRow, data.employees)) {
         const error = new Error("Можно редактировать только собственные дела.");
         error.status = 403;
         throw error;
@@ -182,22 +184,26 @@ export function createCaseRoutes({
         error.status = 403;
         throw error;
       }
-      Object.assign(caseRow, Object.fromEntries(Object.entries(patch).filter(([field]) => EMPLOYEE_SELF_EDIT_FIELDS.has(field))));
-      if (patch["Статус"] === "Завершено" && !caseRow["Дата завершения"]) caseRow["Дата завершения"] = new Date().toISOString().slice(0, 10);
+
     } else {
       requireManageYuc(user, caseRow[FIELD.yuc]);
       assertAllowedFields(patch, MANAGER_CASE_EDIT_FIELDS, "Через карточку нельзя изменять");
-      Object.assign(caseRow, patch);
+
     }
-    const changedFields = [...Object.keys(patch)];
+    const changedFields = applyCaseStatusPatch(caseRow, patch);
     if (patch["Статус"] === "Завершено" && !changedFields.includes("Дата завершения")) changedFields.push("Дата завершения");
     await patchCachedRow("cases", caseRow, changedFields, data);
     const confirmedData = enrichData(data);
     const confirmedCase = assertConfirmedCase(confirmedData, id, "обновление дела");
-    sendJson(res, 200, { ok: true, case: confirmedCase });
+    const employee = data.employees.find(item => item.employee_id === user.employeeId);
+    sendJson(res, 200, { ok: true, case: { ...confirmedCase, canEdit: canEditCase(user, employee, confirmedCase, data.employees) } });
   }
 
   return async function handleCaseRoute(req, res, url, user) {
+    if (url.pathname.startsWith("/api/cases/") && url.pathname.split("/")[4] === "documents") {
+      sendJson(res, 410, { ok: false, error: "Работа с вложениями отключена.", code: "ATTACHMENTS_DISABLED" });
+      return true;
+    }
     if (req.method === "GET" && /^\/api\/cases\/[^/]+$/.test(url.pathname)) {
       const caseId = decodeURIComponent(url.pathname.split("/").pop());
       const data = await readData(["cases"]);
@@ -207,7 +213,8 @@ export function createCaseRoutes({
         error.status = 404;
         throw error;
       }
-      sendJson(res, 200, { ok: true, case: caseRow });
+      const employee = data.employees.find(item => item.employee_id === user.employeeId);
+      sendJson(res, 200, { ok: true, case: { ...caseRow, Документы: [], canEdit: !isDeletedCase(caseRow) && canEditCase(user, employee, caseRow, data.employees) } });
       return true;
     }
 

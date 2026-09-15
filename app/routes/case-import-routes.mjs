@@ -24,7 +24,7 @@ export function createCaseImportRoutes({
       const importYuc = normalizeYuc(requestedYuc);
       requireManageYuc(user, importYuc);
       const buffer = await readBinaryBody(req);
-      const data = await readData(["cases", "employees"]);
+      const data = await readData(["cases", "employees", "settings", "vacations"]);
       const directories = await readDirectories(data);
       const plan = parseCaseWorkbook(buffer, data.cases ?? [], {
         yuc: importYuc,
@@ -44,7 +44,7 @@ export function createCaseImportRoutes({
         sendJson(res, 400, { ok: false, error: "Выберите новые дела или обновления для применения." });
         return true;
       }
-      const data = await readData(["cases", "employees"]);
+      const data = await readData(["cases", "employees", "settings", "vacations"]);
       const previewVersions = body.cacheVersions ?? {};
       const currentVersions = cacheVersions(["cases", "employees"]);
       const previewSnapshotCurrent = ["cases", "employees"].every((key) => (

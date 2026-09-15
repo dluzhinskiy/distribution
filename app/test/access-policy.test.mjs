@@ -16,7 +16,7 @@ test("all authenticated roles may read cases from every YUC", () => {
 
 test("employee edits only own case in own YUC", () => {
   const user = { employeeId: "E1", role: "Сотрудник", yuc: "Дальний Восток" };
-  assert.equal(canEditCase(user, ownEmployee, ownCase), true);
+  assert.equal(canEditCase(user, ownEmployee, ownCase, [ownEmployee]), true);
   assert.equal(canEditCase(user, ownEmployee, colleagueCase), false);
   assert.equal(canEditCase(user, ownEmployee, foreignCase), false);
 });

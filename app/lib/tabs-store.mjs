@@ -62,6 +62,7 @@ const TABLES = {
     keyFields: ["case_id"],
     dateFields: ["Дата поступления", "Дата завершения", "Отложить завершение до", "Дата предупреждения о завершении", "Дата распределения"],
     attachmentFields: ["Документы"],
+    readOnlyFields: ["Документы"],
     writeFieldNames: {
       "Дата предупреждения о завершении": "Дата предупрежедения о завершении",
     },
@@ -150,6 +151,11 @@ const TABLES = {
 };
 
 const TABLE_KEYS = Object.keys(TABLES);
+
+let responsibleEmployeesReader = () => readTable(TABLES.employees);
+export function setResponsibleEmployeesReader(reader) {
+  responsibleEmployeesReader = reader;
+}
 
 export function storagePath() {
   return "MTS Tabs API";
@@ -439,7 +445,7 @@ async function readTable(table, { fields = null, pageSize = PAGE_SIZE } = {}) {
 async function prepareResponsibleLinks(table, rows) {
   if (table.name !== "Дела" || !rows.length) return;
   const employees = rows.some(row => cleanText(row["Ответственный"]))
-    ? await readTable(TABLES.employees) : [];
+    ? await responsibleEmployeesReader() : [];
   const links = rows.map(row => resolveResponsibleLink(row, employees));
   rows.forEach((row, index) => { row[RESPONSIBLE_LINK] = links[index]; });
 }

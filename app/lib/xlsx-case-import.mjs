@@ -43,6 +43,8 @@ function findEndOfCentralDirectory(buffer) {
 function unzipWorkbook(buffer) {
   const eocdOffset = findEndOfCentralDirectory(buffer);
   const entriesCount = readUInt16(buffer, eocdOffset + 10);
+  if (entriesCount > 2048) throw Object.assign(new Error("Слишком много элементов в Excel-архиве."), { status: 413 });
+  let expandedBytes = 0;
   const centralDirOffset = readUInt32(buffer, eocdOffset + 16);
   const entries = new Map();
   let offset = centralDirOffset;
@@ -70,10 +72,13 @@ function unzipWorkbook(buffer) {
     if (method === 0) {
       data = compressed;
     } else if (method === 8) {
-      data = zlib.inflateRawSync(compressed);
+      data = zlib.inflateRawSync(compressed, { maxOutputLength: 32 * 1024 * 1024 });
     } else {
       throw new Error(`Excel использует неподдерживаемый метод сжатия: ${method}.`);
     }
+    expandedBytes += data.length;
+    if (data.length > 32 * 1024 * 1024 || expandedBytes > 64 * 1024 * 1024)
+      throw Object.assign(new Error("Превышен допустимый размер распакованного Excel."), { status: 413 });
     entries.set(fileName.replaceAll("\\", "/"), data);
     offset += 46 + fileNameLength + extraLength + commentLength;
   }

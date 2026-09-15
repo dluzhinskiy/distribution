@@ -3734,7 +3734,7 @@ const caseModalEditableFields = [
 function canEditCaseRow(row) {
   if (!row || isExternalReadOnlyYuc()) return false;
   if (!isEmployeeUser()) return true;
-  return nameMatches(row["Ответственный"], state.authUser?.name);
+  return row.canEdit === true;
 }
 
 function editableCaseModalFields() {
@@ -4138,7 +4138,6 @@ function renderCaseModal() {
         ${caseModalField({ field: "Предмет", label: "Предмет", type: "textarea", wide: true, rows: 4, readonly: caseModalFieldReadonlyForUser("Предмет") })}
         ${caseModalField({ field: "Движение дела", label: "Движение дела", type: "textarea", wide: true, rows: 5, readonly: caseModalFieldReadonlyForUser("Движение дела") })}
       </div>
-      ${caseDocumentsSection(row, canEdit)}
     </div>
   `;
   $("#caseModalEdit").classList.toggle("hidden", state.caseModalEditing || !canEdit);

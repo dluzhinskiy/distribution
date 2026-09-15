@@ -82,9 +82,10 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
     const requested = normalizeKeys(keys);
     await Promise.all(requested.map((key) => {
       if (!cache.pending.has(key)) {
+        const generation = cache.versions.get(key) || 0;
         cache.pending.set(key, readFreshTable(key)
           .then((data) => {
-            merge(data);
+            if ((cache.versions.get(key) || 0) === generation) merge(data);
             return data;
           })
           .finally(() => cache.pending.delete(key)));
@@ -101,7 +102,11 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
       : options.force
       ? requested
       : requested.filter((key) => !cache.tables.has(key) || age(key) > ttl(key));
-    if (stale.length) await refresh(stale);
+    if (stale.length) {
+      await refresh(stale);
+      const invalidated = requested.filter(key => !cache.loadedAt.has(key));
+      if (invalidated.length) await refresh(invalidated);
+    }
     const data = Object.fromEntries(requested.map((key) => [
       key,
       Array.isArray(cache.tables.get(key)) ? cache.tables.get(key).map(cloneRow) : cache.tables.get(key),
@@ -132,7 +137,10 @@ export function createTableCache({ readFresh, tableKeys, bootstrapKeys, ttlByTab
   }
 
   function invalidate(keys = tableKeys) {
-    for (const key of normalizeKeys(keys)) cache.loadedAt.delete(key);
+    for (const key of normalizeKeys(keys)) {
+      cache.loadedAt.delete(key);
+      cache.versions.set(key, (cache.versions.get(key) || 0) + 1);
+    }
   }
 
   function versions(keys = tableKeys) {
