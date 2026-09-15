@@ -206,7 +206,7 @@ export function createCaseRoutes({
     }
     if (req.method === "GET" && /^\/api\/cases\/[^/]+$/.test(url.pathname)) {
       const caseId = decodeURIComponent(url.pathname.split("/").pop());
-      const data = await readData(["cases"]);
+      const data = await readData(["cases", "employees"]);
       const caseRow = findCase(data, caseId);
       if (!caseRow) {
         const error = new Error("Дело не найдено.");
