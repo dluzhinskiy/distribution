@@ -1,6 +1,7 @@
 import { applyCaseStatusPatch } from "../lib/case-status.mjs";
 import { Readable } from "node:stream";
 import { canEditCase } from "../lib/access-policy.mjs";
+import { caseIdMatches } from "../lib/domain-values.mjs";
 import {
   FIELD,
   assignAutomatically,
@@ -36,7 +37,7 @@ const DISTRIBUTION_READ_TABLES = [
 ];
 
 function findCase(data, caseId) {
-  return data.cases.find((item) => item.case_id === caseId);
+  return data.cases.find((item) => caseIdMatches(item.case_id, caseId));
 }
 
 function assertConfirmedCase(data, caseId, action = "сохранено") {

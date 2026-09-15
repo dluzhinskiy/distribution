@@ -4170,13 +4170,14 @@ async function openCaseFromDeepLink() {
     const payload = await api(`/api/cases/${encodeURIComponent(caseId)}`);
     if (!payload.case) throw new Error("Дело не найдено.");
     const cases = Array.isArray(state.data.cases) ? state.data.cases : [];
-    const index = cases.findIndex((item) => item.case_id === caseId);
+    const canonicalCaseId = payload.case.case_id;
+    const index = cases.findIndex((item) => String(item.case_id).toLowerCase() === String(canonicalCaseId).toLowerCase());
     if (index >= 0) cases[index] = payload.case;
     else cases.push(payload.case);
     state.data.cases = cases;
-    const registryIndex = state.caseRegistryRows.findIndex((item) => item.case_id === caseId);
+    const registryIndex = state.caseRegistryRows.findIndex((item) => String(item.case_id).toLowerCase() === String(canonicalCaseId).toLowerCase());
     if (registryIndex >= 0) state.caseRegistryRows[registryIndex] = payload.case;
-    openCaseModal(caseId, { refresh: false });
+    openCaseModal(canonicalCaseId, { refresh: false });
     setStatus("Готово");
   } catch (error) {
     setStatus("Ошибка");

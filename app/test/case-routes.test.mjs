@@ -15,7 +15,7 @@ function createHarness({ body = {}, data }) {
     auth,
     readBody: async () => body,
     readBinaryBody: async () => Buffer.alloc(0),
-    readData: async () => data,
+    readData: async (keys) => Object.fromEntries(keys.map(key => [key, data[key] ?? []])),
     saveAndConfirm: async (nextData, tables) => {
       savedTables.push(...tables);
       return nextData;
@@ -50,6 +50,22 @@ test("authenticated employee may read a case from another YUC", async () => {
   assert.equal(matched, true);
   assert.equal(responses[0].status, 200);
   assert.equal(responses[0].payload.case.case_id, "CASE-2");
+});
+
+test("case deep link lookup ignores case_id letter case", async () => {
+  const data = {
+    cases: [{ case_id: "CASE-1500", [FIELD.yuc]: "ЮЦ 1", [FIELD.responsible]: "Иванов Иван" }],
+    employees: [],
+  };
+  const { handle, responses } = createHarness({ data });
+  await handle(
+    { method: "GET" },
+    {},
+    new URL("http://localhost/api/cases/case-1500"),
+    { employeeId: "EMP-0", role: "Администратор", yuc: "" },
+  );
+  assert.equal(responses[0].status, 200);
+  assert.equal(responses[0].payload.case.case_id, "CASE-1500");
 });
 
 test("employee may patch own case and cannot patch colleague case", async () => {

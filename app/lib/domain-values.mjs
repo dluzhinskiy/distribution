@@ -45,6 +45,12 @@ export function nameMatches(a, b) {
   return left === right || shortName(left) === right || left === shortName(right);
 }
 
+export function caseIdMatches(a, b) {
+  const left = cleanText(a).toLocaleUpperCase("ru-RU");
+  const right = cleanText(b).toLocaleUpperCase("ru-RU");
+  return Boolean(left && right && left === right);
+}
+
 export function normalizeType(value) {
   const type = cleanText(value).toLowerCase();
   if (type === "админ") return "административное";

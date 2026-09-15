@@ -1,10 +1,10 @@
 import { FIELD } from "./domain-schema.mjs";
-import { cleanText, nameMatches, todayISO, toISODate } from "./domain-values.mjs";
+import { caseIdMatches, cleanText, nameMatches, todayISO, toISODate } from "./domain-values.mjs";
 
 const DELETED_STATUS = "Удалено";
 
 function caseById(data, caseId) {
-  return (data.cases ?? []).find((row) => cleanText(row.case_id) === cleanText(caseId));
+  return (data.cases ?? []).find((row) => caseIdMatches(row.case_id, caseId));
 }
 
 function employeeByName(data, name) {

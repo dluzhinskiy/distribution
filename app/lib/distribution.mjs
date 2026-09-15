@@ -5,6 +5,7 @@ import { changeCaseResponsible, completeCaseByDeadline, deleteCase, postponeCase
 import { allDatesInRange, clearVacationYear, isEmployeeOnVacation, normalizeVacation, replaceVacationDatesForEmployees, replaceVacationYear, setVacationDates, vacationDatesForEmployee, vacationKey } from "./vacations.mjs";
 import {
   addDays,
+  caseIdMatches,
   cleanMultilineText,
   cleanText,
   daysBetween,
@@ -733,8 +734,7 @@ function availableCandidateRows(data, rows, type, date, lastAuto = "") {
 }
 
 function caseById(data, caseId) {
-  const normalizedId = cleanText(caseId);
-  return data.cases.find((item) => cleanText(item.case_id) === normalizedId);
+  return data.cases.find((item) => caseIdMatches(item.case_id, caseId));
 }
 
 function ensureAssignableExistingCase(caseRow) {
