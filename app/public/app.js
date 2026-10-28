@@ -75,6 +75,14 @@ function isManagerUser() {
   return ["Руководитель", "Заместитель"].includes(currentRole());
 }
 
+function canManageEmployeeLifecycleUi(employee = null) {
+  if (isAdminUser()) return true;
+  if (!isManagerUser() || isExternalReadOnlyYuc()) return false;
+  if (!employee) return selectedYuc() === userYuc();
+  const targetRole = String(employee["Роль доступа"] || "Сотрудник").trim();
+  return normalizeYucName(employee["ЮЦ"]) === userYuc() && targetRole === "Сотрудник";
+}
+
 function userYuc() {
   return normalizeYucName(state.authUser?.yuc || "");
 }
@@ -118,7 +126,7 @@ function applyRoleUi() {
   $("#caseDeleteEditToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#showDeletedCasesToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#loadCoefficientsCard")?.classList.toggle("hidden", !isAdminUser());
-  $("#employeeAdminActions")?.classList.toggle("hidden", !isAdminUser());
+  $("#employeeAdminActions")?.classList.toggle("hidden", !canManageEmployeeLifecycleUi());
   const accessDescription = $("#accessDescription");
   if (accessDescription) accessDescription.textContent = isAdminUser()
     ? "Выдавайте одноразовые коды первичного входа и назначайте роли. Код показывается один раз."
@@ -2327,7 +2335,7 @@ function employeeDebtInput(employee, type) {
 
 function renderEmployees() {
   const employees = employeesForSelectedYuc().filter((employee) =>
-    !isArchivedEmployeeRow(employee) || (isAdminUser() && state.showArchivedEmployees)
+    !isArchivedEmployeeRow(employee) || (canManageEmployeeLifecycleUi() && state.showArchivedEmployees)
   );
   $("#employeesTable").innerHTML = employees.length ? employees.map((employee) => `
     <tr class="${employee["Активен"] === "Да" && !isArchivedEmployeeRow(employee) ? "" : "employee-inactive"}" data-employee-row="${escapeHtml(employee.employee_id)}">
@@ -2345,8 +2353,8 @@ function renderEmployees() {
       <td>${employee["Активные всего"]}</td>
       <td><div class="case-actions">
         ${isArchivedEmployeeRow(employee)
-          ? `<button class="tiny-btn restore-employee admin-only" data-id="${escapeHtml(employee.employee_id)}">Восстановить</button>`
-          : `<button class="tiny-btn save-employee" data-id="${escapeHtml(employee.employee_id)}">Сохранить</button>${isAdminUser() && employee.employee_id !== state.authUser?.employeeId ? `<button class="tiny-btn archive-employee" data-id="${escapeHtml(employee.employee_id)}" data-name="${escapeHtml(employee["ФИО"])}">Уволить</button>` : ""}`}
+          ? canManageEmployeeLifecycleUi(employee) ? `<button class="tiny-btn restore-employee" data-id="${escapeHtml(employee.employee_id)}">Восстановить</button>` : ""
+          : `<button class="tiny-btn save-employee" data-id="${escapeHtml(employee.employee_id)}">Сохранить</button>${canManageEmployeeLifecycleUi(employee) && employee.employee_id !== state.authUser?.employeeId ? `<button class="tiny-btn archive-employee" data-id="${escapeHtml(employee.employee_id)}" data-name="${escapeHtml(employee["ФИО"])}">Уволить</button>` : ""}`}
       </div></td>
     </tr>
   `).join("") : `<tr><td colspan="13" class="empty-cell">Сотрудники выбранного ЮЦ не найдены.</td></tr>`;
@@ -3404,13 +3412,15 @@ async function saveEmployee(employeeId) {
 }
 
 function openEmployeeAddModal() {
-  if (!isAdminUser()) return;
+  if (!canManageEmployeeLifecycleUi()) return;
   const form = $("#employeeAddForm");
   form?.reset();
   const select = $("#employeeAddYuc");
   if (select) {
-    select.innerHTML = availableYucs().map((yuc) => `<option value="${escapeHtml(yuc)}">${escapeHtml(yuc)}</option>`).join("");
-    select.value = selectedYuc();
+    const yucs = isAdminUser() ? availableYucs() : [userYuc()];
+    select.innerHTML = yucs.map((yuc) => `<option value="${escapeHtml(yuc)}">${escapeHtml(yuc)}</option>`).join("");
+    select.value = isAdminUser() ? selectedYuc() : userYuc();
+    select.disabled = false;
   }
   $("#employeeAddModal")?.classList.add("show");
   $("#employeeAddModal")?.setAttribute("aria-hidden", "false");
@@ -3424,7 +3434,7 @@ function closeEmployeeAddModal() {
 
 async function createEmployee(event) {
   event.preventDefault();
-  if (!isAdminUser()) return;
+  if (!canManageEmployeeLifecycleUi()) return;
   const form = event.currentTarget;
   const employee = Object.fromEntries(new FormData(form).entries());
   setStatus("Добавляю сотрудника…");

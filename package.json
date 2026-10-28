@@ -6,6 +6,7 @@
     "postinstall": "cd app && npm install",
     "start": "cd app && npm start",
     "test": "cd app && npm test",
-    "tabs:ensure-queues": "cd app && npm run tabs:ensure-queues"
+    "tabs:ensure-queues": "cd app && npm run tabs:ensure-queues",
+    "tabs:ensure-conclusions": "cd app && npm run tabs:ensure-conclusions"
   }
 }

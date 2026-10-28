@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canEditCase, canManageYuc, canReadCase } from "../lib/access-policy.mjs";
+import { canEditCase, canManageEmployeeLifecycle, canManageYuc, canReadCase } from "../lib/access-policy.mjs";
 
 const ownEmployee = { employee_id: "E1", "ФИО": "Иванов И.И.", "ЮЦ": "Дальний Восток" };
 const ownCase = { case_id: "CASE-1", "ЮЦ": "Дальний Восток", "Ответственный": "Иванов И.И." };
@@ -28,4 +28,17 @@ test("manager and deputy manage only their YUC; admin manages every YUC", () => 
     assert.equal(canManageYuc(user, "Юг"), false);
   }
   assert.equal(canManageYuc({ employeeId: "EMP-000", role: "Администратор", yuc: "" }, "Юг"), true);
+});
+
+test("manager and deputy manage lifecycle only for ordinary employees of own YUC", () => {
+  const employee = { employee_id: "E3", "ЮЦ": "Дальний Восток", "Роль доступа": "Сотрудник" };
+  const deputy = { employee_id: "E4", "ЮЦ": "Дальний Восток", "Роль доступа": "Заместитель" };
+  const foreignEmployee = { ...employee, employee_id: "E5", "ЮЦ": "Юг" };
+  for (const role of ["Руководитель", "Заместитель"]) {
+    const user = { employeeId: "E2", role, yuc: "Дальний Восток" };
+    assert.equal(canManageEmployeeLifecycle(user, employee), true);
+    assert.equal(canManageEmployeeLifecycle(user, foreignEmployee), false);
+    assert.equal(canManageEmployeeLifecycle(user, deputy), false);
+  }
+  assert.equal(canManageEmployeeLifecycle({ employeeId: "A", role: "Администратор", yuc: "" }, deputy), true);
 });

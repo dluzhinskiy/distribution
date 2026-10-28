@@ -13,6 +13,14 @@ export function canManageYuc(user, yuc) {
     normalizeYuc(user.yuc) === normalizeYuc(yuc);
 }
 
+export function canManageEmployeeLifecycle(user, employee) {
+  const actorRole = normalizeRole(user?.role);
+  if (actorRole === ROLE.admin) return true;
+  return [ROLE.manager, ROLE.deputy].includes(actorRole) &&
+    canManageYuc(user, employee?.[FIELD.yuc]) &&
+    normalizeRole(employee?.["Роль доступа"]) === ROLE.employee;
+}
+
 export function canEditCase(user, employee, caseRow, employees = []) {
   if (!user || !caseRow) return false;
   if (canManageYuc(user, caseRow[FIELD.yuc])) return true;

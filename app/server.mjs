@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAuthController } from "./lib/auth-controller.mjs";
-import { canManageYuc } from "./lib/access-policy.mjs";
+import { canManageEmployeeLifecycle, canManageYuc } from "./lib/access-policy.mjs";
 import { FIELD, cleanText, enrichData, normalizeYuc, nameMatches } from "./lib/domain.mjs";
 import { caseIdMatches } from "./lib/domain-values.mjs";
 import { createTableRows, patchTableRow, patchTableRows, readDashboardCases, readOperationalCases, readData as readDataFresh, replaceTableAttachments, saveData, storagePath, tabsStorageStatus, setResponsibleEmployeesReader } from "./lib/tabs-store.mjs";
@@ -413,10 +413,10 @@ async function api(req, res, url) {
   if (await handleSettingsRoute(req, res, url, user)) return;
 
   if (req.method === "POST" && url.pathname === "/api/employees") {
-    if (!auth.isAdmin(user)) throw Object.assign(new Error("Добавлять сотрудников может только администратор."), { status: 403 });
     const body = await readBody(req);
     const data = await readRouteData(["employees", "queues"]);
     const { employee, queueRows } = createEmployeeRows(data, body.employee && typeof body.employee === "object" ? body.employee : body);
+    requireManageYuc(user, employee[FIELD.yuc]);
     await createTableRows("employees", [employee]);
     await createTableRows("queues", queueRows);
     const fresh = await readRouteData(["employees", "queues"], { force: true });
@@ -427,11 +427,14 @@ async function api(req, res, url) {
 
   const employeeLifecycleMatch = url.pathname.match(/^\/api\/employees\/([^/]+)\/(archive|restore)$/);
   if (req.method === "POST" && employeeLifecycleMatch) {
-    if (!auth.isAdmin(user)) throw Object.assign(new Error("Увольнять и восстанавливать сотрудников может только администратор."), { status: 403 });
     const employeeId = decodeURIComponent(employeeLifecycleMatch[1]);
     const action = employeeLifecycleMatch[2];
     const data = await readRouteData(["employees"]);
     const employee = data.employees.find((item) => cleanText(item.employee_id) === employeeId);
+    if (!employee) throw Object.assign(new Error("Сотрудник не найден."), { status: 404 });
+    if (!canManageEmployeeLifecycle(user, employee)) {
+      throw Object.assign(new Error("Можно увольнять и восстанавливать только обычных сотрудников своего ЮЦ."), { status: 403 });
+    }
     if (action === "archive") archiveEmployee(employee, user.employeeId);
     else restoreEmployee(employee);
     await patchTableRow("employees", employee, EMPLOYEE_ARCHIVE_FIELDS);
