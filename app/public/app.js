@@ -53,7 +53,7 @@ const CASE_COLUMN_OPTIONS = [
   { key: "responsible", label: "Ответственный" },
   { key: "status", label: "Статус" },
   { key: "caseNumber", label: "Номер дела" },
-  { key: "caseProLink", label: "Ссылка на CasePRO" },
+  { key: "caseProLink", label: "Ссылка CasePRO \\ ServiceDesk" },
 ];
 
 const $ = (selector) => document.querySelector(selector);
@@ -4214,7 +4214,7 @@ function renderCaseModal() {
         ${caseModalField({ field: "Регион", label: "Регион", type: "select", readonly: caseModalFieldReadonlyForUser("Регион") })}
         ${caseModalField({ field: "Дата поступления", label: "Дата поступления", type: "date", readonly: caseModalFieldReadonlyForUser("Дата поступления") })}
         ${caseModalField({ field: "Номер дела", label: "Номер дела", readonly: caseModalFieldReadonlyForUser("Номер дела") })}
-        ${caseModalField({ field: "Ссылка", label: "Ссылка на карточку в CasePRO", type: "url", wide: true, readonly: caseModalFieldReadonlyForUser("Ссылка") })}
+        ${caseModalField({ field: "Ссылка", label: "Ссылка CasePRO \\ ServiceDesk", type: "url", wide: true, readonly: caseModalFieldReadonlyForUser("Ссылка") })}
       </div>
       <div class="case-modal-party-grid ${isJudicial ? "has-third-party" : ""}">
         ${caseModalField({ field: "Истец", label: "Истец / заявитель", readonly: caseModalFieldReadonlyForUser("Истец") })}
