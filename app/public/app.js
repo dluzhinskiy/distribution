@@ -28,8 +28,8 @@ const state = createAppState();
 const rowsByYucIndex = new WeakMap();
 const dataViewNames = ["dashboard", "distribution", "cases", "employees", "settings"];
 
-const caseTypes = ["претензия", "административное", "судебное", "уголовное", "банкротное"];
-const workloadCaseTypes = ["претензия", "административное", "судебное"];
+const caseTypes = ["претензия", "заключение", "административное", "судебное", "уголовное", "банкротное"];
+const workloadCaseTypes = ["претензия", "заключение", "административное", "судебное"];
 const workloadTypes = ["все", ...workloadCaseTypes];
 const statuses = ["В работе", "Ожидает распределения", "Завершено", "Отменено", "Приостановлено"];
 const deletedStatus = "Удалено";
@@ -118,6 +118,7 @@ function applyRoleUi() {
   $("#caseDeleteEditToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#showDeletedCasesToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#loadCoefficientsCard")?.classList.toggle("hidden", !isAdminUser());
+  $("#employeeAdminActions")?.classList.toggle("hidden", !isAdminUser());
   const accessDescription = $("#accessDescription");
   if (accessDescription) accessDescription.textContent = isAdminUser()
     ? "Выдавайте одноразовые коды первичного входа и назначайте роли. Код показывается один раз."
@@ -740,6 +741,14 @@ function employeesForSelectedYuc() {
   return rowsForSelectedYuc(state.data?.employees);
 }
 
+function isArchivedEmployeeRow(employee) {
+  return yes(employee?.["Архивный"]);
+}
+
+function operationalEmployeesForSelectedYuc() {
+  return employeesForSelectedYuc().filter((employee) => !isArchivedEmployeeRow(employee));
+}
+
 function casesForSelectedYuc() {
   const cases = rowsForSelectedYuc(state.data?.cases);
   if (isEmployeeUser() && !isExternalReadOnlyYuc()) {
@@ -833,6 +842,7 @@ function deadlineSettingForType(type) {
   const overloadThreshold = Number(rawOverloadThreshold);
   const defaults = {
     "претензия": { activity: 5, autocompletion: 30, maxDebt: 0 },
+    "заключение": { activity: 5, autocompletion: 30, maxDebt: 0 },
     "административное": { activity: 10, autocompletion: 90, maxDebt: 0 },
     "судебное": { activity: 30, autocompletion: 360, maxDebt: 0 },
   };
@@ -1102,6 +1112,7 @@ function employeeParticipatesInCaseType(employee, type) {
   if (workloadCaseType(type) === "судебное") return yes(employee["Судебные"]);
   if (type === "административное") return yes(employee["Административные"]);
   if (type === "претензия") return yes(employee["Претензии"]);
+  if (type === "заключение") return yes(employee["Заключения"]);
   return false;
 }
 
@@ -1319,6 +1330,7 @@ function weightedBreakdownText(rows, config = currentLoadCoefficientConfig()) {
 
 function historicalSegmentClass(type) {
   if (type === "претензия") return "claim";
+  if (type === "заключение") return "conclusion";
   if (type === "административное") return "admin";
   if (type === "судебное") return "court";
   return "other";
@@ -1384,6 +1396,7 @@ function renderHistoricalWorkloadDashboard() {
       ? coefficientLegendHtml(coefficientConfig)
       : `<div class="historical-legend">
           <span><i class="historical-dot claim"></i>Претензии</span>
+          <span><i class="historical-dot conclusion"></i>Заключения</span>
           <span><i class="historical-dot admin"></i>Административные</span>
           <span><i class="historical-dot court"></i>Судебные</span>
         </div>`}
@@ -1648,7 +1661,7 @@ function caseResponsibleCell(row) {
     return caseFilterValue("Ответственный", current, `<span class="case-filter-pill">${escapeHtml(displayName(current) || "—")}</span>`);
   }
   const disabled = !state.responsibleEditEnabled || isDeletedCase(row);
-  const employees = employeesForSelectedYuc();
+  const employees = operationalEmployeesForSelectedYuc();
   return `
     <select class="inline-select responsible-select" data-id="${escapeHtml(row.case_id)}" ${disabled ? "disabled" : ""} title="${disabled ? "Для удалённого дела редактирование недоступно" : "Выберите нового ответственного"}">
       <option value="" disabled ${current ? "" : "selected"}>—</option>
@@ -2313,22 +2326,30 @@ function employeeDebtInput(employee, type) {
 }
 
 function renderEmployees() {
-  const employees = employeesForSelectedYuc();
+  const employees = employeesForSelectedYuc().filter((employee) =>
+    !isArchivedEmployeeRow(employee) || (isAdminUser() && state.showArchivedEmployees)
+  );
   $("#employeesTable").innerHTML = employees.length ? employees.map((employee) => `
-    <tr class="${employee["Активен"] === "Да" ? "" : "employee-inactive"}" data-employee-row="${escapeHtml(employee.employee_id)}">
-      <td><strong title="${escapeHtml(employee["ФИО"])}">${escapeHtml(displayName(employee["ФИО"]))}</strong><div class="muted">${escapeHtml(employee.employee_id)}</div></td>
-      <td>${employeeToggle(employee["Активен"], employee.employee_id, "Активен")}</td>
-      <td>${employeeToggle(employee["Судебные"], employee.employee_id, "Судебные", { disabled: !yes(employee["Активен"]) })}</td>
-      <td>${employeeDebtInput(employee, "судебное")}</td>
-      <td>${employeeToggle(employee["Административные"], employee.employee_id, "Административные", { disabled: !yes(employee["Активен"]) })}</td>
-      <td>${employeeDebtInput(employee, "административное")}</td>
-      <td>${employeeToggle(employee["Претензии"], employee.employee_id, "Претензии", { disabled: !yes(employee["Активен"]) })}</td>
-      <td>${employeeDebtInput(employee, "претензия")}</td>
+    <tr class="${employee["Активен"] === "Да" && !isArchivedEmployeeRow(employee) ? "" : "employee-inactive"}" data-employee-row="${escapeHtml(employee.employee_id)}">
+      <td><strong title="${escapeHtml(employee["ФИО"])}">${escapeHtml(displayName(employee["ФИО"]))}</strong><div class="muted">${escapeHtml(employee.employee_id)} ${isArchivedEmployeeRow(employee) ? "· уволен" : ""}</div></td>
+      <td>${isArchivedEmployeeRow(employee) ? badge("архив", "gray") : employeeToggle(employee["Активен"], employee.employee_id, "Активен")}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeToggle(employee["Судебные"], employee.employee_id, "Судебные", { disabled: !yes(employee["Активен"]) })}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeDebtInput(employee, "судебное")}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeToggle(employee["Административные"], employee.employee_id, "Административные", { disabled: !yes(employee["Активен"]) })}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeDebtInput(employee, "административное")}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeToggle(employee["Претензии"], employee.employee_id, "Претензии", { disabled: !yes(employee["Активен"]) })}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeDebtInput(employee, "претензия")}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeToggle(employee["Заключения"], employee.employee_id, "Заключения", { disabled: !yes(employee["Активен"]) })}</td>
+      <td>${isArchivedEmployeeRow(employee) ? "—" : employeeDebtInput(employee, "заключение")}</td>
       <td>${employee["Сейчас в отпуске"] === "Да" ? badge("отпуск", "orange") : badge("доступен", "green")}</td>
       <td>${employee["Активные всего"]}</td>
-      <td><button class="tiny-btn save-employee" data-id="${employee.employee_id}">Сохранить</button></td>
+      <td><div class="case-actions">
+        ${isArchivedEmployeeRow(employee)
+          ? `<button class="tiny-btn restore-employee admin-only" data-id="${escapeHtml(employee.employee_id)}">Восстановить</button>`
+          : `<button class="tiny-btn save-employee" data-id="${escapeHtml(employee.employee_id)}">Сохранить</button>${isAdminUser() && employee.employee_id !== state.authUser?.employeeId ? `<button class="tiny-btn archive-employee" data-id="${escapeHtml(employee.employee_id)}" data-name="${escapeHtml(employee["ФИО"])}">Уволить</button>` : ""}`}
+      </div></td>
     </tr>
-  `).join("") : `<tr><td colspan="11" class="empty-cell">Сотрудники выбранного ЮЦ не найдены.</td></tr>`;
+  `).join("") : `<tr><td colspan="13" class="empty-cell">Сотрудники выбранного ЮЦ не найдены.</td></tr>`;
 }
 
 function resetEmployeeAvailabilityDrafts() {
@@ -2349,7 +2370,7 @@ function refreshEmployeeAvailabilityRow(employeeId, activeValue) {
 
 function selectedVacationEmployee() {
   const id = $("#vacationEmployeeSelect")?.value;
-  const employees = employeesForSelectedYuc();
+  const employees = operationalEmployeesForSelectedYuc();
   return employees.find((employee) => employee.employee_id === id) ?? employees[0];
 }
 
@@ -2508,7 +2529,7 @@ function renderVacationSelectors() {
   const employeeSelect = $("#vacationEmployeeSelect");
   const yearSelect = $("#vacationYearSelect");
   if (!employeeSelect || !yearSelect) return;
-  const employees = employeesForSelectedYuc();
+  const employees = operationalEmployeesForSelectedYuc();
   const currentEmployee = employeeSelect.value || employees[0]?.employee_id || "";
   employeeSelect.innerHTML = employees
     .map((employee) => `<option value="${escapeHtml(employee.employee_id)}">${escapeHtml(displayName(employee["ФИО"]))}</option>`)
@@ -2705,7 +2726,7 @@ function optionList(options, current) {
 }
 
 function settingsEmployeeOptions(current) {
-  return optionList(employeesForSelectedYuc().map((employee) => employee["ФИО"]), current);
+  return optionList(operationalEmployeesForSelectedYuc().map((employee) => employee["ФИО"]), current);
 }
 
 function settingsRegionOptions(current) {
@@ -2862,7 +2883,7 @@ function renderRegionalAssignments() {
   const draft = state.assignmentDraftOpen ? regionalAssignmentRow({
     "ЮЦ": selectedYuc(),
     "Регион": selectedYucRegions()[0] ?? "",
-    "Сотрудник": employeesForSelectedYuc()[0]?.["ФИО"] ?? "",
+    "Сотрудник": operationalEmployeesForSelectedYuc()[0]?.["ФИО"] ?? "",
     "Тип нагрузки": "все",
     "Активно": "Да",
   }, -1, true) : "";
@@ -2897,7 +2918,7 @@ function regionalSubstitutionRow(row = {}, index = -1, isNew = false) {
 function renderRegionalSubstitutions() {
   const rows = regionalSubstitutionsForSelectedYuc();
   const html = rows.map((row, index) => regionalSubstitutionRow(row, index, false)).join("");
-  const employees = employeesForSelectedYuc();
+  const employees = operationalEmployeesForSelectedYuc();
   const draft = state.substitutionDraftOpen ? regionalSubstitutionRow({
     "ЮЦ": selectedYuc(),
     "Регион": selectedYucRegions()[0] ?? "",
@@ -3074,7 +3095,7 @@ function manualAssignableEmployees(draft = formDraft(), options = {}) {
   const type = draft["Тип дела"];
   const date = draft["Дата поступления"] || today();
   const excludedNames = options.excludeCurrentQueue ? currentQueueEmployeeNames() : [];
-  return employeesForSelectedYuc()
+  return operationalEmployeesForSelectedYuc()
     .filter((employee) =>
       yes(employee["Активен"]) &&
       employeeParticipatesInCaseType(employee, type) &&
@@ -3380,6 +3401,62 @@ async function saveEmployee(employeeId) {
   scheduleRecommendation();
   setStatus("Сохранено");
   toast("Данные сотрудника и долги сохранены.");
+}
+
+function openEmployeeAddModal() {
+  if (!isAdminUser()) return;
+  const form = $("#employeeAddForm");
+  form?.reset();
+  const select = $("#employeeAddYuc");
+  if (select) {
+    select.innerHTML = availableYucs().map((yuc) => `<option value="${escapeHtml(yuc)}">${escapeHtml(yuc)}</option>`).join("");
+    select.value = selectedYuc();
+  }
+  $("#employeeAddModal")?.classList.add("show");
+  $("#employeeAddModal")?.setAttribute("aria-hidden", "false");
+  form?.elements["ФИО"]?.focus();
+}
+
+function closeEmployeeAddModal() {
+  $("#employeeAddModal")?.classList.remove("show");
+  $("#employeeAddModal")?.setAttribute("aria-hidden", "true");
+}
+
+async function createEmployee(event) {
+  event.preventDefault();
+  if (!isAdminUser()) return;
+  const form = event.currentTarget;
+  const employee = Object.fromEntries(new FormData(form).entries());
+  setStatus("Добавляю сотрудника…");
+  const payload = await api("/api/employees", { method: "POST", body: JSON.stringify({ employee }) });
+  state.data.employees = [...(state.data.employees ?? []), { ...payload.employee, "Активные всего": 0, "Сейчас в отпуске": "Нет" }];
+  state.data.queues = [...(state.data.queues ?? []), ...(payload.queues ?? [])];
+  state.accessUsers = [];
+  markDataViewsDirty(["dashboard", "employees", "distribution", "settings"]);
+  closeEmployeeAddModal();
+  renderEmployees();
+  setStatus("Сохранено");
+  toast(`Сотрудник ${displayName(payload.employee["ФИО"])} добавлен неактивным.`);
+}
+
+async function changeEmployeeArchiveState(employeeId, action) {
+  const employee = state.data?.employees?.find((item) => item.employee_id === employeeId);
+  if (!employee) return;
+  if (action === "archive") {
+    const confirmed = window.confirm(`Уволить сотрудника ${displayName(employee["ФИО"])}?\n\nОн исчезнет из рабочих списков и потеряет доступ, но останется в делах и статистике.`);
+    if (!confirmed) return;
+  }
+  setStatus(action === "archive" ? "Увольняю сотрудника…" : "Восстанавливаю сотрудника…");
+  const payload = await api(`/api/employees/${encodeURIComponent(employeeId)}/${action}`, { method: "POST", body: "{}" });
+  state.data.employees = state.data.employees.map((item) => item.employee_id === employeeId ? { ...item, ...payload.employee } : item);
+  state.accessUsers = [];
+  markDataViewsDirty(["dashboard", "employees", "distribution", "settings"]);
+  renderEmployees();
+  renderVacationSelectors();
+  state.lastRecommendation = null;
+  scheduleRecommendation();
+  setStatus("Сохранено");
+  toast(action === "archive" ? "Сотрудник перенесён в архив. История и статистика сохранены." : "Сотрудник восстановлен неактивным. Настройте доступ и участие в нагрузке.");
 }
 
 function formYesNo(form, name) {
@@ -3788,7 +3865,7 @@ function caseModalOption(value, selected, label = value) {
 }
 
 function caseModalResponsibleOptions(selected) {
-  const employees = employeesForSelectedYuc();
+  const employees = operationalEmployeesForSelectedYuc();
   const options = [];
   if (selected && !employees.some((employee) => nameMatches(employee["ФИО"], selected))) {
     options.push(caseModalOption(selected, selected, displayName(selected)));
@@ -4335,7 +4412,7 @@ function openQueueManualAssignModal(name = "") {
   const select = $("#queueManualAssignEmployeeSelect");
   const candidates = manualAssignableEmployees(draft, { excludeCurrentQueue: !name });
   if (name) {
-    const employee = employeesForSelectedYuc().find((item) => nameMatches(item["ФИО"], name));
+    const employee = operationalEmployeesForSelectedYuc().find((item) => nameMatches(item["ФИО"], name));
     const fullName = employee?.["ФИО"] || name;
     state.queueManualCandidate = fullName;
     selectField?.classList.add("hidden");
@@ -4420,7 +4497,7 @@ async function assignExistingAuto(caseId) {
 async function assignExistingManual(caseId) {
   const caseRow = state.data.cases.find((row) => row.case_id === caseId);
   if (!caseRow) return;
-  const names = employeesForSelectedYuc().map((employee) => employee["ФИО"]).filter(Boolean);
+  const names = operationalEmployeesForSelectedYuc().map((employee) => employee["ФИО"]).filter(Boolean);
   if (!names.length) {
     toast("В выбранном ЮЦ нет сотрудников для ручного назначения.", "error");
     return;
@@ -4571,6 +4648,17 @@ function bindEvents() {
   $("#authFirstAccessForm")?.addEventListener("submit", (event) => completeFirstAccess(event).catch((error) => setAuthMessage(error.message, "error")));
   $$(".auth-mode").forEach((button) => button.addEventListener("click", () => setAuthMode(button.dataset.authMode)));
   $("#refreshAccessBtn")?.addEventListener("click", () => loadAccessUsers({ force: true }).catch((error) => toast(error.message, "error")));
+  $("#addEmployeeBtn")?.addEventListener("click", openEmployeeAddModal);
+  $("#employeeAddCancelBtn")?.addEventListener("click", closeEmployeeAddModal);
+  $("#employeeAddForm")?.addEventListener("submit", (event) => createEmployee(event).catch((error) => {
+    setStatus("Ошибка");
+    toast(error.message, "error");
+  }));
+  $("#employeeAddModal")?.addEventListener("click", (event) => { if (event.target.id === "employeeAddModal") closeEmployeeAddModal(); });
+  $("#showArchivedEmployees")?.addEventListener("change", (event) => {
+    state.showArchivedEmployees = event.target.checked;
+    renderEmployees();
+  });
   $("#closeAccessCodeBtn")?.addEventListener("click", closeAccessCodeModal);
   $("#copyAccessCodeBtn")?.addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#accessCodeValue").textContent || ""); toast("Код скопирован."); } catch { toast("Не удалось скопировать код. Скопируйте его вручную.", "error"); } });
   $("#accessCodeModal")?.addEventListener("click", (event) => { if (event.target.id === "accessCodeModal") closeAccessCodeModal(); });
@@ -4931,6 +5019,10 @@ function bindEvents() {
     if (cancelCaseChangesButton) cancelCaseChanges(cancelCaseChangesButton.dataset.id);
     const employeeButton = event.target.closest(".save-employee");
     if (employeeButton) saveEmployee(employeeButton.dataset.id).catch((error) => toast(error.message, "error"));
+    const archiveEmployeeButton = event.target.closest(".archive-employee");
+    if (archiveEmployeeButton) changeEmployeeArchiveState(archiveEmployeeButton.dataset.id, "archive").catch((error) => toast(error.message, "error"));
+    const restoreEmployeeButton = event.target.closest(".restore-employee");
+    if (restoreEmployeeButton) changeEmployeeArchiveState(restoreEmployeeButton.dataset.id, "restore").catch((error) => toast(error.message, "error"));
     const saveRegionalAssignmentButton = event.target.closest(".save-regional-assignment");
     if (saveRegionalAssignmentButton) saveRegionalAssignment(saveRegionalAssignmentButton).catch((error) => {
       setStatus("Ошибка");
@@ -5116,6 +5208,7 @@ function bindEvents() {
       closeVacationImportModal();
       closeCaseImportModal();
       closeQueueManualAssignModal();
+      closeEmployeeAddModal();
       closeDocumentPreview();
     }
   });

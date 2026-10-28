@@ -6,6 +6,7 @@ test("облегчённый дэшборд не читает тяжёлые п�
   assert.ok(DASHBOARD_CASE_HEADERS.includes("case_id"));
   assert.ok(DASHBOARD_CASE_HEADERS.includes("Тип дела"));
   assert.ok(DASHBOARD_CASE_HEADERS.includes("Ответственный"));
+  assert.ok(DASHBOARD_CASE_HEADERS.includes("ОтветственныйУЗ"));
   assert.ok(DASHBOARD_CASE_HEADERS.includes("Дата поступления"));
   assert.equal(DASHBOARD_CASE_HEADERS.includes("Движение дела"), false);
   assert.equal(DASHBOARD_CASE_HEADERS.includes("Документы"), false);

@@ -134,7 +134,7 @@ test("settings router ignores unrelated endpoints", async () => {
 
 test("only administrator may save complete global load coefficients", async () => {
   const rows = [
-    ["судебное", 1], ["административное", 0.5], ["претензия", 0.3], ["уголовное", 1.2], ["банкротное", 1.8],
+    ["судебное", 1], ["административное", 0.5], ["претензия", 0.3], ["заключение", 1], ["уголовное", 1.2], ["банкротное", 1.8],
   ].map(([type, coefficient]) => ({ "Тип нагрузки": type, "Коэффициент": coefficient }));
   const data = { loadCoefficients: [] };
   const { handle, savedTables } = createHarness({ rows }, data);

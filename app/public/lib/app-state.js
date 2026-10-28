@@ -9,6 +9,7 @@ export function createAppState() {
     storagePath: "",
     lastRecommendation: null,
     employeeSection: "availability",
+    showArchivedEmployees: false,
     dirtyViews: new Set(["dashboard", "distribution", "cases", "employees", "settings"]),
     loadedViews: new Set(),
     loadingViews: new Set(),

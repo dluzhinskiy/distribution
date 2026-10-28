@@ -233,6 +233,7 @@ function parseDate(value) {
 
 function reportType(value) {
   const text = cleanText(value).toLowerCase();
+  if (text.includes("заключ")) return "заключение";
   if (text.includes("банкрот")) return "банкротное";
   if (text.includes("уголов")) return "уголовное";
   if (text.includes("админ")) return "административное";

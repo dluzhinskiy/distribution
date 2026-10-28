@@ -40,6 +40,7 @@ export const DASHBOARD_CASE_HEADERS = Object.freeze([
   "Причина отложения завершения дела",
   "Дата предупреждения о завершении",
   "Ответственный",
+  RESPONSIBLE_LINK,
   "Дата распределения",
 ]);
 
@@ -235,6 +236,14 @@ async function deleteRecords(table, recordIds) {
       throw new Error(`DELETE ${table.name}: ${response.status}; ${payload.message || text}`);
     }
   }
+}
+
+export async function deleteTableRows(key, rows = []) {
+  const table = TABLES[key];
+  if (!table) throw new Error(`Неизвестная таблица: ${key}`);
+  const recordIds = rows.map((row) => typeof row === "string" ? row : row?._recordId).filter(Boolean);
+  await deleteRecords(table, recordIds);
+  return recordIds;
 }
 
 async function fetchText(url, options = {}) {
@@ -507,6 +516,7 @@ export async function patchTableRows(key, updates = []) {
   const linkedUpdates = key === "cases"
     ? updates.filter(update => update.changedFields?.some(field => field === "Ответственный" || field === "ЮЦ"))
     : [];
+  for (const update of linkedUpdates) update.row[RESPONSIBLE_LINK] = [];
   await prepareResponsibleLinks(table, linkedUpdates.map(update => update.row));
   const records = updates.map(({ row, changedFields = [] }) => {
     if (!row?._recordId) throw new Error(`Для адресного обновления «${table.name}» не найден recordId.`);

@@ -3,6 +3,7 @@ import { normalizeRegionName } from "./regions.mjs";
 import { FIELD, YUC_SETTING } from "./domain-schema.mjs";
 import { changeCaseResponsible, completeCaseByDeadline, deleteCase, postponeCaseCompletion, restoreCase } from "./case-lifecycle.mjs";
 import { allDatesInRange, clearVacationYear, isEmployeeOnVacation, normalizeVacation, replaceVacationDatesForEmployees, replaceVacationYear, setVacationDates, vacationDatesForEmployee, vacationKey } from "./vacations.mjs";
+import { RESPONSIBLE_LINK } from "./responsible-link.mjs";
 import {
   addDays,
   caseIdMatches,
@@ -10,6 +11,7 @@ import {
   cleanText,
   daysBetween,
   nameMatches,
+  isArchivedEmployee,
   normalizeType,
   normalizeYuc,
   nowISO,
@@ -87,10 +89,12 @@ export const EMPLOYEE_HEADERS = [
   "employee_id",
   "ФИО",
   "ЮЦ",
+  "Архивный",
   "Активен",
   "Судебные",
   "Административные",
   "Претензии",
+  "Заключения",
   "Отпуск с",
   "Отпуск по",
   "Комментарий",
@@ -99,6 +103,7 @@ export const EMPLOYEE_HEADERS = [
   "Роль доступа",
   "Хэш кода первичного входа",
   "Срок действия кода",
+  "email",
 ];
 
 export const QUEUE_HEADERS = [
@@ -167,12 +172,14 @@ export const REGIONAL_SUBSTITUTION_HEADERS = [
 
 export const DEFAULT_ACTIVITY_DAYS = {
   "претензия": 5,
+  "заключение": 5,
   "административное": 10,
   "судебное": 30,
 };
 
 export const DEFAULT_AUTOCOMPLETE_DAYS = {
   "претензия": 30,
+  "заключение": 30,
   "административное": 90,
   "судебное": 360,
 };
@@ -186,8 +193,8 @@ export const CASE_STATUSES = [
   "Удалено",
 ];
 
-export const CASE_TYPES = ["претензия", "административное", "судебное", "уголовное", "банкротное"];
-export const WORKLOAD_TYPES = ["претензия", "административное", "судебное"];
+export const CASE_TYPES = ["претензия", "заключение", "административное", "судебное", "уголовное", "банкротное"];
+export const WORKLOAD_TYPES = ["претензия", "заключение", "административное", "судебное"];
 
 const DELETED_STATUS = "Удалено";
 const COMPLETE_STATUSES = new Set(["Завершено", "Отменено", DELETED_STATUS]);
@@ -302,12 +309,14 @@ export function employeeParticipates(employee, type) {
   if (normalized === "судебное") return yes(employee["Судебные"]);
   if (normalized === "административное") return yes(employee["Административные"]);
   if (normalized === "претензия") return yes(employee["Претензии"]);
+  if (normalized === "заключение") return yes(employee["Заключения"]);
   return false;
 }
 
 export function isEmployeeAvailable(employee, type, date = new Date(), vacations = []) {
   return Boolean(
     employee &&
+    !isArchivedEmployee(employee) &&
     yes(employee[FIELD.employeeActive]) &&
     employeeParticipates(employee, type) &&
     !isEmployeeOnVacation(employee, date, vacations)
@@ -320,8 +329,11 @@ export function enrichData(data, date = new Date()) {
   const activeRegisterCases = cases.filter((caseRow) => !isDeletedCase(caseRow));
   const sourceEmployees = (data.employees ?? []).filter((employee) => cleanText(employee.employee_id) !== "EMP-000");
   const employeeNameIndex = new Map();
-  const activeLoads = sourceEmployees.map(() => ({ total: 0, judicial: 0, administrative: 0, claim: 0 }));
+  const employeeRecordIndex = new Map();
+  const activeLoads = sourceEmployees.map(() => ({ total: 0, judicial: 0, administrative: 0, claim: 0, conclusion: 0 }));
   for (let index = 0; index < sourceEmployees.length; index += 1) {
+    const recordId = cleanText(sourceEmployees[index]._recordId);
+    if (recordId) employeeRecordIndex.set(recordId, index);
     const name = cleanText(sourceEmployees[index][FIELD.name]);
     const aliases = new Set([name, shortName(name)].filter(Boolean));
     for (const alias of aliases) {
@@ -344,6 +356,19 @@ export function enrichData(data, date = new Date()) {
       if (active) typeTotals.active += 1;
     }
     if (!active || !responsible) continue;
+    const responsibleLinks = Array.isArray(caseRow[RESPONSIBLE_LINK]) ? caseRow[RESPONSIBLE_LINK] : [];
+    const linkedIndexes = responsibleLinks
+      .map((recordId) => employeeRecordIndex.get(cleanText(recordId)))
+      .filter((index) => Number.isInteger(index));
+    if (linkedIndexes.length === 1) {
+      const load = activeLoads[linkedIndexes[0]];
+      load.total += 1;
+      if (normalizedType === "судебное") load.judicial += 1;
+      else if (normalizedType === "административное") load.administrative += 1;
+      else if (normalizedType === "претензия") load.claim += 1;
+      else if (normalizedType === "заключение") load.conclusion += 1;
+      continue;
+    }
     const candidateIndexes = new Set([
       ...(employeeNameIndex.get(responsible) ?? []),
       ...(employeeNameIndex.get(shortName(responsible)) ?? []),
@@ -356,6 +381,7 @@ export function enrichData(data, date = new Date()) {
       if (normalizedType === "судебное") load.judicial += 1;
       else if (normalizedType === "административное") load.administrative += 1;
       else if (normalizedType === "претензия") load.claim += 1;
+      else if (normalizedType === "заключение") load.conclusion += 1;
     }
   }
   const employees = sourceEmployees.map((employee, index) => {
@@ -369,6 +395,7 @@ export function enrichData(data, date = new Date()) {
       "Активные судебные": load.judicial,
       "Активные административные": load.administrative,
       "Активные претензии": load.claim,
+      "Активные заключения": load.conclusion,
     };
   });
   const summary = {
@@ -441,7 +468,11 @@ function queueRowsFor(data, yuc, type) {
   const normalizedYuc = normalizeYuc(yuc);
   const normalizedType = workloadType(type);
   return data.queues
-    .filter((row) => normalizeYuc(row[FIELD.yuc]) === normalizedYuc && workloadType(row[FIELD.caseType]) === normalizedType)
+    .filter((row) => {
+      if (normalizeYuc(row[FIELD.yuc]) !== normalizedYuc || workloadType(row[FIELD.caseType]) !== normalizedType) return false;
+      const employee = employeeForQueueRow(data, row);
+      return !employee || !isArchivedEmployee(employee);
+    })
     .sort((a, b) => Number(a[FIELD.position]) - Number(b[FIELD.position]));
 }
 
@@ -1015,7 +1046,7 @@ export function recommend(data, draft, date = new Date()) {
   const type = normalizeType(draft[FIELD.caseType]);
   const region = normalizeRegionName(draft["Регион"]);
   if (!CASE_TYPES.includes(type)) {
-    return { ok: false, candidate: "", basis: "", reason: "Укажите тип дела: претензия, административное, судебное, уголовное или банкротное." };
+    return { ok: false, candidate: "", basis: "", reason: "Укажите тип дела: претензия, заключение, административное, судебное, уголовное или банкротное." };
   }
 
   const settings = yucRegionalSettings(data, normalizedYuc);

@@ -23,6 +23,8 @@ import { managerScopedData, readRequestedTables, tableKeysForView } from "./lib/
 import { createCacheWarmup, createDeferredWarmup } from "./lib/cache-warmup.mjs";
 import { createOperationGuard } from "./lib/operation-guard.mjs";
 import { paginateCaseRegister } from "./lib/case-register.mjs";
+import { archiveEmployee, createEmployeeRows, EMPLOYEE_ARCHIVE_FIELDS, restoreEmployee } from "./lib/employee-lifecycle.mjs";
+import { isArchivedEmployee } from "./lib/domain-values.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -144,7 +146,7 @@ const writeCoordinator = createWriteCoordinator({
 const operationGuard = createOperationGuard({ ttlMs: runtime.operationIdTtlMs });
 
 
-const EMPLOYEE_MANAGER_EDIT_FIELDS = new Set(["Активен", "Судебные", "Административные", "Претензии"]);
+const EMPLOYEE_MANAGER_EDIT_FIELDS = new Set(["Активен", "Судебные", "Административные", "Претензии", "Заключения"]);
 
 function employeeScopedData(rawData, employee) {
   // По принятой матрице доступа сотрудник читает дела всех ЮЦ, но сервер
@@ -208,7 +210,7 @@ function requireManageEmployee(user, data, employeeId) {
 
 function requireEmployeeInYuc(data, name, yuc, label = "Сотрудник") {
   const employee = data.employees.find((item) =>
-    nameMatches(item[FIELD.name], name) && normalizeYuc(item[FIELD.yuc]) === normalizeYuc(yuc)
+    !isArchivedEmployee(item) && nameMatches(item[FIELD.name], name) && normalizeYuc(item[FIELD.yuc]) === normalizeYuc(yuc)
   );
   if (employee) return employee;
   const error = new Error(`${label} «${cleanText(name) || "не указан"}» не найден в ЮЦ «${normalizeYuc(yuc)}».`);
@@ -410,6 +412,33 @@ async function api(req, res, url) {
 
   if (await handleSettingsRoute(req, res, url, user)) return;
 
+  if (req.method === "POST" && url.pathname === "/api/employees") {
+    if (!auth.isAdmin(user)) throw Object.assign(new Error("Добавлять сотрудников может только администратор."), { status: 403 });
+    const body = await readBody(req);
+    const data = await readRouteData(["employees", "queues"]);
+    const { employee, queueRows } = createEmployeeRows(data, body.employee && typeof body.employee === "object" ? body.employee : body);
+    await createTableRows("employees", [employee]);
+    await createTableRows("queues", queueRows);
+    const fresh = await readRouteData(["employees", "queues"], { force: true });
+    const savedEmployee = fresh.employees.find((item) => cleanText(item.employee_id) === employee.employee_id) ?? employee;
+    const savedQueues = fresh.queues.filter((item) => cleanText(item.employee_id) === employee.employee_id);
+    return sendJson(res, 201, { ok: true, employee: savedEmployee, queues: savedQueues });
+  }
+
+  const employeeLifecycleMatch = url.pathname.match(/^\/api\/employees\/([^/]+)\/(archive|restore)$/);
+  if (req.method === "POST" && employeeLifecycleMatch) {
+    if (!auth.isAdmin(user)) throw Object.assign(new Error("Увольнять и восстанавливать сотрудников может только администратор."), { status: 403 });
+    const employeeId = decodeURIComponent(employeeLifecycleMatch[1]);
+    const action = employeeLifecycleMatch[2];
+    const data = await readRouteData(["employees"]);
+    const employee = data.employees.find((item) => cleanText(item.employee_id) === employeeId);
+    if (action === "archive") archiveEmployee(employee, user.employeeId);
+    else restoreEmployee(employee);
+    await patchTableRow("employees", employee, EMPLOYEE_ARCHIVE_FIELDS);
+    tableCache.replace("employees", data.employees);
+    return sendJson(res, 200, { ok: true, employee });
+  }
+
   if (req.method === "PATCH" && url.pathname.startsWith("/api/employees/")) {
     const id = decodeURIComponent(url.pathname.split("/").pop());
     const body = await readBody(req);
@@ -418,6 +447,7 @@ async function api(req, res, url) {
     const data = await readRouteData(["employees", "queues"]);
     const employee = data.employees.find((item) => item.employee_id === id);
     if (!employee) return sendJson(res, 404, { ok: false, error: "Сотрудник не найден." });
+    if (isArchivedEmployee(employee)) throw Object.assign(new Error("Уволенного сотрудника сначала нужно восстановить."), { status: 409 });
     requireManageYuc(user, employee[FIELD.yuc]);
     assertAllowedFields(patch, EMPLOYEE_MANAGER_EDIT_FIELDS, "Через этот экран нельзя изменять");
     Object.assign(employee, Object.fromEntries(Object.entries(patch).filter(([field]) => EMPLOYEE_MANAGER_EDIT_FIELDS.has(field))));

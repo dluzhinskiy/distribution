@@ -9,6 +9,8 @@ export function mutationReadTables(method = "", pathname = "") {
   const verb = String(method).toUpperCase();
   const path = String(pathname);
   if (path.startsWith("/api/access/") || path === "/api/auth/first-access") return ["employees"];
+  if (verb === "POST" && path === "/api/employees") return ["employees", "queues"];
+  if (verb === "POST" && /^\/api\/employees\/[^/]+\/(?:archive|restore)$/.test(path)) return ["employees"];
   if (verb === "PATCH" && path.startsWith("/api/employees/")) return ["employees", "queues"];
   if (verb === "PATCH" && path.startsWith("/api/queues/")) return ["queues"];
   if (path === "/api/load-coefficients") return ["loadCoefficients"];

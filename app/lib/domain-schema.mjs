@@ -4,6 +4,7 @@ export const FIELD = {
   workloadType: "Тип нагрузки",
   name: "ФИО",
   employeeActive: "Активен",
+  employeeArchived: "Архивный",
   ruleActive: "Активно",
   status: "Статус",
   responsible: "Ответственный",

@@ -1,6 +1,6 @@
 import { normalizeCaseType, workloadCaseType } from "./ui-utils.js";
 
-export const loadCoefficientTypes = ["судебное", "административное", "претензия", "уголовное", "банкротное"];
+export const loadCoefficientTypes = ["судебное", "административное", "претензия", "заключение", "уголовное", "банкротное"];
 
 export function loadCoefficientConfig(rows = []) {
   const values = {};
@@ -34,7 +34,7 @@ export function weightedCases(cases = [], config) {
 }
 
 export function weightedGroupBreakdown(cases = [], config) {
-  const result = Object.fromEntries(["претензия", "административное", "судебное"].map((type) => [type, 0]));
+  const result = Object.fromEntries(["претензия", "заключение", "административное", "судебное"].map((type) => [type, 0]));
   for (const row of cases ?? []) {
     const group = workloadCaseType(row?.["Тип дела"]);
     if (Object.prototype.hasOwnProperty.call(result, group)) result[group] += exactCaseCoefficient(row, config);

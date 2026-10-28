@@ -1,7 +1,7 @@
 import { badRequest } from "./errors.mjs";
 import { cleanText, normalizeType } from "./domain-values.mjs";
 
-export const LOAD_COEFFICIENT_TYPES = ["судебное", "административное", "претензия", "уголовное", "банкротное"];
+export const LOAD_COEFFICIENT_TYPES = ["судебное", "административное", "претензия", "заключение", "уголовное", "банкротное"];
 export const LOAD_COEFFICIENT_HEADERS = ["Название", "Тип нагрузки", "Коэффициент"];
 
 export function exactLoadType(value) {

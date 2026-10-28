@@ -30,6 +30,10 @@ export function yesNo(value) {
   return yes(value) ? "Да" : "Нет";
 }
 
+export function isArchivedEmployee(employee) {
+  return yes(employee?.["Архивный"]);
+}
+
 export function shortName(value) {
   const parts = cleanText(value).split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return parts[0] ?? "";
@@ -53,6 +57,7 @@ export function caseIdMatches(a, b) {
 
 export function normalizeType(value) {
   const type = cleanText(value).toLowerCase();
+  if (type === "заключения") return "заключение";
   if (type === "админ") return "административное";
   if (type === "суд" || type === "третьи лица" || type === "судебное дело") return "судебное";
   if (type === "уголовное дело" || type === "уголовное дело до суда") return "уголовное";

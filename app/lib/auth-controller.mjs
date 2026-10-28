@@ -19,6 +19,7 @@ import {
   verifySessionToken,
 } from "./auth.mjs";
 import { cleanText, normalizeYuc } from "./domain.mjs";
+import { isArchivedEmployee } from "./domain-values.mjs";
 
 export const AUTH_SESSION_COOKIE = "load_distribution_session";
 
@@ -106,7 +107,7 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     if (employeesWithId.length !== 1) return null;
     const employee = employeesWithId[0];
     const hash = cleanText(employee?.["Хэш-пароля"]);
-    if (!employee || cleanLogin(employee["Логин"]) !== claims.login || !hash) return null;
+    if (!employee || isArchivedEmployee(employee) || cleanLogin(employee["Логин"]) !== claims.login || !hash) return null;
     if (passwordVersion(hash, secret) !== claims.passwordVersion) return null;
     return publicUser(employee);
   }
@@ -134,7 +135,7 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
       const body = await readBody(req);
       const data = await readData(["employees"], { force: url.searchParams.get("refresh") === "1" });
       const employee = findByLogin(data.employees, body.login);
-      if (!employee || !cleanText(employee["Хэш-пароля"]) || !await verifySecret(body.password, employee["Хэш-пароля"])) {
+      if (!employee || isArchivedEmployee(employee) || !cleanText(employee["Хэш-пароля"]) || !await verifySecret(body.password, employee["Хэш-пароля"])) {
         throw Object.assign(new Error("Неверный логин или пароль."), { status: 401 });
       }
       const session = sessionHeaders(req, employee);
@@ -149,7 +150,7 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
       const login = cleanLogin(body.login);
       const data = await readData(["employees"], { force: true });
       const employee = findByLogin(data.employees, login);
-      if (!employee) throw Object.assign(new Error("Неверный логин или код первичного входа."), { status: 401 });
+      if (!employee || isArchivedEmployee(employee)) throw Object.assign(new Error("Неверный логин или код первичного входа."), { status: 401 });
       if (cleanText(employee["Хэш-пароля"])) {
         throw Object.assign(new Error("Пароль уже установлен. Используйте обычный вход."), { status: 409 });
       }
@@ -189,7 +190,7 @@ export function createAuthController({ readData, saveEmployee, sendJson, readBod
     if (req.method === "GET" && url.pathname === "/api/access/users") {
       const data = await readData(["employees"], { force: true });
       const users = data.employees
-        .filter((employee) => !isSystemEmployee(employee) && canManageAccessForEmployee(user, employee))
+        .filter((employee) => !isSystemEmployee(employee) && !isArchivedEmployee(employee) && canManageAccessForEmployee(user, employee))
         .map((employee) => {
           const roleOptions = accessRoleOptionsFor(user, employee);
           return {

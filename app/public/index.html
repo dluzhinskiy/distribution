@@ -152,6 +152,7 @@
                   <select name="Тип дела" required>
                     <option value="">Выберите тип</option>
                     <option value="претензия">Претензия</option>
+                    <option value="заключение">Заключение</option>
                     <option value="административное">Административное</option>
                     <option value="судебное">Судебное</option>
                     <option value="уголовное">Уголовное</option>
@@ -266,7 +267,15 @@
             <div class="card-head">
               <div>
                 <h2>Сотрудники</h2>
-                <p>Управляйте доступностью, числовыми долгами по типам нагрузки и планированием отпусков на год.</p>
+                <p>Управляйте доступностью, увольнением без потери истории, долгами по типам нагрузки и отпусками.</p>
+              </div>
+              <div class="card-head-actions admin-only" id="employeeAdminActions">
+                <label class="edit-toggle compact-toggle">
+                  <input type="checkbox" id="showArchivedEmployees">
+                  <span class="switch-ui"></span>
+                  <span>Показать уволенных</span>
+                </label>
+                <button class="btn btn-primary" id="addEmployeeBtn" type="button">Добавить сотрудника</button>
               </div>
             </div>
             <div class="subtabs">
@@ -279,7 +288,7 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>ФИО</th><th>Активен</th><th>Суд</th><th>Долг суд</th><th>Админ</th><th>Долг админ</th><th>Претензии</th><th>Долг претензии</th><th>Сейчас в отпуске</th><th>Активные</th><th></th>
+                      <th>ФИО</th><th>Активен</th><th>Суд</th><th>Долг суд</th><th>Админ</th><th>Долг админ</th><th>Претензии</th><th>Долг претензии</th><th>Заключения</th><th>Долг заключения</th><th>Сейчас в отпуске</th><th>Активные</th><th></th>
                     </tr>
                   </thead>
                   <tbody id="employeesTable"></tbody>
@@ -539,7 +548,7 @@
               <h3>Правила автоматического назначения</h3>
               <p>
                 Алгоритм всегда работает внутри выбранного сверху ЮЦ. Тип нагрузки берётся из карточки дела:
-                претензия, административное, судебное, уголовное или банкротное. Ручное назначение руководителем имеет приоритет над
+                претензия, заключение, административное, судебное, уголовное или банкротное. Ручное назначение руководителем имеет приоритет над
                 автоматическим расчётом и фиксируется отдельно.
               </p>
               <div class="help-grid">
@@ -662,6 +671,24 @@
           <button class="btn btn-secondary" id="copyAccessCodeBtn">Скопировать</button>
           <button class="btn btn-primary" id="closeAccessCodeBtn">Готово</button>
         </div>
+      </div>
+    </div>
+    <div class="modal-overlay" id="employeeAddModal" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="employeeAddTitle">
+        <div class="modal-head"><h2 id="employeeAddTitle">Добавить сотрудника</h2></div>
+        <form id="employeeAddForm">
+          <div class="modal-body">
+            <label class="field full"><span>ФИО</span><input name="ФИО" required autocomplete="off" placeholder="Иванов Иван Иванович"></label>
+            <label class="field full"><span>ЮЦ</span><select name="ЮЦ" id="employeeAddYuc" required></select></label>
+            <label class="field full"><span>Логин</span><input name="Логин" required autocomplete="off" placeholder="iivanov"></label>
+            <label class="field full"><span>Электронная почта</span><input name="email" type="email" autocomplete="off" placeholder="employee@example.ru"></label>
+            <p class="muted">Сотрудник будет создан неактивным. Затем выдайте ему доступ и включите необходимые типы нагрузки.</p>
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" id="employeeAddCancelBtn" type="button">Отмена</button>
+            <button class="btn btn-primary" type="submit">Добавить</button>
+          </div>
+        </form>
       </div>
     </div>
     <div class="modal-overlay" id="queueManualAssignModal" aria-hidden="true">

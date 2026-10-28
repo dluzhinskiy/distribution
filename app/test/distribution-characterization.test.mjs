@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FIELD, assignAutomatically, assignManually, overloadThreshold, recommend } from "../lib/domain.mjs";
+import { FIELD, assignAutomatically, assignManually, overloadThreshold, recommend, recommendWithPreview } from "../lib/domain.mjs";
 
 function distributionData() {
   return {
@@ -113,4 +113,25 @@ test("dashboard coefficients do not affect recommendation or queue selection", (
   ];
   const date = new Date(2026, 6, 27, 12, 0, 0);
   assert.deepEqual(recommend(withCoefficients, draft, date), recommend(withoutCoefficients, draft, date));
+});
+
+test("archived employee is absent from recommendation queue and preview", () => {
+  const data = distributionData();
+  data.employees[0]["Архивный"] = "Да";
+  const result = recommendWithPreview(data, draft, new Date(2026, 6, 27, 12, 0, 0));
+  assert.equal(result.ok, true);
+  assert.equal(result.candidate, "Петров П.П.");
+  assert.deepEqual(result.queuePreview.rows.map((row) => row.name), ["Петров П.П."]);
+  assert.equal((result.debtAccrualQueueIds ?? []).includes("Q1::E1"), false);
+});
+
+test("conclusion uses an independent participation flag and queue", () => {
+  const data = distributionData();
+  data.employees.forEach((employee) => { employee["Заключения"] = "Да"; });
+  data.queues = data.queues.map((row) => ({ ...row, queue_id: "QUEUE-Дальний Восток-заключение", [FIELD.caseType]: "заключение" }));
+  data.state = [{ queue_id: "QUEUE-Дальний Восток-заключение", [FIELD.yuc]: "Дальний Восток", [FIELD.caseType]: "заключение", "Последняя позиция": 0, "Последний автоназначенный": "", "Цикл": 1 }];
+  const result = recommendWithPreview(data, { ...draft, [FIELD.caseType]: "заключение" }, new Date(2026, 6, 27, 12, 0, 0));
+  assert.equal(result.ok, true);
+  assert.equal(result.candidate, "Иванов И.И.");
+  assert.deepEqual(result.queuePreview.rows.map((row) => row.name), ["Иванов И.И.", "Петров П.П."]);
 });

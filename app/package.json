@@ -17,6 +17,7 @@
     "tabs:debug-regional-debt": "node scripts/tabs-debug-regional-debt.mjs",
     "tabs:debug-responsibles": "node scripts/tabs-debug-responsibles.mjs",
     "tabs:ensure-queues": "node scripts/tabs-ensure-queues.mjs",
+    "tabs:ensure-conclusions": "node scripts/tabs-ensure-conclusions.mjs",
     "tabs:find-case": "node scripts/tabs-find-case.mjs",
     "test": "npm run test:unit && npm run test:domain && npm run test:auth"
   },

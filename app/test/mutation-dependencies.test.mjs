@@ -9,6 +9,9 @@ test("access mutations refresh only employees", () => {
 
 test("employee availability and debts are refreshed as one operation", () => {
   assert.deepEqual(mutationReadTables("PATCH", "/api/employees/EMP-001"), ["employees", "queues"]);
+  assert.deepEqual(mutationReadTables("POST", "/api/employees"), ["employees", "queues"]);
+  assert.deepEqual(mutationReadTables("POST", "/api/employees/EMP-001/archive"), ["employees"]);
+  assert.deepEqual(mutationReadTables("POST", "/api/employees/EMP-001/restore"), ["employees"]);
 });
 
 test("settings mutations refresh only their dependencies", () => {
