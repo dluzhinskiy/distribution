@@ -72,6 +72,10 @@ const TABLES = {
     name: "Сотрудники",
     datasheetId: process.env.TABS_EMPLOYEES_DATASHEET_ID || "dstm3BBmBsSc4JqokB",
     viewId: process.env.TABS_EMPLOYEES_VIEW_ID || "viwFcmKElrBo0",
+    // Поля жизненного цикла могут быть скрыты в пользовательском представлении.
+    // Сотрудников немного, поэтому читаем их непосредственно из таблицы, чтобы
+    // скрытый столбец «Архивный» не терялся после обновления кэша.
+    readAllFields: true,
     headers: EMPLOYEE_HEADERS,
     keyFields: ["employee_id"],
     dateFields: ["Отпуск с", "Отпуск по"],
