@@ -148,3 +148,29 @@ test("only administrator may save complete global load coefficients", async () =
   assert.deepEqual(savedTables, ["loadCoefficients"]);
   assert.equal(data.loadCoefficients.find((row) => row["Тип нагрузки"] === "банкротное")["Коэффициент"], 1.8);
 });
+
+test("only administrator may enable attachments for all YUCs", async () => {
+  const data = {
+    employees: [
+      { [FIELD.yuc]: "ЮЦ 1" },
+      { [FIELD.yuc]: "ЮЦ 2" },
+    ],
+    yucSettings: [
+      { [FIELD.yuc]: "ЮЦ 1", "Вложения в карточках": "Нет" },
+    ],
+  };
+  const denied = createHarness({ enabled: true }, data);
+  await assert.rejects(
+    denied.handle({ method: "PUT" }, responseCapture(), new URL("http://localhost/api/attachment-settings"), { role: "Руководитель" }),
+    (error) => error.status === 403,
+  );
+
+  const { handle, savedTables } = createHarness({ enabled: true }, data);
+  const res = responseCapture();
+  assert.equal(await handle({ method: "PUT" }, res, new URL("http://localhost/api/attachment-settings"), { role: "Администратор" }), true);
+  assert.equal(res.status, 200);
+  assert.deepEqual(savedTables, ["yucSettings"]);
+  assert.equal(data.yucSettings.length, 2);
+  assert.ok(data.yucSettings.every((row) => row["Вложения в карточках"] === "Да"));
+  assert.equal(res.payload.attachmentSettings.enabled, true);
+});

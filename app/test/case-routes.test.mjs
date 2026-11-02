@@ -123,12 +123,41 @@ test("manager case patch accepts business fields and rejects storage fields", as
   assert.equal(rejectedData.cases[0].case_id, "CASE-2");
 });
 
-test("disabled deletion preserves existing attachments", async () => {
+test("disabled attachments reject deletion and preserve existing files", async () => {
   const documents = [{ id:"DOC-1", token:"token-1" }];
-  const data = { cases:[{ case_id:"CASE-1", Документы:documents }], employees:[] };
+  const data = {
+    cases:[{ case_id:"CASE-1", [FIELD.yuc]: "ЮЦ 1", Документы:documents }],
+    employees:[],
+    yucSettings: [{ [FIELD.yuc]: "ЮЦ 1", "Вложения в карточках": "Нет" }],
+  };
   const harness = createHarness({ body:{ documentIds:["DOC-1"] }, data });
-  await harness.handle({method:"DELETE"}, {}, new URL("http://localhost/api/cases/CASE-1/documents"), {role:"Администратор"});
-  assert.equal(harness.responses[0].status, 410);
+  await assert.rejects(
+    harness.handle({method:"DELETE"}, {}, new URL("http://localhost/api/cases/CASE-1/documents"), {role:"Администратор"}),
+    (error) => error.status === 410 && error.code === "ATTACHMENTS_DISABLED",
+  );
   assert.equal(harness.attachmentReplacements.length, 0);
   assert.deepEqual(data.cases[0].Документы, documents);
+});
+
+test("enabled attachments allow administrator to remove a selected file", async () => {
+  const documents = [
+    { id:"DOC-1", token:"token-1" },
+    { id:"DOC-2", token:"token-2" },
+  ];
+  const data = {
+    cases:[{ case_id:"CASE-1", [FIELD.yuc]: "ЮЦ 1", Документы:documents }],
+    employees:[],
+    yucSettings: [{ [FIELD.yuc]: "ЮЦ 1", "Вложения в карточках": "Да" }],
+  };
+  const harness = createHarness({ body:{ documentIds:["DOC-1"] }, data });
+  const matched = await harness.handle(
+    {method:"DELETE"},
+    {},
+    new URL("http://localhost/api/cases/CASE-1/documents"),
+    {role:"Администратор"},
+  );
+  assert.equal(matched, true);
+  assert.equal(harness.responses[0].status, 200);
+  assert.equal(harness.attachmentReplacements.length, 1);
+  assert.deepEqual(data.cases[0].Документы, [documents[1]]);
 });

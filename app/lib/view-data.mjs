@@ -3,7 +3,7 @@ import { enrichData } from "./domain.mjs";
 export const VIEW_TABLE_KEYS = Object.freeze({
   dashboard: ["cases", "employees", "vacations", "settings", "yucSettings", "loadCoefficients"],
   distribution: ["cases", "employees", "queues", "state", "vacations", "settings", "yucSettings", "regionalAssignments", "regionalSubstitutions"],
-  cases: ["employees", "vacations", "settings"],
+  cases: ["employees", "vacations", "settings", "yucSettings"],
   employees: ["cases", "employees", "queues", "vacations", "settings"],
   settings: ["settings", "yucSettings", "regionalAssignments", "regionalSubstitutions", "loadCoefficients"],
 });

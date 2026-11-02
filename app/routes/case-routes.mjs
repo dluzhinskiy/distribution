@@ -23,6 +23,7 @@ import { publicAttachment, publicAttachmentId, publicAttachmentStorageId } from 
 import { previewDocx, previewXlsx } from "../lib/office-preview.mjs";
 import { downloadAttachment, uploadAttachment } from "../lib/tabs-store.mjs";
 import { assertAllowedFields } from "../lib/validation.mjs";
+import { attachmentsEnabledForYuc } from "../lib/attachment-settings.mjs";
 
 const EMPLOYEE_SELF_EDIT_FIELDS = new Set(["Номер дела", "Ссылка", "Статус", "Истец", "Ответчик", "Третье лицо", "Предмет"]);
 const EMPLOYEE_EDITABLE_STATUSES = new Set(["В работе", "Приостановлено", "Завершено"]);
@@ -108,14 +109,23 @@ export function createCaseRoutes({
     }
   }
 
+  function requireAttachmentsEnabled(data, caseRow) {
+    if (attachmentsEnabledForYuc(data.yucSettings, caseRow?.[FIELD.yuc])) return;
+    const error = new Error("Работа с вложениями отключена администратором.");
+    error.status = 410;
+    error.code = "ATTACHMENTS_DISABLED";
+    throw error;
+  }
+
   async function findCaseAttachment(caseId, documentId) {
-    const data = await readData(["cases", "employees"]);
+    const data = await readData(["cases", "employees", "yucSettings"]);
     const caseRow = findCase(data, caseId);
     if (!caseRow) {
       const error = new Error("Дело не найдено.");
       error.status = 404;
       throw error;
     }
+    requireAttachmentsEnabled(data, caseRow);
     const attachment = (Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : [])
       .find((item) => attachmentMatchesId(item, documentId));
     if (!attachment) {
@@ -201,13 +211,9 @@ export function createCaseRoutes({
   }
 
   return async function handleCaseRoute(req, res, url, user) {
-    if (url.pathname.startsWith("/api/cases/") && url.pathname.split("/")[4] === "documents") {
-      sendJson(res, 410, { ok: false, error: "Работа с вложениями отключена.", code: "ATTACHMENTS_DISABLED" });
-      return true;
-    }
     if (req.method === "GET" && /^\/api\/cases\/[^/]+$/.test(url.pathname)) {
       const caseId = decodeURIComponent(url.pathname.split("/").pop());
-      const data = await readData(["cases", "employees"]);
+      const data = await readData(["cases", "employees", "yucSettings"]);
       const caseRow = findCase(data, caseId);
       if (!caseRow) {
         const error = new Error("Дело не найдено.");
@@ -215,19 +221,29 @@ export function createCaseRoutes({
         throw error;
       }
       const employee = data.employees.find(item => item.employee_id === user.employeeId);
-      sendJson(res, 200, { ok: true, case: { ...caseRow, Документы: [], canEdit: !isDeletedCase(caseRow) && canEditCase(user, employee, caseRow, data.employees) } });
+      const attachmentsEnabled = attachmentsEnabledForYuc(data.yucSettings, caseRow[FIELD.yuc]);
+      sendJson(res, 200, {
+        ok: true,
+        case: {
+          ...caseRow,
+          [FIELD.documents]: attachmentsEnabled ? caseRow[FIELD.documents] : [],
+          attachmentsEnabled,
+          canEdit: !isDeletedCase(caseRow) && canEditCase(user, employee, caseRow, data.employees),
+        },
+      });
       return true;
     }
 
     if (req.method === "POST" && /^\/api\/cases\/[^/]+\/documents$/.test(url.pathname)) {
       const caseId = decodeURIComponent(url.pathname.split("/").at(-2));
-      const data = await readData(["cases", "employees", "settings", "vacations"]);
+      const data = await readData(["cases", "employees", "settings", "vacations", "yucSettings"]);
       const caseRow = findCase(data, caseId);
       if (!caseRow) {
         const error = new Error("Дело не найдено.");
         error.status = 404;
         throw error;
       }
+      requireAttachmentsEnabled(data, caseRow);
       if (isDeletedCase(caseRow)) {
         const error = new Error("Нельзя добавлять документы в удалённое дело.");
         error.status = 409;
@@ -256,13 +272,14 @@ export function createCaseRoutes({
         error.status = 400;
         throw error;
       }
-      const data = await readData(["cases", "employees", "settings", "vacations"]);
+      const data = await readData(["cases", "employees", "settings", "vacations", "yucSettings"]);
       const caseRow = findCase(data, caseId);
       if (!caseRow) {
         const error = new Error("Дело не найдено.");
         error.status = 404;
         throw error;
       }
+      requireAttachmentsEnabled(data, caseRow);
       if (isDeletedCase(caseRow)) {
         const error = new Error("Нельзя удалять документы из удалённого дела.");
         error.status = 409;

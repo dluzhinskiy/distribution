@@ -121,6 +121,9 @@ const TABLES = {
     datasheetId: process.env.TABS_YUC_SETTINGS_DATASHEET_ID || "dstGXdrV1Mb3Rkc57E",
     viewId: process.env.TABS_YUC_SETTINGS_VIEW_ID || "viwzMFn8hWD2U",
     headers: YUC_SETTINGS_HEADERS,
+    // Глобальный административный переключатель вложений может быть скрыт в
+    // пользовательском представлении, поэтому читаем все поля таблицы.
+    readAllFields: true,
     keyFields: ["ЮЦ"],
     dateFields: [],
     numberFields: [],

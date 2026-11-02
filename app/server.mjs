@@ -158,7 +158,7 @@ function employeeScopedData(rawData, employee) {
     state: [],
     vacations: [],
     settings: [],
-    yucSettings: [],
+    yucSettings: rawData.yucSettings ?? [],
     regionalAssignments: [],
     regionalSubstitutions: [],
     loadCoefficients: rawData.loadCoefficients ?? [],

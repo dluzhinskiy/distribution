@@ -126,6 +126,7 @@ function applyRoleUi() {
   $("#caseDeleteEditToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#showDeletedCasesToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#loadCoefficientsCard")?.classList.toggle("hidden", !isAdminUser());
+  $("#attachmentSettingsCard")?.classList.toggle("hidden", !isAdminUser());
   $("#employeeAdminActions")?.classList.toggle("hidden", !canManageEmployeeLifecycleUi());
   const accessDescription = $("#accessDescription");
   if (accessDescription) accessDescription.textContent = isAdminUser()
@@ -820,6 +821,19 @@ function yucSettingsForSelectedYuc() {
     "Регион не настроен": "общая очередь",
     "Региональные юристы недоступны": "заместитель затем общая очередь",
   };
+}
+
+function attachmentsEnabledForCase(row = {}) {
+  const yuc = normalizeYuc(row["ЮЦ"]);
+  const settings = (state.data?.yucSettings ?? []).find((item) => normalizeYuc(item["ЮЦ"]) === yuc);
+  if (settings) return yes(settings["Вложения в карточках"]);
+  return row.attachmentsEnabled === true;
+}
+
+function attachmentSettingsSummary() {
+  const rows = (state.data?.yucSettings ?? []).filter((row) => String(row["ЮЦ"] ?? "").trim());
+  const enabledYucs = rows.filter((row) => yes(row["Вложения в карточках"])).length;
+  return { total: rows.length, enabledYucs, enabled: rows.length > 0 && enabledYucs === rows.length };
 }
 
 function includeInactiveInLoadForSelectedYuc() {
@@ -2942,12 +2956,39 @@ function renderRegionalSubstitutions() {
 }
 
 function renderSettings() {
+  renderAttachmentSettings();
   renderLoadCoefficients();
   renderDeadlineSettings();
   renderYucSettingsForm();
   renderRegionalAssignments();
   renderRegionalSubstitutions();
   updateRegionalSettingsAvailability();
+}
+
+function renderAttachmentSettings() {
+  const toggle = $("#attachmentsEnabledToggle");
+  const note = $("#attachmentSettingsNote");
+  if (!toggle) return;
+  const summary = attachmentSettingsSummary();
+  toggle.checked = summary.enabled;
+  toggle.disabled = !isAdminUser();
+  if (note) {
+    note.textContent = summary.enabledYucs > 0 && !summary.enabled
+      ? `Настройка различается между ЮЦ: включено ${summary.enabledYucs} из ${summary.total}. Сохранение применит выбранное значение ко всем ЮЦ.`
+      : "Глобальная настройка для всех ЮЦ. Изменять её может только администратор.";
+  }
+}
+
+async function saveAttachmentSettings() {
+  if (!isAdminUser()) return;
+  setStatus("Сохраняю настройку документов…");
+  const payload = await api("/api/attachment-settings", {
+    method: "PUT",
+    body: JSON.stringify({ enabled: Boolean($("#attachmentsEnabledToggle")?.checked) }),
+  });
+  setDataFromPayload(payload);
+  setStatus("Сохранено");
+  toast(payload.attachmentSettings?.enabled ? "Работа с документами включена." : "Работа с документами отключена.");
 }
 
 async function saveLoadCoefficients() {
@@ -2962,6 +3003,18 @@ async function saveLoadCoefficients() {
 }
 
 const settingsHelp = {
+  attachments: {
+    title: "Документы в карточках дел",
+    body: `
+      <p>Переключатель действует одновременно для всех юридических центров.</p>
+      <ul>
+        <li>При включении в карточке отображаются документы и действия добавления, просмотра, скачивания и удаления.</li>
+        <li>Новые файлы отправляются в MTS Tabs только после нажатия «Сохранить» в карточке.</li>
+        <li>При выключении документы не удаляются из MTS Tabs, а только становятся недоступны через приложение.</li>
+        <li>Изменять настройку может только администратор.</li>
+      </ul>
+    `,
+  },
   loadCoefficients: {
     title: "Коэффициенты приведённой нагрузки",
     body: `
@@ -4225,6 +4278,7 @@ function renderCaseModal() {
         ${caseModalField({ field: "Предмет", label: "Предмет", type: "textarea", wide: true, rows: 4, readonly: caseModalFieldReadonlyForUser("Предмет") })}
         ${caseModalField({ field: "Движение дела", label: "Движение дела", type: "textarea", wide: true, rows: 5, readonly: caseModalFieldReadonlyForUser("Движение дела") })}
       </div>
+      ${attachmentsEnabledForCase(row) ? caseDocumentsSection(row, canEdit) : ""}
     </div>
   `;
   $("#caseModalEdit").classList.toggle("hidden", state.caseModalEditing || !canEdit);
@@ -4678,6 +4732,10 @@ function bindEvents() {
     applyTheme(event.target.checked ? redTheme : blueTheme);
   });
   $("#saveYucSettingsBtn")?.addEventListener("click", () => saveYucSettings().catch((error) => {
+    setStatus("Ошибка");
+    toast(error.message, "error");
+  }));
+  $("#saveAttachmentSettingsBtn")?.addEventListener("click", () => saveAttachmentSettings().catch((error) => {
     setStatus("Ошибка");
     toast(error.message, "error");
   }));

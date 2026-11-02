@@ -8,6 +8,7 @@ import {
   regionalSubstitutionKey,
 } from "../lib/regional-rules.mjs";
 import { validateLoadCoefficients } from "../lib/load-coefficients.mjs";
+import { ATTACHMENTS_SETTING, attachmentSettingsSummary } from "../lib/attachment-settings.mjs";
 
 export function createSettingsRoutes({
   readBody,
@@ -19,6 +20,42 @@ export function createSettingsRoutes({
   requireAdmin = () => {},
 }) {
   return async function handleSettingsRoute(req, res, url, user) {
+    if (req.method === "PUT" && url.pathname === "/api/attachment-settings") {
+      requireAdmin(user);
+      const body = await readBody(req);
+      const enabled = yesNo(body.enabled);
+      const data = await readData(["employees", "yucSettings"]);
+      const yucs = [...new Set([
+        ...(data.yucSettings ?? []).map((row) => cleanText(row[FIELD.yuc])),
+        ...(data.employees ?? []).map((row) => cleanText(row[FIELD.yuc])),
+      ].filter(Boolean).map(normalizeYuc))];
+      for (const yuc of yucs) {
+        let row = data.yucSettings.find((item) => normalizeYuc(item[FIELD.yuc]) === yuc);
+        if (!row) {
+          row = {
+            "Название": "",
+            [FIELD.yuc]: yuc,
+            [YUC_SETTING.regionalEnabled]: "Нет",
+            [YUC_SETTING.includeInactiveLoad]: "Нет",
+            [YUC_SETTING.missingRegionMode]: "общая очередь",
+            [YUC_SETTING.unavailableRegionalMode]: "заместитель затем общая очередь",
+          };
+          data.yucSettings.push(row);
+        }
+        row[ATTACHMENTS_SETTING] = enabled;
+      }
+      const confirmedData = await saveAndConfirm(data, ["yucSettings"], (freshData) => {
+        const summary = attachmentSettingsSummary(freshData.yucSettings);
+        return enabled === "Да" ? summary.enabledYucs === yucs.length : summary.enabledYucs === 0;
+      });
+      sendJson(res, 200, {
+        ok: true,
+        attachmentSettings: attachmentSettingsSummary(confirmedData.yucSettings),
+        data: confirmedData,
+      });
+      return true;
+    }
+
     if (req.method === "PUT" && url.pathname === "/api/load-coefficients") {
       requireAdmin(user);
       const body = await readBody(req);

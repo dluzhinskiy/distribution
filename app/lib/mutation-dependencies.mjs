@@ -14,6 +14,7 @@ export function mutationReadTables(method = "", pathname = "") {
   if (verb === "PATCH" && path.startsWith("/api/employees/")) return ["employees", "queues"];
   if (verb === "PATCH" && path.startsWith("/api/queues/")) return ["queues"];
   if (path === "/api/load-coefficients") return ["loadCoefficients"];
+  if (path === "/api/attachment-settings") return ["employees", "yucSettings"];
   if (path.startsWith("/api/yuc-settings/")) return ["yucSettings"];
   if (path === "/api/deadline-settings") return ["settings"];
   if (path.startsWith("/api/regional-assignments/")) return ["employees", "regionalAssignments"];
@@ -23,7 +24,7 @@ export function mutationReadTables(method = "", pathname = "") {
   // кэша и дочитает таблицы, только если они успели устареть.
   if (path === "/api/cases/import-apply") return [];
   if (verb === "PATCH" && /^\/api\/cases\/[^/]+$/.test(path)) return ["cases", "employees"];
-  if (/^\/api\/cases\/[^/]+\/documents$/.test(path)) return ["cases", "employees"];
+  if (/^\/api\/cases\/[^/]+\/documents$/.test(path)) return ["cases", "employees", "yucSettings"];
   if (path.endsWith("/responsible")) return ["cases", "employees"];
   if (["/delete", "/restore", "/complete-deadline", "/postpone-completion"].some((suffix) => path.endsWith(suffix))) return ["cases"];
   if (path.startsWith("/api/cases/") || path === "/api/assign-auto" || path === "/api/assign-manual") {

@@ -347,6 +347,30 @@
 
         <section class="view" id="view-settings">
           <div class="grid settings-layout">
+            <section class="card" id="attachmentSettingsCard">
+              <div class="card-head">
+                <div>
+                  <h2>Документы в карточках дел</h2>
+                  <p id="attachmentSettingsNote">Глобальная настройка для всех ЮЦ. Изменять её может только администратор.</p>
+                </div>
+                <div class="settings-card-actions">
+                  <span class="badge badge-blue">все ЮЦ</span>
+                  <button class="settings-help-trigger" type="button" data-settings-help="attachments" aria-label="Справка по документам" title="Как работают документы">?</button>
+                </div>
+              </div>
+              <label class="toggle-field toggle-field-with-description">
+                <span>
+                  <strong>Разрешить работу с документами</strong>
+                  <small>Показывать документы в карточке и разрешить добавление, просмотр, скачивание и удаление.</small>
+                </span>
+                <input type="checkbox" id="attachmentsEnabledToggle" />
+                <span class="switch-ui"></span>
+              </label>
+              <div class="actions-row">
+                <button class="btn btn-primary" id="saveAttachmentSettingsBtn">Сохранить настройку</button>
+              </div>
+            </section>
+
             <section class="card load-coefficients-card" id="loadCoefficientsCard">
               <div class="card-head">
                 <div>
