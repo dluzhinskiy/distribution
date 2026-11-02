@@ -30,6 +30,7 @@ test("request method classification leaves reads outside the write queue", () =>
   assert.equal(isMutationRequest("POST"), true);
   assert.equal(isMutationRequest("PATCH"), true);
   assert.equal(isMutationRequest("POST", "/api/recommend"), false);
+  assert.equal(isMutationRequest("POST", "/api/recommend-test"), false);
   assert.equal(isMutationRequest("POST", "/api/cases/import-preview"), false);
   assert.equal(isMutationRequest("POST", "/api/vacations/import-preview"), false);
   assert.equal(isMutationRequest("POST", "/api/auth/login"), false);

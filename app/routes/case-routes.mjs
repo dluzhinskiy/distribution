@@ -333,6 +333,29 @@ export function createCaseRoutes({
       return true;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/recommend-test") {
+      if (!auth.isAdmin?.(user)) {
+        const error = new Error("Пробное распределение доступно только администратору.");
+        error.status = 403;
+        error.code = "ADMIN_REQUIRED";
+        throw error;
+      }
+      const body = await readBody(req);
+      const data = await readData(DISTRIBUTION_READ_TABLES);
+      const draft = normalizeDraft(body.draft ?? body);
+      requireManageYuc(user, draft[FIELD.yuc]);
+      // Алгоритм может создать недостающую строку состояния в переданном
+      // объекте. Для пробного запуска используем глубокую копию, чтобы даже
+      // локальный серверный кэш остался без изменений.
+      const simulationData = structuredClone(data);
+      sendJson(res, 200, {
+        ok: true,
+        result: recommendWithPreview(simulationData, draft),
+        persisted: false,
+      });
+      return true;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/assign-auto") {
       const body = await readBody(req);
       const data = await readData(DISTRIBUTION_READ_TABLES);

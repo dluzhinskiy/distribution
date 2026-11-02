@@ -27,6 +27,7 @@ import { caseIdFromPathname } from "./lib/case-deep-link.js";
 const state = createAppState();
 const rowsByYucIndex = new WeakMap();
 const dataViewNames = ["dashboard", "distribution", "cases", "employees", "settings"];
+const readOnlyPostApiPaths = new Set(["/api/recommend", "/api/recommend-test"]);
 
 const caseTypes = ["претензия", "заключение", "административное", "судебное", "уголовное", "банкротное"];
 const workloadCaseTypes = ["претензия", "заключение", "административное", "судебное"];
@@ -130,6 +131,8 @@ function applyRoleUi() {
   $("#showDeletedCasesToggle")?.closest("label")?.classList.toggle("hidden", employee || readOnly);
   $("#loadCoefficientsCard")?.classList.toggle("hidden", !isAdminUser());
   $("#attachmentSettingsCard")?.classList.toggle("hidden", !isAdminUser());
+  $("#testDistributionActions")?.classList.toggle("hidden", !isAdminUser());
+  if (!isAdminUser()) $("#testDistributionResult")?.classList.add("hidden");
   $("#employeeAdminActions")?.classList.toggle("hidden", !canManageEmployeeLifecycleUi());
   const accessDescription = $("#accessDescription");
   if (accessDescription) accessDescription.textContent = isAdminUser()
@@ -395,6 +398,8 @@ function tableOperationDescription(path, method = "GET", customTitle = "") {
   if (path.includes("/case-register")) return "Чтение реестра дел";
   if (path.includes("/api/cases/") && !write) return "Чтение карточки дела";
   if (path.includes("/assign-auto") || path.includes("/assign-manual")) return "Создание и запись нового дела";
+  if (path.includes("/recommend-test")) return "Пробный расчёт распределения";
+  if (path.includes("/recommend")) return "Расчёт очереди назначения";
   if (path.includes("import-preview")) return "Чтение и проверка файла";
   if (path.includes("import-apply")) return "Запись результатов импорта";
   if (path.includes("/api/data")) return "Чтение данных из MTS Tabs";
@@ -450,10 +455,12 @@ function renderTableOperationProgress() {
 function beginTableOperation(path, method = "GET", title = "") {
   if (String(path).startsWith("/api/auth/")) return null;
   const id = ++tableOperationSequence;
+  const normalizedPath = String(path).split("?")[0];
+  const readOnly = ["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase()) || readOnlyPostApiPaths.has(normalizedPath);
   tableOperations.set(id, {
     id,
     title: tableOperationDescription(String(path), method, title),
-    kind: ["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase()) ? "reading" : "writing",
+    kind: readOnly ? "reading" : "writing",
     startedAt: Date.now(),
     done: false,
     error: false,
@@ -576,7 +583,7 @@ function applyTheme(theme, persist = true) {
 }
 
 async function api(path, options = {}) {
-  const shouldLock = isWriteRequest(options);
+  const shouldLock = isWriteRequest(options) && !readOnlyPostApiPaths.has(String(path).split("?")[0]);
   const progressId = beginTableOperation(path, requestMethod(options));
   let progressError = false;
   if (shouldLock) beginWriteLock();
@@ -3472,11 +3479,20 @@ function renderDistributionRuleBadges(result = state.lastRecommendation) {
 }
 
 function invalidateRecommendation(message) {
+  clearTestDistributionResult();
   showRecommendation({
     ok: false,
     reason: message,
   });
   state.lastRecommendation = null;
+}
+
+function clearTestDistributionResult() {
+  const node = $("#testDistributionResult");
+  if (!node) return;
+  node.classList.add("hidden");
+  node.classList.remove("is-warning");
+  node.innerHTML = "";
 }
 
 function showRecommendation(result) {
@@ -3541,6 +3557,35 @@ async function recommendCurrent(options = {}) {
   return payload.result;
 }
 
+async function runTestDistribution() {
+  if (!isAdminUser()) {
+    toast("Пробное распределение доступно только администратору.", "error");
+    return;
+  }
+  const draft = formDraft();
+  if (!validateDraftForAssignment(draft)) return;
+  clearTestDistributionResult();
+  setStatus("Читаю данные для пробного распределения…");
+  const payload = await api("/api/recommend-test", {
+    method: "POST",
+    body: JSON.stringify({ draft }),
+  });
+  const result = payload.result ?? {};
+  const node = $("#testDistributionResult");
+  if (!node) return;
+  node.classList.remove("hidden");
+  node.classList.toggle("is-warning", !result.ok);
+  node.innerHTML = result.ok
+    ? `<strong>Пробный результат: ${escapeHtml(displayName(result.candidate))}</strong>
+       <span>Основание: ${escapeHtml(result.basis || "расчёт очереди")}. Позиция: ${escapeHtml(result.position || "—")}.</span>
+       <small>Дело не создано. Очередь, долги и состояние распределения не изменены${state.distributionDocumentPendingFiles.length ? ". Выбранные документы не загружались" : ""}.</small>`
+    : `<strong>Пробное распределение не выполнено</strong>
+       <span>${escapeHtml(result.reason || "Подходящий сотрудник не найден.")}</span>
+       <small>Никакие данные не изменены.</small>`;
+  setStatus("Готово");
+  toast("Пробный расчёт завершён. Ничего не сохранено.");
+}
+
 function scheduleRecommendation() {
   state.recommendationRequestId = (state.recommendationRequestId ?? 0) + 1;
   clearTimeout(state.recommendationTimer);
@@ -3554,6 +3599,7 @@ function scheduleRecommendation() {
 
 function handleCaseFormRecommendationChange(event) {
   const fieldName = event.target?.name;
+  clearTestDistributionResult();
   if (fieldName === "Тип дела") updateThirdPartyVisibility();
   if (!["Тип дела", "Регион", "Дата поступления"].includes(fieldName)) return;
   state.lastRecommendation = null;
@@ -3561,6 +3607,7 @@ function handleCaseFormRecommendationChange(event) {
 }
 
 function resetDistributionForm(message) {
+  clearTestDistributionResult();
   state.distributionDocumentPendingFiles = [];
   state.distributionDocumentUploading = false;
   $("#caseForm").reset();
@@ -4945,6 +4992,10 @@ function bindEvents() {
     link.addEventListener("click", () => showView(link.dataset.view));
   });
   $("#refreshBtn").addEventListener("click", () => loadData({ view: activeDataViewName(), force: true }));
+  $("#testDistributionBtn")?.addEventListener("click", () => runTestDistribution().catch((error) => {
+    setStatus("Ошибка");
+    toast(error.message, "error");
+  }));
   $("#settingsHelpClose")?.addEventListener("click", closeSettingsHelp);
   $("#settingsHelpModal")?.addEventListener("click", (event) => {
     if (event.target.id === "settingsHelpModal") closeSettingsHelp();

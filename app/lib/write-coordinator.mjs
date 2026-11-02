@@ -2,6 +2,7 @@ const READ_ONLY_POST_PATHS = new Set([
   "/api/auth/login",
   "/api/auth/logout",
   "/api/recommend",
+  "/api/recommend-test",
   "/api/cases/import-preview",
   "/api/vacations/import-preview",
 ]);

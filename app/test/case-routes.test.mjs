@@ -10,6 +10,7 @@ function createHarness({ body = {}, data }) {
   const attachmentReplacements = [];
   const auth = {
     isManager: (user) => ["Руководитель", "Заместитель", "Администратор"].includes(user.role),
+    isAdmin: (user) => user.role === "Администратор",
   };
   const handle = createCaseRoutes({
     auth,
@@ -29,6 +30,13 @@ function createHarness({ body = {}, data }) {
       row[field] = attachments;
       return row;
     },
+    uploadCaseAttachment: async (_table, file) => ({
+      id: "DOC-UPLOADED",
+      token: "token-uploaded",
+      name: file.name,
+      mimeType: file.mimeType,
+      size: 0,
+    }),
     caseDocumentMaxBytes: 1_000,
     officePreviewMaxBytes: 1_000,
   });
@@ -101,6 +109,44 @@ test("employee cannot use manager-only case action", async () => {
   assert.equal(matched, false);
 });
 
+test("test distribution is admin-only and does not persist queue effects", async () => {
+  const data = {
+    cases: [],
+    employees: [
+      { employee_id: "EMP-1", [FIELD.name]: "Иванов И.И.", [FIELD.yuc]: "ЮЦ 1", "Активен": "Да", "Судебные": "Да" },
+    ],
+    queues: [
+      { queue_id: "Q-1", employee_id: "EMP-1", [FIELD.name]: "Иванов И.И.", [FIELD.yuc]: "ЮЦ 1", [FIELD.caseType]: "судебное", [FIELD.position]: 1, [FIELD.debt]: 0 },
+    ],
+    state: [{ queue_id: "QUEUE-ЮЦ 1-судебное", [FIELD.yuc]: "ЮЦ 1", [FIELD.caseType]: "судебное", "Последняя позиция": 0, "Последний автоназначенный": "", "Цикл": 1 }],
+    vacations: [],
+    settings: [],
+    yucSettings: [],
+    regionalAssignments: [],
+    regionalSubstitutions: [],
+  };
+  const body = { draft: { [FIELD.yuc]: "ЮЦ 1", [FIELD.caseType]: "судебное", "Предмет": "Проверка", "Дата поступления": "2026-11-02" } };
+  const before = structuredClone(data);
+  const manager = createHarness({ body, data });
+  await assert.rejects(
+    manager.handle({ method: "POST" }, {}, new URL("http://localhost/api/recommend-test"), { role: "Руководитель", yuc: "ЮЦ 1" }),
+    (error) => error.status === 403 && error.code === "ADMIN_REQUIRED",
+  );
+
+  const admin = createHarness({ body, data });
+  const matched = await admin.handle(
+    { method: "POST" },
+    {},
+    new URL("http://localhost/api/recommend-test"),
+    { role: "Администратор", yuc: "" },
+  );
+  assert.equal(matched, true);
+  assert.equal(admin.responses[0].payload.persisted, false);
+  assert.equal(admin.responses[0].payload.result.candidate, "Иванов И.И.");
+  assert.deepEqual(data, before);
+  assert.deepEqual(admin.savedTables, []);
+});
+
 test("manager case patch accepts business fields and rejects storage fields", async () => {
   const user = { employeeId: "M-1", role: "Руководитель", yuc: "ЮЦ 1" };
   const allowedData = {
@@ -160,4 +206,24 @@ test("enabled attachments allow administrator to remove a selected file", async 
   assert.equal(harness.responses[0].status, 200);
   assert.equal(harness.attachmentReplacements.length, 1);
   assert.deepEqual(data.cases[0].Документы, [documents[1]]);
+});
+
+test("enabled upload persists the complete attachment array through the dedicated writer", async () => {
+  const existing = { id:"DOC-1", token:"token-1", name:"old.pdf" };
+  const data = {
+    cases:[{ case_id:"CASE-1", [FIELD.yuc]: "ЮЦ 1", Документы:[existing] }],
+    employees:[],
+    yucSettings: [{ [FIELD.yuc]: "ЮЦ 1", "Вложения в карточках": "Да" }],
+  };
+  const harness = createHarness({ data });
+  const matched = await harness.handle(
+    { method:"POST", headers:{ "x-file-name":"new.pdf", "x-file-type":"application/pdf" } },
+    {},
+    new URL("http://localhost/api/cases/CASE-1/documents"),
+    { role:"Администратор" },
+  );
+  assert.equal(matched, true);
+  assert.equal(harness.responses[0].status, 200);
+  assert.equal(harness.attachmentReplacements.length, 1);
+  assert.deepEqual(data.cases[0].Документы.map((item) => item.name), ["old.pdf", "new.pdf"]);
 });
