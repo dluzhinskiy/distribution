@@ -2981,14 +2981,29 @@ function renderAttachmentSettings() {
 
 async function saveAttachmentSettings() {
   if (!isAdminUser()) return;
+  const requestedEnabled = Boolean($("#attachmentsEnabledToggle")?.checked);
   setStatus("Сохраняю настройку документов…");
   const payload = await api("/api/attachment-settings", {
     method: "PUT",
-    body: JSON.stringify({ enabled: Boolean($("#attachmentsEnabledToggle")?.checked) }),
+    body: JSON.stringify({ enabled: requestedEnabled }),
   });
   setDataFromPayload(payload);
+  const enabled = payload.attachmentSettings?.enabled === true;
+  const applyAvailability = (row) => ({
+    ...row,
+    attachmentsEnabled: enabled,
+    ...(!enabled ? { Документы: [] } : {}),
+  });
+  if (state.data?.cases) state.data.cases = state.data.cases.map(applyAvailability);
+  state.caseRegistryRows = state.caseRegistryRows.map(applyAvailability);
+  // Реестр мог быть загружен до изменения глобальной настройки. При следующем
+  // переходе на вкладку он обновится автоматически, без перезагрузки страницы.
+  state.loadedViews.delete("cases");
+  state.caseRegistryLoaded = false;
+  markDataViewsDirty(["cases"]);
+  if (state.caseModalCaseId) await refreshCaseModal(state.caseModalCaseId);
   setStatus("Сохранено");
-  toast(payload.attachmentSettings?.enabled ? "Работа с документами включена." : "Работа с документами отключена.");
+  toast(enabled ? "Работа с документами включена." : "Работа с документами отключена.");
 }
 
 async function saveLoadCoefficients() {
