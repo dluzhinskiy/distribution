@@ -66,6 +66,8 @@ export function createAppState() {
     caseModalLoading: false,
     vacationDrafts: {},
     queueManualCandidate: null,
+    distributionDocumentPendingFiles: [],
+    distributionDocumentUploading: false,
     caseDocumentUploading: false,
     caseDocumentPendingFiles: [],
     caseDocumentPendingDeletes: [],
