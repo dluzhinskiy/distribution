@@ -604,10 +604,21 @@ function setDataFromPayload(payload) {
   }
   if (payload.case && state.data) {
     const index = (state.data.cases ?? []).findIndex((row) => row.case_id === payload.case.case_id);
+    const isNewCase = index < 0;
     if (index >= 0) state.data.cases[index] = payload.case;
     else state.data.cases = [...(state.data.cases ?? []), payload.case];
     const registryIndex = state.caseRegistryRows.findIndex((row) => row.case_id === payload.case.case_id);
     if (registryIndex >= 0) state.caseRegistryRows[registryIndex] = payload.case;
+    if (isNewCase && registryIndex < 0) {
+      // Реестр загружается с сервера постранично. Новую запись нельзя просто
+      // дописать в текущую страницу: она может не соответствовать выбранным
+      // ЮЦ, поиску или фильтрам. При следующем открытии вкладки перечитываем
+      // реестр, не заставляя пользователя обновлять всю страницу приложения.
+      state.caseRegistryRequestId += 1;
+      state.caseRegistryLoaded = false;
+      state.caseRegistryLoading = false;
+      state.loadedViews.delete("cases");
+    }
     markDataViewsDirty(["dashboard", "distribution", "cases", "employees"]);
     renderAll();
   }
