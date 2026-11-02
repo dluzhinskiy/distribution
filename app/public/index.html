@@ -89,6 +89,20 @@
           </div>
         </header>
 
+        <section class="table-operation-progress hidden" id="tableOperationProgress" aria-live="polite" aria-atomic="true">
+          <div class="table-operation-progress-head">
+            <div>
+              <strong id="tableOperationTitle">Работа с таблицами</strong>
+              <span id="tableOperationStage">Подготавливаю запрос…</span>
+            </div>
+            <span class="table-operation-elapsed" id="tableOperationElapsed">0 сек.</span>
+          </div>
+          <div class="table-operation-track" aria-hidden="true">
+            <span id="tableOperationFill"></span>
+          </div>
+          <small id="tableOperationHint">Продолжительность зависит от объёма данных и скорости ответа MTS Tabs.</small>
+        </section>
+
         <section class="yuc-switcher" aria-label="Выбор юридического центра">
           <div class="yuc-switcher-title">
             <div class="yuc-switcher-label">Юридический центр</div>

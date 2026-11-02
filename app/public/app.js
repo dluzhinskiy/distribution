@@ -58,6 +58,9 @@ const CASE_COLUMN_OPTIONS = [
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const tableOperations = new Map();
+let tableOperationSequence = 0;
+let tableOperationTimer = null;
 
 function currentRole() {
   return state.authUser?.role || "";
@@ -385,6 +388,93 @@ function setStatus(message) {
   node.tabIndex = canCopyError ? 0 : -1;
 }
 
+function tableOperationDescription(path, method = "GET", customTitle = "") {
+  if (customTitle) return customTitle;
+  const write = !["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase());
+  if (path.includes("/documents")) return write ? "Загрузка документа в MTS Tabs" : "Чтение документа";
+  if (path.includes("/case-register")) return "Чтение реестра дел";
+  if (path.includes("/api/cases/") && !write) return "Чтение карточки дела";
+  if (path.includes("/assign-auto") || path.includes("/assign-manual")) return "Создание и запись нового дела";
+  if (path.includes("import-preview")) return "Чтение и проверка файла";
+  if (path.includes("import-apply")) return "Запись результатов импорта";
+  if (path.includes("/api/data")) return "Чтение данных из MTS Tabs";
+  return write ? "Запись изменений в MTS Tabs" : "Чтение данных из MTS Tabs";
+}
+
+function operationStage(operation, elapsedMs) {
+  if (operation.done) return {
+    percent: 100,
+    stage: operation.error ? "Операция завершилась с ошибкой" : "Операция завершена",
+    hint: operation.error ? "Подробности ошибки показаны в интерфейсе." : "Данные получены и обновляются в интерфейсе.",
+  };
+  const writing = operation.kind === "writing";
+  if (elapsedMs < 450) return { percent: 10, stage: "Подготавливаю запрос…" };
+  if (elapsedMs < 1600) return { percent: 28, stage: writing ? "Передаю изменения…" : "Запрашиваю таблицы…" };
+  if (elapsedMs < 4000) return { percent: 50, stage: writing ? "Обрабатываю и записываю данные…" : "Читаю и обрабатываю данные…" };
+  if (elapsedMs < 10000) return { percent: 70, stage: writing ? "Ожидаю подтверждение записи от MTS Tabs…" : "Ожидаю ответ MTS Tabs…" };
+  if (elapsedMs < 25000) return {
+    percent: 84,
+    stage: writing ? "MTS Tabs подтверждает изменения…" : "MTS Tabs продолжает формировать ответ…",
+    hint: "Операция выполняется дольше обычного. Не закрывайте страницу и не повторяйте действие.",
+  };
+  return {
+    percent: 92,
+    stage: "Операция всё ещё выполняется…",
+    hint: "Большие таблицы и загруженный сервис могут отвечать дольше. Ожидайте итоговое сообщение.",
+  };
+}
+
+function renderTableOperationProgress() {
+  const panel = $("#tableOperationProgress");
+  if (!panel) return;
+  const operations = [...tableOperations.values()].sort((left, right) => right.startedAt - left.startedAt);
+  const operation = operations[0];
+  if (!operation) {
+    panel.classList.add("hidden");
+    if (tableOperationTimer) window.clearInterval(tableOperationTimer);
+    tableOperationTimer = null;
+    return;
+  }
+  const elapsedMs = Math.max(0, Date.now() - operation.startedAt);
+  const progress = operationStage(operation, elapsedMs);
+  panel.classList.remove("hidden", "is-reading", "is-writing", "is-complete", "is-error");
+  panel.classList.add(`is-${operation.kind}`);
+  if (operation.done) panel.classList.add(operation.error ? "is-error" : "is-complete");
+  $("#tableOperationTitle").textContent = operation.title;
+  $("#tableOperationStage").textContent = progress.stage;
+  $("#tableOperationElapsed").textContent = elapsedMs < 1000 ? "< 1 сек." : `${Math.floor(elapsedMs / 1000)} сек.`;
+  $("#tableOperationFill").style.width = `${progress.percent}%`;
+  $("#tableOperationHint").textContent = progress.hint || "Шкала показывает этап операции; длительность зависит от объёма данных и ответа MTS Tabs.";
+}
+
+function beginTableOperation(path, method = "GET", title = "") {
+  if (String(path).startsWith("/api/auth/")) return null;
+  const id = ++tableOperationSequence;
+  tableOperations.set(id, {
+    id,
+    title: tableOperationDescription(String(path), method, title),
+    kind: ["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase()) ? "reading" : "writing",
+    startedAt: Date.now(),
+    done: false,
+    error: false,
+  });
+  if (!tableOperationTimer) tableOperationTimer = window.setInterval(renderTableOperationProgress, 250);
+  renderTableOperationProgress();
+  return id;
+}
+
+function finishTableOperation(id, { error = false } = {}) {
+  if (!id || !tableOperations.has(id)) return;
+  const operation = tableOperations.get(id);
+  operation.done = true;
+  operation.error = error;
+  renderTableOperationProgress();
+  window.setTimeout(() => {
+    tableOperations.delete(id);
+    renderTableOperationProgress();
+  }, error ? 1100 : 500);
+}
+
 async function copyLastApiError() {
   if (!state.lastApiError) return;
   const text = JSON.stringify(state.lastApiError, null, 2);
@@ -487,6 +577,8 @@ function applyTheme(theme, persist = true) {
 
 async function api(path, options = {}) {
   const shouldLock = isWriteRequest(options);
+  const progressId = beginTableOperation(path, requestMethod(options));
+  let progressError = false;
   if (shouldLock) beginWriteLock();
   try {
     try {
@@ -503,27 +595,41 @@ async function api(path, options = {}) {
         code: apiError.code,
         message: apiError.message,
       };
+      progressError = true;
       throw apiError;
     }
   } finally {
+    finishTableOperation(progressId, { error: progressError });
     if (shouldLock) endWriteLock();
   }
 }
 
 async function uploadVacationWorkbook(file) {
+  const progressId = beginTableOperation("/api/vacations/import-preview", "POST", "Чтение и проверка файла отпусков");
+  let progressError = false;
   beginWriteLock();
   try {
     return await uploadBinary("/api/vacations/import-preview", file);
+  } catch (error) {
+    progressError = true;
+    throw error;
   } finally {
+    finishTableOperation(progressId, { error: progressError });
     endWriteLock();
   }
 }
 
 async function uploadCaseWorkbook(file) {
+  const progressId = beginTableOperation("/api/cases/import-preview", "POST", "Чтение и проверка файла дел");
+  let progressError = false;
   beginWriteLock();
   try {
     return await uploadBinary(`/api/cases/import-preview?yuc=${encodeURIComponent(state.caseImportYuc)}`, file);
+  } catch (error) {
+    progressError = true;
+    throw error;
   } finally {
+    finishTableOperation(progressId, { error: progressError });
     endWriteLock();
   }
 }
@@ -3480,6 +3586,8 @@ async function uploadDistributionDocuments(caseId, files) {
   try {
     for (const [index, file] of pendingFiles.entries()) {
       setStatus(`Дело создано. Загружаю файлы: ${index + 1} из ${pendingFiles.length}…`);
+      const progressId = beginTableOperation(`/api/cases/${caseId}/documents`, "POST", `Загрузка документа ${index + 1} из ${pendingFiles.length}`);
+      let uploadError = false;
       try {
         const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/documents`, {
           method: "POST",
@@ -3496,7 +3604,10 @@ async function uploadDistributionDocuments(caseId, files) {
         setDataFromPayload(payload);
         successful.push(file.name || "Документ");
       } catch (error) {
+        uploadError = true;
         failed.push({ name: file.name || "Документ", error: error.message || "Неизвестная ошибка" });
+      } finally {
+        finishTableOperation(progressId, { error: uploadError });
       }
     }
   } finally {
@@ -4334,6 +4445,8 @@ async function commitCaseDocumentUploads(files) {
   try {
     for (const [index, file] of pendingFiles.entries()) {
       setStatus(`Загружаю файлы: ${index + 1} из ${pendingFiles.length}…`);
+      const progressId = beginTableOperation(`/api/cases/${caseId}/documents`, "POST", `Загрузка документа ${index + 1} из ${pendingFiles.length}`);
+      let uploadError = false;
       try {
         const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/documents`, {
           method: "POST",
@@ -4351,7 +4464,10 @@ async function commitCaseDocumentUploads(files) {
         state.caseModalCaseId = payload.case?.case_id || caseId;
         successful.push(file.name || "Документ");
       } catch (error) {
+        uploadError = true;
         failed.push({ file, name: file.name || "Документ", error: error.message || "Неизвестная ошибка" });
+      } finally {
+        finishTableOperation(progressId, { error: uploadError });
       }
     }
     state.caseDocumentPendingFiles = failed.map((item) => item.file);

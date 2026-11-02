@@ -192,6 +192,85 @@ p {
   flex-wrap: wrap;
 }
 
+.table-operation-progress {
+  margin: -8px 0 22px;
+  padding: 14px 16px;
+  border: 1px solid rgba(47, 128, 237, 0.2);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 14px 34px rgba(19, 48, 77, 0.1);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.table-operation-progress.is-writing {
+  border-color: rgba(255, 149, 0, 0.28);
+}
+
+.table-operation-progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.table-operation-progress-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.table-operation-progress-head strong {
+  color: var(--mts-gray-900);
+  font-size: 13px;
+}
+
+.table-operation-progress-head span,
+.table-operation-progress small {
+  color: var(--mts-gray-600);
+  font-size: 12px;
+}
+
+.table-operation-elapsed {
+  flex: 0 0 auto;
+  min-width: 54px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-operation-track {
+  height: 7px;
+  margin: 11px 0 8px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: rgba(47, 128, 237, 0.12);
+}
+
+.table-operation-track span {
+  display: block;
+  width: 8%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--apple-gradient-start, #2f80ed), var(--apple-gradient-end, #56ccf2));
+  box-shadow: 0 0 18px rgba(47, 128, 237, 0.35);
+  transition: width 0.35s ease;
+}
+
+.table-operation-progress.is-writing .table-operation-track {
+  background: rgba(255, 149, 0, 0.13);
+}
+
+.table-operation-progress.is-writing .table-operation-track span {
+  background: linear-gradient(90deg, #ff9500, #ffbd59);
+  box-shadow: 0 0 18px rgba(255, 149, 0, 0.28);
+}
+
+.table-operation-progress.is-complete .table-operation-track span {
+  background: linear-gradient(90deg, #16a34a, #5bd47f);
+}
+
+.table-operation-progress.is-error .table-operation-track span {
+  background: var(--mts-red);
+}
+
 .yuc-switcher {
   display: flex;
   justify-content: space-between;
