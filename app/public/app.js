@@ -824,8 +824,8 @@ function yucSettingsForSelectedYuc() {
 }
 
 function attachmentsEnabledForCase(row = {}) {
-  const yuc = normalizeYuc(row["ЮЦ"]);
-  const settings = (state.data?.yucSettings ?? []).find((item) => normalizeYuc(item["ЮЦ"]) === yuc);
+  const yuc = normalizeYucName(row["ЮЦ"]);
+  const settings = (state.data?.yucSettings ?? []).find((item) => normalizeYucName(item["ЮЦ"]) === yuc);
   if (settings) return yes(settings["Вложения в карточках"]);
   return row.attachmentsEnabled === true;
 }
