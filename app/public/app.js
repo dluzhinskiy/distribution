@@ -1621,9 +1621,53 @@ function renderYucRegionSelects() {
   state.resetRegionOnRender = false;
   if (!directories?.yucs?.length) {
     regionSelect.innerHTML = `<option value="">Регион не выбран</option>`;
+    renderDistributionDocuments();
     return;
   }
   renderRegionSelect(currentRegion);
+  renderDistributionDocuments();
+}
+
+function renderDistributionDocuments() {
+  const section = $("#distributionDocumentsSection");
+  const list = $("#distributionDocumentsList");
+  const dropzone = $("#distributionDocumentDropzone");
+  if (!section || !list || !dropzone) return;
+  const enabled = attachmentsEnabledForCase({ "ЮЦ": selectedYuc() });
+  section.classList.toggle("hidden", !enabled);
+  if (!enabled) {
+    state.distributionDocumentPendingFiles = [];
+    return;
+  }
+  const files = state.distributionDocumentPendingFiles ?? [];
+  list.innerHTML = files.length ? files.map((file, index) => `
+    <div class="case-document-item case-document-item-pending">
+      <span class="case-document-icon" aria-hidden="true">＋</span>
+      <div class="case-document-info">
+        <strong title="${escapeHtml(file.name || "Документ")}">${escapeHtml(file.name || "Документ")}</strong>
+        <span>${escapeHtml(formatDocumentSize(file.size))} · будет загружен после назначения</span>
+      </div>
+      <button class="icon-btn case-document-unstage distribution-document-unstage" type="button" data-pending-index="${index}" title="Убрать из загрузки" aria-label="Убрать ${escapeHtml(file.name || "документ")} из загрузки">×</button>
+    </div>
+  `).join("") : `<div class="case-documents-empty">Документы не выбраны.</div>`;
+  dropzone.disabled = state.distributionDocumentUploading;
+  dropzone.querySelector("strong").textContent = state.distributionDocumentUploading ? "Загрузка файлов…" : "Выберите или перетащите файлы";
+  dropzone.querySelector("small").textContent = state.distributionDocumentUploading ? "Дождитесь завершения операции" : "Загрузка начнётся после назначения дела";
+}
+
+function stageDistributionDocuments(files) {
+  const pending = [...(files ?? [])].filter((file) => file?.size >= 0);
+  if (!pending.length || state.distributionDocumentUploading || !attachmentsEnabledForCase({ "ЮЦ": selectedYuc() })) return;
+  state.distributionDocumentPendingFiles.push(...pending);
+  renderDistributionDocuments();
+  toast(pending.length === 1
+    ? `Файл «${pending[0].name || "Документ"}» добавлен к новому делу.`
+    : `Файлов добавлено к новому делу: ${pending.length}.`);
+}
+
+function unstageDistributionDocument(index) {
+  state.distributionDocumentPendingFiles.splice(Number(index), 1);
+  renderDistributionDocuments();
 }
 
 function renderRegionSelect(previousRegion = null) {
@@ -3400,7 +3444,10 @@ function handleCaseFormRecommendationChange(event) {
 }
 
 function resetDistributionForm(message) {
+  state.distributionDocumentPendingFiles = [];
+  state.distributionDocumentUploading = false;
   $("#caseForm").reset();
+  if ($("#distributionDocumentInput")) $("#distributionDocumentInput").value = "";
   updateThirdPartyVisibility();
   renderYucRegionSelects();
   $("#caseForm").elements["Дата поступления"].value = today();
@@ -3411,8 +3458,61 @@ function resetDistributionForm(message) {
   });
 }
 
+async function uploadDistributionDocuments(caseId, files) {
+  const pendingFiles = [...(files ?? [])];
+  const successful = [];
+  const failed = [];
+  if (!pendingFiles.length) return { successful, failed };
+  state.distributionDocumentUploading = true;
+  renderDistributionDocuments();
+  beginWriteLock();
+  try {
+    for (const [index, file] of pendingFiles.entries()) {
+      setStatus(`Дело создано. Загружаю файлы: ${index + 1} из ${pendingFiles.length}…`);
+      try {
+        const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/documents`, {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            "X-File-Name": encodeURIComponent(file.name || "document"),
+            "X-File-Type": file.type || "application/octet-stream",
+          },
+          body: file,
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.error || "Не удалось загрузить документ.");
+        setDataFromPayload(payload);
+        successful.push(file.name || "Документ");
+      } catch (error) {
+        failed.push({ name: file.name || "Документ", error: error.message || "Неизвестная ошибка" });
+      }
+    }
+  } finally {
+    state.distributionDocumentUploading = false;
+    endWriteLock();
+  }
+  return { successful, failed };
+}
+
+function finishDistributionAssignment(payload, documents, message) {
+  resetDistributionForm("Выберите тип следующего дела — система сразу рассчитает ответственного.");
+  if (documents.failed.length) {
+    const caseId = payload.case?.case_id || "созданного дела";
+    const failedNames = documents.failed.map((item) => item.name).join(", ");
+    const warning = `Дело ${caseId} успешно создано и назначено, но не все приложенные документы удалось загрузить.\n\nНе загружены: ${failedNames}.\n\nОткройте карточку дела ${caseId} и добавьте эти файлы отдельно.`;
+    setStatus("Сохранено с предупреждением");
+    toast(`${message}. Загружено файлов: ${documents.successful.length} из ${documents.successful.length + documents.failed.length}. Не удалось: ${failedNames}. Добавьте их отдельно через карточку дела.`, "error");
+    window.alert(warning);
+    return;
+  }
+  setStatus("Сохранено");
+  toast(documents.successful.length ? `${message}. Загружено файлов: ${documents.successful.length}.` : message);
+}
+
 async function autoAssign() {
   const draft = formDraft();
+  const pendingDocuments = [...state.distributionDocumentPendingFiles];
   if (!validateDraftForAssignment(draft)) return;
   const result = await recommendCurrent();
   if (!result) return;
@@ -3426,13 +3526,13 @@ async function autoAssign() {
     body: JSON.stringify({ draft }),
   });
   setDataFromPayload(payload);
-  resetDistributionForm("Выберите тип следующего дела — система сразу рассчитает ответственного.");
-  setStatus("Сохранено");
-  toast(`Дело ${payload.case.case_id} назначено: ${displayName(payload.case["Ответственный"])}`);
+  const documents = await uploadDistributionDocuments(payload.case.case_id, pendingDocuments);
+  finishDistributionAssignment(payload, documents, `Дело ${payload.case.case_id} назначено: ${displayName(payload.case["Ответственный"])}`);
 }
 
 async function manualAssignTo(responsible, comment) {
   const draft = formDraft();
+  const pendingDocuments = [...state.distributionDocumentPendingFiles];
   if (!validateDraftForAssignment(draft)) return false;
   if (!responsible || !comment.trim()) {
     toast("Для ручного назначения нужен ответственный и комментарий.", "error");
@@ -3444,9 +3544,8 @@ async function manualAssignTo(responsible, comment) {
     body: JSON.stringify({ draft, responsible, comment }),
   });
   setDataFromPayload(payload);
-  resetDistributionForm("Ручное назначение сохранено. Выберите тип следующего дела.");
-  setStatus("Сохранено");
-  toast(`Дело ${payload.case.case_id} назначено вручную: ${displayName(payload.case["Ответственный"])}`);
+  const documents = await uploadDistributionDocuments(payload.case.case_id, pendingDocuments);
+  finishDistributionAssignment(payload, documents, `Дело ${payload.case.case_id} назначено вручную: ${displayName(payload.case["Ответственный"])}`);
   return true;
 }
 
@@ -4902,6 +5001,27 @@ function bindEvents() {
     }
   });
   $("#caseForm").addEventListener("change", handleCaseFormRecommendationChange);
+  $("#distributionDocumentInput")?.addEventListener("change", (event) => {
+    const files = [...(event.target.files ?? [])];
+    event.target.value = "";
+    stageDistributionDocuments(files);
+  });
+  const distributionDocumentsSection = $("#distributionDocumentsSection");
+  distributionDocumentsSection?.addEventListener("dragover", (event) => {
+    if (!attachmentsEnabledForCase({ "ЮЦ": selectedYuc() }) || state.distributionDocumentUploading) return;
+    event.preventDefault();
+    $("#distributionDocumentDropzone")?.classList.add("is-dragging");
+  });
+  distributionDocumentsSection?.addEventListener("dragleave", (event) => {
+    if (!distributionDocumentsSection.contains(event.relatedTarget)) {
+      $("#distributionDocumentDropzone")?.classList.remove("is-dragging");
+    }
+  });
+  distributionDocumentsSection?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    $("#distributionDocumentDropzone")?.classList.remove("is-dragging");
+    stageDistributionDocuments(event.dataTransfer?.files);
+  });
   $("#casesSearch").addEventListener("input", scheduleCasesRender);
   $("#casesSearchClear")?.addEventListener("click", () => {
     const input = $("#casesSearch");
@@ -5065,7 +5185,12 @@ function bindEvents() {
       }
       return;
     }
-    const caseDocumentDropzone = event.target.closest(".case-document-dropzone:not([disabled])");
+    const distributionDocumentDropzone = event.target.closest("#distributionDocumentDropzone:not([disabled])");
+    if (distributionDocumentDropzone) {
+      $("#distributionDocumentInput")?.click();
+      return;
+    }
+    const caseDocumentDropzone = event.target.closest(".case-document-dropzone:not(#distributionDocumentDropzone):not([disabled])");
     if (caseDocumentDropzone) {
       $("#caseDocumentInput")?.click();
       return;
@@ -5077,7 +5202,11 @@ function bindEvents() {
     }
     const unstageCaseDocumentButton = event.target.closest(".case-document-unstage");
     if (unstageCaseDocumentButton) {
-      unstageCaseDocument(unstageCaseDocumentButton.dataset.pendingIndex);
+      if (unstageCaseDocumentButton.matches(".distribution-document-unstage")) {
+        unstageDistributionDocument(unstageCaseDocumentButton.dataset.pendingIndex);
+      } else {
+        unstageCaseDocument(unstageCaseDocumentButton.dataset.pendingIndex);
+      }
       return;
     }
     const restoreCaseDocumentDeletesButton = event.target.closest(".case-document-restore-deletes");

@@ -3145,6 +3145,10 @@ textarea:disabled {
   gap: 8px;
 }
 
+.distribution-documents {
+  grid-column: 1 / -1;
+}
+
 .case-document-dropzone {
   display: flex;
   align-items: center;
