@@ -97,6 +97,7 @@ export function createCaseRoutes({
     await patchCachedRow(table, row, [field], data);
     return row;
   },
+  uploadCaseAttachment = uploadAttachment,
   caseDocumentMaxBytes,
   officePreviewMaxBytes,
 }) {
@@ -253,11 +254,12 @@ export function createCaseRoutes({
       const file = await readBinaryBody(req, caseDocumentMaxBytes);
       const name = safeAttachmentName(req.headers["x-file-name"]);
       const mimeType = cleanText(req.headers["x-file-type"]) || "application/octet-stream";
-      const attachment = await uploadAttachment("cases", { buffer: file, name, mimeType });
-      caseRow[FIELD.documents] = [...(Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : []), attachment];
-      await patchCachedRow("cases", caseRow, [FIELD.documents], data);
-      const confirmedData = enrichData(data);
-      const confirmedCase = assertConfirmedCase(confirmedData, caseId, "добавление документа");
+      const attachment = await uploadCaseAttachment("cases", { buffer: file, name, mimeType });
+      const documents = [...(Array.isArray(caseRow[FIELD.documents]) ? caseRow[FIELD.documents] : []), attachment];
+      // Поле вложений намеренно исключено из обычной записи карточки. Используем
+      // отдельную операцию, которая перечитывает MTS Tabs и подтверждает состав
+      // массива, иначе файл мог остаться только в серверном кэше.
+      const confirmedCase = await replaceAttachments("cases", caseRow, FIELD.documents, documents, data);
       sendJson(res, 200, { ok: true, attachment: publicAttachment(attachment), case: confirmedCase });
       return true;
     }
