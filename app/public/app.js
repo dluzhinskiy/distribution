@@ -1742,6 +1742,7 @@ function renderYucRegionSelects() {
   if (!regionSelect) return;
   const currentYuc = selectedYuc();
   const currentRegion = state.resetRegionOnRender ? "" : regionSelect.value;
+  regionSelect.required = regionalQueuesEnabled();
   state.resetRegionOnRender = false;
   if (!directories?.yucs?.length) {
     regionSelect.innerHTML = `<option value="">Регион не выбран</option>`;
@@ -3532,6 +3533,10 @@ function validateDraftForAssignment(draft) {
     toast("Заполните тип дела и предмет.", "error");
     return false;
   }
+  if (regionalQueuesEnabled() && !draft["Регион"]) {
+    toast("Выберите регион для расчёта региональной очереди.", "error");
+    return false;
+  }
   return true;
 }
 
@@ -3544,6 +3549,15 @@ async function recommendCurrent(options = {}) {
       reason: "Выберите тип дела — система сразу рассчитает следующего ответственного.",
     });
     if (!options.silent) toast("Выберите тип дела.", "error");
+    return null;
+  }
+  if (regionalQueuesEnabled() && !draft["Регион"]) {
+    showRecommendation({
+      ok: false,
+      pending: true,
+      reason: "Выберите регион — после этого система рассчитает следующего ответственного.",
+    });
+    if (!options.silent) toast("Выберите регион.", "error");
     return null;
   }
   const requestId = (state.recommendationRequestId ?? 0) + 1;

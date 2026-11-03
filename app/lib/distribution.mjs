@@ -1055,6 +1055,18 @@ export function recommend(data, draft, date = new Date()) {
     return recommendGeneral(data, normalizedYuc, type, date);
   }
 
+  // Пустой регион означает, что пользователь ещё не закончил ввод, а не то,
+  // что для региона отсутствуют закрепления. Не допускаем преждевременный
+  // переход в общую очередь до выбора фактического региона дела.
+  if (!region) {
+    return {
+      ok: false,
+      candidate: "",
+      basis: "",
+      reason: "Выберите регион — после этого будет рассчитана региональная очередь назначения.",
+    };
+  }
+
   const assignments = regionalAssignmentsFor(data, normalizedYuc, region, type);
   if (!assignments.length) {
     if (cleanText(settings[YUC_SETTING.missingRegionMode]) === REGIONAL_MODE_ERROR) {

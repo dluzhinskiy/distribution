@@ -85,6 +85,21 @@ test("regional overload compares only the selected workload type and ignores leg
   assert.match(result.basis, /> 2/);
 });
 
+test("regional assignment waits for region and never falls back to general queue while it is blank", () => {
+  const data = distributionData();
+  data.yucSettings = [{
+    [FIELD.yuc]: "Дальний Восток",
+    "Региональные очереди вкл\\выкл": "Да",
+    "Регион не настроен": "общая очередь",
+  }];
+  const before = structuredClone(data);
+  const result = recommend(data, { ...draft, "Регион": "" }, new Date(2026, 6, 27, 12, 0, 0));
+  assert.equal(result.ok, false);
+  assert.equal(result.candidate, "");
+  assert.match(result.reason, /Выберите регион/);
+  assert.deepEqual(data, before);
+});
+
 test("automatic assignment changes cases and queue state without creating a journal", () => {
   const data = distributionData();
   const assigned = assignAutomatically(data, draft, new Date(2026, 6, 27, 12, 0, 0));
