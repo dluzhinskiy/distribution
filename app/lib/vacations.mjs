@@ -1,5 +1,6 @@
 import { FIELD } from "./domain-schema.mjs";
 import { cleanText, nowISO, parseISODate, todayISO, toISODate } from "./domain-values.mjs";
+import { isProductionNonWorkingDay } from "../public/lib/production-calendar.js";
 
 export function allDatesInRange(startValue, endValue) {
   const start = parseISODate(startValue);
@@ -58,6 +59,44 @@ export function isEmployeeOnVacation(employee, date = new Date(), vacations = []
   const from = toISODate(employee["Отпуск с"]);
   const to = toISODate(employee["Отпуск по"]);
   return Boolean(from && to && from <= day && day <= to);
+}
+
+function calendarDayDistance(fromValue, toValue) {
+  const from = toISODate(fromValue);
+  const to = toISODate(toValue);
+  if (!from || !to) return Number.POSITIVE_INFINITY;
+  const utc = (value) => {
+    const [year, month, day] = value.split("-").map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  return Math.round((utc(to) - utc(from)) / 86_400_000);
+}
+
+export function workingDaysInRange(startValue, endValue) {
+  return allDatesInRange(startValue, endValue).filter((day) => !isProductionNonWorkingDay(day)).length;
+}
+
+export function upcomingVacation(employee, date = new Date(), vacations = [], withinDays = 2) {
+  if (!employee) return null;
+  const employeeId = cleanText(employee.employee_id);
+  const today = todayISO(date);
+  const periods = (vacations ?? []).map(normalizeVacation)
+    .filter((item) => employeeId && item.employee_id === employeeId && item["Дата начала"])
+    .map((item) => ({ start: item["Дата начала"], end: item["Дата окончания"] || item["Дата начала"] }));
+  const legacyStart = toISODate(employee["Отпуск с"]);
+  const legacyEnd = toISODate(employee["Отпуск по"]) || legacyStart;
+  if (legacyStart) periods.push({ start: legacyStart, end: legacyEnd });
+  const upcoming = periods
+    .map((period) => ({ ...period, daysUntil: calendarDayDistance(today, period.start) }))
+    .filter((period) => period.daysUntil >= 1 && period.daysUntil <= withinDays)
+    .sort((left, right) => left.daysUntil - right.daysUntil || left.start.localeCompare(right.start))[0];
+  if (!upcoming) return null;
+  return {
+    start: upcoming.start,
+    end: upcoming.end,
+    daysUntil: upcoming.daysUntil,
+    workingDays: workingDaysInRange(upcoming.start, upcoming.end),
+  };
 }
 
 function vacationRowsFromDates(employee, dates, comment = "", date = new Date()) {

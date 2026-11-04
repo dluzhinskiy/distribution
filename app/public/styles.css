@@ -2192,15 +2192,69 @@ body.write-pending button:not(:disabled) {
   background: transparent;
 }
 
-.day-cell.weekend {
+.day-cell.non-working {
   background: var(--mts-gray-100);
   color: var(--mts-gray-500);
 }
 
-.day-cell.vacation {
+.day-cell.vacation-working {
   background: var(--mts-red);
   color: var(--mts-white);
   font-weight: 700;
+}
+
+.day-cell.vacation-non-working {
+  color: #7a3d00;
+  font-weight: 700;
+  background: repeating-linear-gradient(135deg, rgba(255, 149, 0, 0.28) 0 6px, rgba(255, 214, 153, 0.7) 6px 12px);
+  box-shadow: inset 0 0 0 1px rgba(255, 149, 0, 0.3);
+}
+
+.vacation-calendar-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--mts-gray-200);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.48);
+  color: var(--mts-gray-700);
+  font-size: 12px;
+}
+
+.vacation-calendar-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vacation-calendar-legend small {
+  margin-left: auto;
+  color: var(--mts-gray-500);
+}
+
+.vacation-legend-swatch {
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--mts-gray-200);
+  border-radius: 5px;
+  background: var(--mts-white);
+}
+
+.vacation-legend-swatch.is-non-working {
+  background: var(--mts-gray-100);
+}
+
+.vacation-legend-swatch.is-vacation-working {
+  border-color: transparent;
+  background: var(--mts-red);
+}
+
+.vacation-legend-swatch.is-vacation-non-working {
+  border-color: rgba(255, 149, 0, 0.3);
+  background: repeating-linear-gradient(135deg, rgba(255, 149, 0, 0.28) 0 4px, rgba(255, 214, 153, 0.7) 4px 8px);
 }
 
 .day-cell.today {
@@ -2465,6 +2519,12 @@ textarea:focus,
   box-shadow: inset 0 0 0 1px var(--mts-red-subtle);
 }
 
+.queue-preview-row.is-recommended.has-upcoming-vacation {
+  border-color: rgba(255, 149, 0, 0.58);
+  background: rgba(255, 149, 0, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(255, 149, 0, 0.14);
+}
+
 .queue-preview-row.is-passed.is-recommended {
   opacity: 1;
 }
@@ -2511,6 +2571,21 @@ textarea:focus,
   grid-column: 3;
   grid-row: 1 / span 2;
   align-self: center;
+}
+
+.queue-recommend-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+  max-width: 245px;
+}
+
+.queue-skip-upcoming-vacation {
+  color: #8a4a00;
+  border-color: rgba(255, 149, 0, 0.38);
+  background: rgba(255, 245, 232, 0.92);
 }
 
 .queue-row-action {
@@ -3988,7 +4063,7 @@ body.theme-apple .workload-total {
 }
 
 body.theme-apple .workload-total,
-body.theme-apple .day-cell.weekend,
+body.theme-apple .day-cell.non-working,
 body.theme-apple .case-deleted-row {
   background: rgba(255, 255, 255, 0.42);
 }
@@ -3998,7 +4073,7 @@ body.theme-apple .progress-fill,
 body.theme-apple .type-load-bar.active,
 body.theme-apple .legend-dot.active,
 body.theme-apple .avatar,
-body.theme-apple .day-cell.vacation {
+body.theme-apple .day-cell.vacation-working {
   background: linear-gradient(135deg, var(--apple-gradient-start), var(--apple-gradient-end));
 }
 

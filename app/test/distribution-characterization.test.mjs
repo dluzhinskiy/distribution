@@ -119,6 +119,58 @@ test("manual assignment creates only the case and leaves queue state unchanged",
   assert.equal(Object.prototype.hasOwnProperty.call(data, "journal"), false);
 });
 
+test("upcoming vacation may be skipped and debt is recorded only with assignment", () => {
+  const data = distributionData();
+  data.vacations = [{ employee_id: "E1", [FIELD.name]: "Иванов И.И.", "Дата начала": "2026-07-29", "Дата окончания": "2026-08-03" }];
+  data.settings = [{
+    [FIELD.yuc]: "Дальний Восток",
+    [FIELD.caseType]: "судебное",
+    "Учитывать долг": "Да",
+    "Максимальный долг": 2,
+  }];
+  const beforePreview = structuredClone(data);
+  const preview = recommendWithPreview(data, draft, new Date(2026, 6, 27, 12), { skipUpcomingVacationEmployeeIds: ["E1"] });
+  assert.equal(preview.candidate, "Петров П.П.");
+  assert.equal(preview.skippedUpcomingVacations[0].workingDays, 4);
+  assert.equal(preview.vacationSkipDebtEnabled, true);
+  assert.deepEqual(data, beforePreview);
+
+  const assigned = assignAutomatically(data, draft, new Date(2026, 6, 27, 12), { skipUpcomingVacationEmployeeIds: ["E1"] });
+  assert.equal(assigned.case[FIELD.responsible], "Петров П.П.");
+  assert.equal(data.queues.find((row) => row.employee_id === "E1")[FIELD.debt], 1);
+  assert.equal(data.state[0]["Последняя позиция"], 2);
+});
+
+test("upcoming vacation skip works without debt when debt accounting is disabled", () => {
+  const data = distributionData();
+  data.vacations = [{ employee_id: "E1", "Дата начала": "2026-07-28", "Дата окончания": "2026-08-03" }];
+  const assigned = assignAutomatically(data, draft, new Date(2026, 6, 27, 12), { skipUpcomingVacationEmployeeIds: ["E1"] });
+  assert.equal(assigned.case[FIELD.responsible], "Петров П.П.");
+  assert.equal(Number(data.queues.find((row) => row.employee_id === "E1")[FIELD.debt]) || 0, 0);
+  assert.equal(assigned.result.vacationSkipDebtEnabled, false);
+});
+
+test("vacation skip continues outside regional queue when its only candidate is skipped", () => {
+  const data = distributionData();
+  data.vacations = [{ employee_id: "E1", "Дата начала": "2026-07-28", "Дата окончания": "2026-08-03" }];
+  data.yucSettings = [{
+    [FIELD.yuc]: "Дальний Восток",
+    "Региональные очереди вкл\\выкл": "Да",
+    "Региональные юристы недоступны": "ошибка",
+  }];
+  data.regionalAssignments = [{
+    [FIELD.yuc]: "Дальний Восток",
+    "Регион": "Хабаровский край",
+    "Сотрудник": "Иванов И.И.",
+    "Тип нагрузки": "судебное",
+    "Активно": "Да",
+  }];
+  const result = recommend(data, draft, new Date(2026, 6, 27, 12), { skipUpcomingVacationEmployeeIds: ["E1"] });
+  assert.equal(result.ok, true);
+  assert.equal(result.candidate, "Петров П.П.");
+  assert.match(result.basis, /общая очередь после/);
+});
+
 test("dashboard coefficients do not affect recommendation or queue selection", () => {
   const withoutCoefficients = distributionData();
   const withCoefficients = distributionData();

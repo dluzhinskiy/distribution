@@ -23,6 +23,7 @@ import {
   weightedCases,
 } from "./lib/load-coefficients.js";
 import { caseIdFromPathname } from "./lib/case-deep-link.js";
+import { hasProductionCalendar, isProductionNonWorkingDay } from "./lib/production-calendar.js";
 
 const state = createAppState();
 const rowsByYucIndex = new WeakMap();
@@ -1068,6 +1069,7 @@ function setSelectedYuc(yuc, options = {}) {
   if (changed) {
     state.casesPage = 1;
     state.lastRecommendation = null;
+    state.distributionVacationSkipEmployeeIds = [];
     state.vacationRangeStart = null;
     state.responsibleDrafts = {};
     state.statusDrafts = {};
@@ -2760,16 +2762,20 @@ function renderVacationCalendar() {
     const days = Array.from({ length: daysInMonth }, (_, index) => {
       const day = index + 1;
       const iso = dateISO(year, monthIndex, day);
-      const jsDate = new Date(year, monthIndex, day);
-      const weekend = [0, 6].includes(jsDate.getDay());
+      const nonWorking = isProductionNonWorkingDay(iso);
+      const vacation = vacationDays.has(iso);
       const classes = [
         "day-cell",
-        weekend ? "weekend" : "",
-        vacationDays.has(iso) ? "vacation" : "",
+        nonWorking ? "non-working" : "working",
+        vacation ? "vacation" : "",
+        vacation && nonWorking ? "vacation-non-working" : "",
+        vacation && !nonWorking ? "vacation-working" : "",
         iso === todayIso ? "today" : "",
         state.vacationRangeStart === iso ? "range-start" : "",
       ].filter(Boolean).join(" ");
-      return `<button class="${classes}" data-date="${iso}" title="${formatRuDate(iso)}">${day}</button>`;
+      const titleParts = [formatRuDate(iso), nonWorking ? "нерабочий день" : "рабочий день"];
+      if (vacation) titleParts.push(nonWorking ? "отпуск в нерабочий день" : "отпуск в рабочий день");
+      return `<button class="${classes}" data-date="${iso}" title="${escapeHtml(titleParts.join(" · "))}">${day}</button>`;
     }).join("");
     return `
       <section class="month-card">
@@ -2779,6 +2785,14 @@ function renderVacationCalendar() {
       </section>
     `;
   }).join("");
+
+  $("#vacationCalendarLegend").innerHTML = `
+    <span><i class="vacation-legend-swatch is-working"></i>Рабочий день</span>
+    <span><i class="vacation-legend-swatch is-non-working"></i>Нерабочий день</span>
+    <span><i class="vacation-legend-swatch is-vacation-working"></i>Отпуск в рабочий день</span>
+    <span><i class="vacation-legend-swatch is-vacation-non-working"></i>Отпуск в нерабочий день</span>
+    <small>${hasProductionCalendar(year) ? `Производственный календарь ${year} года` : "Для этого года используется стандартная пятидневная неделя"}</small>
+  `;
 
   $("#vacationSummaryName").textContent = `${displayName(employee["ФИО"])} · ${year}`;
   $("#vacationDaysCount").textContent = vacationDays.size;
@@ -3365,21 +3379,34 @@ function updateThirdPartyVisibility() {
 function queueMarkerKind(marker) {
   if (marker === "кандидат") return "green";
   if (marker === "неактивен" || marker === "нет в сотрудниках" || marker === "не участвует") return "gray";
-  if (marker === "отпуск") return "orange";
+  if (String(marker).startsWith("отпуск")) return "orange";
+  if (marker === "пропущен перед отпуском") return "orange";
   if (String(marker).startsWith("долг")) return "blue";
   if (marker === "предыдущий") return "red";
   return "gray";
 }
 
+function upcomingVacationLabel(vacation) {
+  if (!vacation) return "";
+  const countdown = vacation.daysUntil === 1 ? "через 1 день" : `через ${vacation.daysUntil} дня`;
+  const duration = Number(vacation.workingDays) || 0;
+  return `отпуск ${countdown} · на ${duration} раб. дн. до ${formatRuDate(vacation.end)}`;
+}
+
 function queueRowHtml(row) {
-  const markers = (row.markers ?? []).map((marker) => badge(marker, queueMarkerKind(marker))).join("");
+  const vacationMarker = row.upcomingVacation ? upcomingVacationLabel(row.upcomingVacation) : "";
+  const markers = [...(row.markers ?? []).filter((marker) => !String(marker).startsWith("отпуск через")), ...(vacationMarker ? [vacationMarker] : [])]
+    .map((marker) => badge(marker, queueMarkerKind(marker))).join("");
   const action = row.recommended
-    ? `<button class="btn btn-primary queue-row-action queue-assign-auto" type="button">Назначить</button>`
-    : row.available
+    ? `<div class="queue-recommend-actions">
+        <button class="btn btn-primary queue-row-action queue-assign-auto" type="button">Назначить</button>
+        ${row.upcomingVacation ? `<button class="btn btn-secondary queue-row-action queue-skip-upcoming-vacation" type="button" data-employee-id="${escapeHtml(row.employee_id)}">Пропустить назначение</button>` : ""}
+      </div>`
+    : row.available && !state.distributionVacationSkipEmployeeIds.length
       ? `<button class="btn btn-secondary queue-row-action queue-assign-manual" type="button" data-name="${escapeHtml(row.name)}">Вне очереди</button>`
       : "";
   return `
-    <div class="queue-preview-row ${row.phase === "passed" ? "is-passed" : ""} ${row.recommended ? "is-recommended" : ""} ${!row.available ? "is-unavailable" : ""}">
+    <div class="queue-preview-row ${row.phase === "passed" ? "is-passed" : ""} ${row.recommended ? "is-recommended" : ""} ${row.upcomingVacation && row.recommended ? "has-upcoming-vacation" : ""} ${row.vacationSkipped ? "is-vacation-skipped" : ""} ${!row.available ? "is-unavailable" : ""}">
       <div class="queue-preview-position">${row.position || "—"}</div>
       <div class="queue-preview-person">
         <div class="queue-preview-name">${escapeHtml(displayName(row.name))}</div>
@@ -3404,6 +3431,7 @@ function queueSectionHtml(title, rows) {
 }
 
 function manualAssignAnyButtonHtml() {
+  if (state.distributionVacationSkipEmployeeIds.length) return "";
   return `
     <div class="queue-preview-manual">
       <button class="btn btn-secondary queue-assign-manual-all" type="button">Назначить вне очереди</button>
@@ -3564,11 +3592,29 @@ async function recommendCurrent(options = {}) {
   state.recommendationRequestId = requestId;
   const payload = await api("/api/recommend", {
     method: "POST",
-    body: JSON.stringify({ draft }),
+    body: JSON.stringify({ draft, skipUpcomingVacationEmployeeIds: state.distributionVacationSkipEmployeeIds }),
   });
   if (requestId !== state.recommendationRequestId) return null;
   showRecommendation(payload.result);
   return payload.result;
+}
+
+async function skipUpcomingVacationEmployee(employeeId) {
+  const normalizedId = String(employeeId ?? "").trim();
+  if (!normalizedId || state.distributionVacationSkipEmployeeIds.includes(normalizedId)) return;
+  state.distributionVacationSkipEmployeeIds.push(normalizedId);
+  try {
+    const result = await recommendCurrent();
+    if (!result?.ok) throw new Error(result?.reason || "Следующий сотрудник не найден.");
+    const skipped = result.skippedUpcomingVacations?.at(-1);
+    const debtMessage = result.vacationSkipDebtEnabled
+      ? `После назначения сотруднику ${displayName(skipped?.name || "")} будет начислен долг с учётом установленного лимита.`
+      : "Учёт долга для этого типа нагрузки выключен — долг не будет начислен.";
+    toast(`Предложен следующий сотрудник. ${debtMessage}`);
+  } catch (error) {
+    state.distributionVacationSkipEmployeeIds = state.distributionVacationSkipEmployeeIds.filter((id) => id !== normalizedId);
+    throw error;
+  }
 }
 
 async function runTestDistribution() {
@@ -3582,7 +3628,7 @@ async function runTestDistribution() {
   setStatus("Читаю данные для пробного распределения…");
   const payload = await api("/api/recommend-test", {
     method: "POST",
-    body: JSON.stringify({ draft }),
+    body: JSON.stringify({ draft, skipUpcomingVacationEmployeeIds: state.distributionVacationSkipEmployeeIds }),
   });
   const result = payload.result ?? {};
   const node = $("#testDistributionResult");
@@ -3613,7 +3659,9 @@ function scheduleRecommendation() {
 
 function handleCaseFormRecommendationChange(event) {
   const fieldName = event.target?.name;
+  if (!fieldName) return;
   clearTestDistributionResult();
+  state.distributionVacationSkipEmployeeIds = [];
   if (fieldName === "Тип дела") updateThirdPartyVisibility();
   if (!["Тип дела", "Регион", "Дата поступления"].includes(fieldName)) return;
   state.lastRecommendation = null;
@@ -3622,6 +3670,7 @@ function handleCaseFormRecommendationChange(event) {
 
 function resetDistributionForm(message) {
   clearTestDistributionResult();
+  state.distributionVacationSkipEmployeeIds = [];
   state.distributionDocumentPendingFiles = [];
   state.distributionDocumentUploading = false;
   $("#caseForm").reset();
@@ -3706,7 +3755,7 @@ async function autoAssign() {
   setStatus("Сохраняю в MTS Tabs…");
   const payload = await api("/api/assign-auto", {
     method: "POST",
-    body: JSON.stringify({ draft }),
+    body: JSON.stringify({ draft, skipUpcomingVacationEmployeeIds: state.distributionVacationSkipEmployeeIds }),
   });
   setDataFromPayload(payload);
   const documents = await uploadDistributionDocuments(payload.case.case_id, pendingDocuments);
@@ -5346,6 +5395,14 @@ function bindEvents() {
     if (resetAccessPasswordButton) { resetAccessPassword(resetAccessPasswordButton.dataset.employeeId).catch((error) => toast(error.message, "error")); return; }
     const accessYucToggle = event.target.closest(".access-yuc-toggle");
     if (accessYucToggle) { toggleAccessYuc(accessYucToggle.dataset.accessYuc); return; }
+    const skipUpcomingVacationButton = event.target.closest(".queue-skip-upcoming-vacation");
+    if (skipUpcomingVacationButton) {
+      skipUpcomingVacationEmployee(skipUpcomingVacationButton.dataset.employeeId).catch((error) => {
+        setStatus("Ошибка");
+        toast(error.message, "error");
+      });
+      return;
+    }
     const queueAutoButton = event.target.closest(".queue-assign-auto");
     if (queueAutoButton) {
       autoAssign().catch((error) => {

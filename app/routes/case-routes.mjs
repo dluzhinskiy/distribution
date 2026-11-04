@@ -329,7 +329,9 @@ export function createCaseRoutes({
       const data = await readData(DISTRIBUTION_READ_TABLES);
       const draft = normalizeDraft(body.draft ?? body);
       requireManageYuc(user, draft[FIELD.yuc]);
-      sendJson(res, 200, { ok: true, result: recommendWithPreview(data, draft) });
+      sendJson(res, 200, { ok: true, result: recommendWithPreview(data, draft, new Date(), {
+        skipUpcomingVacationEmployeeIds: body.skipUpcomingVacationEmployeeIds,
+      }) });
       return true;
     }
 
@@ -350,7 +352,9 @@ export function createCaseRoutes({
       const simulationData = structuredClone(data);
       sendJson(res, 200, {
         ok: true,
-        result: recommendWithPreview(simulationData, draft),
+        result: recommendWithPreview(simulationData, draft, new Date(), {
+          skipUpcomingVacationEmployeeIds: body.skipUpcomingVacationEmployeeIds,
+        }),
         persisted: false,
       });
       return true;
@@ -361,7 +365,9 @@ export function createCaseRoutes({
       const data = await readData(DISTRIBUTION_READ_TABLES);
       const draft = normalizeDraft(body.draft ?? body);
       requireManageYuc(user, draft[FIELD.yuc]);
-      const created = assignAutomatically(data, draft);
+      const created = assignAutomatically(data, draft, new Date(), {
+        skipUpcomingVacationEmployeeIds: body.skipUpcomingVacationEmployeeIds,
+      });
       const confirmedData = await saveAndConfirm(data, ["cases", "queues", "state"], (freshData) => Boolean(findCase(freshData, created.case.case_id)));
       sendJson(res, 200, {
         ok: true,

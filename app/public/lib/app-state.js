@@ -68,6 +68,7 @@ export function createAppState() {
     queueManualCandidate: null,
     distributionDocumentPendingFiles: [],
     distributionDocumentUploading: false,
+    distributionVacationSkipEmployeeIds: [],
     caseDocumentUploading: false,
     caseDocumentPendingFiles: [],
     caseDocumentPendingDeletes: [],

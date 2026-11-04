@@ -2,7 +2,7 @@
 import { normalizeRegionName } from "./regions.mjs";
 import { FIELD, YUC_SETTING } from "./domain-schema.mjs";
 import { changeCaseResponsible, completeCaseByDeadline, deleteCase, postponeCaseCompletion, restoreCase } from "./case-lifecycle.mjs";
-import { allDatesInRange, clearVacationYear, isEmployeeOnVacation, normalizeVacation, replaceVacationDatesForEmployees, replaceVacationYear, setVacationDates, vacationDatesForEmployee, vacationKey } from "./vacations.mjs";
+import { allDatesInRange, clearVacationYear, isEmployeeOnVacation, normalizeVacation, replaceVacationDatesForEmployees, replaceVacationYear, setVacationDates, upcomingVacation, vacationDatesForEmployee, vacationKey, workingDaysInRange } from "./vacations.mjs";
 import { RESPONSIBLE_LINK } from "./responsible-link.mjs";
 import {
   addDays,
@@ -25,7 +25,7 @@ import {
 } from "./domain-values.mjs";
 export { FIELD, YUC_SETTING } from "./domain-schema.mjs";
 export { changeCaseResponsible, completeCaseByDeadline, deleteCase, postponeCaseCompletion, restoreCase } from "./case-lifecycle.mjs";
-export { allDatesInRange, clearVacationYear, isEmployeeOnVacation, normalizeVacation, replaceVacationDatesForEmployees, replaceVacationYear, setVacationDates, vacationDatesForEmployee, vacationKey } from "./vacations.mjs";
+export { allDatesInRange, clearVacationYear, isEmployeeOnVacation, normalizeVacation, replaceVacationDatesForEmployees, replaceVacationYear, setVacationDates, upcomingVacation, vacationDatesForEmployee, vacationKey, workingDaysInRange } from "./vacations.mjs";
 
 export {
   addDays,
@@ -480,8 +480,9 @@ function queueRowsFor(data, yuc, type) {
 function queueCandidateInfo(data, queueRow, type, date) {
   const employee = employeeForQueueRow(data, queueRow);
   const vacation = employee ? isEmployeeOnVacation(employee, date, data.vacations ?? []) : false;
+  const upcoming = employee ? upcomingVacation(employee, date, data.vacations ?? [], 2) : null;
   const available = isEmployeeAvailable(employee, type, date, data.vacations ?? []);
-  return { employee, vacation, available };
+  return { employee, vacation, upcomingVacation: upcoming, available };
 }
 
 function yucRegionalSettings(data, yuc) {
@@ -664,6 +665,7 @@ function recommendationResult(candidateInfo, basis, queueEffect, skippedVacation
     reason: "",
     skippedVacation: vacationNames(skippedVacation),
     debtAccrualQueueIds: candidateInfo.debtAccrualQueueIds ?? [],
+    upcomingVacation: candidateInfo.upcomingVacation ?? null,
   };
 }
 
@@ -912,11 +914,12 @@ function recommendGeneral(data, yuc, type, date) {
   return recommendFromQueueRows(data, queueRowsFor(data, yuc, type), yuc, type, date, "очередь");
 }
 
-function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
+function queuePreviewRows(data, rows, yuc, type, date, recommended = "", skippedUpcomingVacations = []) {
   const state = makeQueueState(data, yuc, type);
   const lastPosition = Number(state["Последняя позиция"]) || 0;
   const lastAuto = cleanText(state["Последний автоназначенный"]);
   const recommendedName = cleanText(recommended);
+  const skippedIds = new Set((skippedUpcomingVacations ?? []).map((item) => cleanText(item.employee_id)).filter(Boolean));
   const recommendedPosition = rows
     .map((row) => ({ row, name: cleanText(row[FIELD.name]), position: Number(row[FIELD.position]) || 0 }))
     .find((item) => recommendedName && nameMatches(item.name, recommendedName))?.position || 0;
@@ -929,10 +932,12 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
       const active = Boolean(info.employee && yes(info.employee[FIELD.employeeActive]));
       const participates = Boolean(info.employee && employeeParticipates(info.employee, type));
       const vacation = Boolean(info.vacation);
+      const upcoming = info.upcomingVacation ?? null;
       const debt = queueDebtAmount(row);
       const previousAuto = Boolean(lastAuto && name === lastAuto);
       const recommendedRow = Boolean(recommendedName && nameMatches(name, recommendedName));
-      const available = Boolean(info.employee && active && participates && !vacation);
+      const vacationSkipped = skippedIds.has(cleanText(row.employee_id));
+      const available = Boolean(info.employee && active && participates && !vacation && !vacationSkipped);
       const substituteFor = cleanText(row["Замещает"]);
       const markers = [];
       if (recommendedRow) markers.push("кандидат");
@@ -941,6 +946,8 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
       if (info.employee && !active) markers.push("неактивен");
       if (info.employee && !participates) markers.push("не участвует");
       if (vacation) markers.push("отпуск");
+      if (upcoming) markers.push(`отпуск через ${upcoming.daysUntil} дн.`);
+      if (vacationSkipped) markers.push("пропущен перед отпуском");
       if (debt) markers.push(`долг ${debt}`);
       if (previousAuto) markers.push("предыдущий");
       return {
@@ -952,6 +959,8 @@ function queuePreviewRows(data, rows, yuc, type, date, recommended = "") {
         active,
         participates,
         vacation,
+        upcomingVacation: upcoming,
+        vacationSkipped,
         debt,
         previousAuto,
         recommended: recommendedRow,
@@ -1019,7 +1028,7 @@ function buildQueuePreview(data, draft, recommendation, date = new Date()) {
   }
 
   const state = makeQueueState(data, yuc, type);
-  const previewRows = queuePreviewRows(data, rows, yuc, type, date, recommendation?.candidate);
+  const previewRows = queuePreviewRows(data, rows, yuc, type, date, recommendation?.candidate, recommendation?.skippedUpcomingVacations);
   const rawLastPosition = Number(state["Последняя позиция"]) || 0;
   const recommendedRow = previewRows.find((row) => row.recommended);
   const cycleReset = Boolean(rawLastPosition > 0 && recommendedRow?.position > 0 && recommendedRow.position <= rawLastPosition);
@@ -1041,7 +1050,7 @@ function buildQueuePreview(data, draft, recommendation, date = new Date()) {
   };
 }
 
-export function recommend(data, draft, date = new Date()) {
+function recommendCore(data, draft, date = new Date()) {
   const yuc = cleanText(draft[FIELD.yuc]) || "Дальний Восток";
   const normalizedYuc = normalizeYuc(yuc);
   const type = normalizeType(draft[FIELD.caseType]);
@@ -1178,8 +1187,63 @@ export function recommend(data, draft, date = new Date()) {
   return mergeRecommendationDebt(general, unavailableRegionalDebt);
 }
 
-export function recommendWithPreview(data, draft, date = new Date()) {
-  const result = recommend(data, draft, date);
+function normalizedVacationSkipIds(options = {}) {
+  return [...new Set((Array.isArray(options.skipUpcomingVacationEmployeeIds)
+    ? options.skipUpcomingVacationEmployeeIds
+    : []).map(cleanText).filter(Boolean))].slice(0, 20);
+}
+
+export function recommend(data, draft, date = new Date(), options = {}) {
+  const skipIds = normalizedVacationSkipIds(options);
+  if (!skipIds.length) return recommendCore(data, draft, date);
+
+  const simulation = structuredClone(data);
+  const simulationYucSettings = yucRegionalSettings(simulation, draft[FIELD.yuc]);
+  if (yes(simulationYucSettings[YUC_SETTING.regionalEnabled]) && cleanText(simulationYucSettings[YUC_SETTING.unavailableRegionalMode]) === REGIONAL_MODE_ERROR) {
+    // Для осознанного пропуска перед отпуском следующего кандидата ищем дальше
+    // по алгоритму, включая общую очередь за пределами региональной группы.
+    simulationYucSettings[YUC_SETTING.unavailableRegionalMode] = "общая очередь";
+  }
+  const skippedUpcomingVacations = [];
+  const forcedDebtQueueIds = [];
+  for (const employeeId of skipIds) {
+    const current = recommendCore(simulation, draft, date);
+    if (!current.ok || cleanText(current.employee_id) !== employeeId) {
+      throw Object.assign(new Error("Пропустить можно только текущего рекомендованного сотрудника."), { status: 409, code: "VACATION_SKIP_OUTDATED" });
+    }
+    const employee = employeeById(simulation, employeeId);
+    const vacation = upcomingVacation(employee, date, simulation.vacations ?? [], 2);
+    if (!employee || !vacation) {
+      throw Object.assign(new Error("У выбранного сотрудника нет отпуска, начинающегося в ближайшие два дня."), { status: 409, code: "VACATION_SKIP_NOT_ALLOWED" });
+    }
+    const queueRow = queueRowForEmployee(simulation, draft[FIELD.yuc], draft[FIELD.caseType], employee);
+    const queueKey = queueRowKey(queueRow);
+    if (queueKey) forcedDebtQueueIds.push(queueKey);
+    skippedUpcomingVacations.push({
+      employee_id: employeeId,
+      name: cleanText(employee[FIELD.name]),
+      ...vacation,
+    });
+    // Исключение существует только внутри расчёта. Исходная таблица сотрудников
+    // и серверный кэш не изменяются.
+    employee[FIELD.employeeActive] = "Нет";
+  }
+
+  const result = recommendCore(simulation, draft, date);
+  return {
+    ...result,
+    basis: result.ok && skippedUpcomingVacations.length
+      ? `${result.basis}; пропущены перед отпуском: ${skippedUpcomingVacations.map((item) => item.name).join(", ")}`
+      : result.basis,
+    debtAccrualQueueIds: [...new Set([...(result.debtAccrualQueueIds ?? []), ...forcedDebtQueueIds])],
+    skippedUpcomingVacations,
+    vacationSkipDebtEnabled: debtLimitFor(data, draft[FIELD.yuc], draft[FIELD.caseType]) > 0,
+    vacationSkipDebtLimit: debtLimitFor(data, draft[FIELD.yuc], draft[FIELD.caseType]),
+  };
+}
+
+export function recommendWithPreview(data, draft, date = new Date(), options = {}) {
+  const result = recommend(data, draft, date, options);
   return {
     ...result,
     queuePreview: buildQueuePreview(data, draft, result, date),
@@ -1202,9 +1266,12 @@ export function normalizeDraft(draft) {
   };
 }
 
-export function assignAutomatically(data, draft, date = new Date()) {
+export function assignAutomatically(data, draft, date = new Date(), options = {}) {
   const normalized = normalizeDraft(draft);
-  const result = recommend(data, normalized, date);
+  const result = recommend(data, normalized, date, options);
+  if (normalizedVacationSkipIds(options).length && !result.ok) {
+    throw Object.assign(new Error(result.reason || "После пропуска сотрудника не найден следующий кандидат."), { status: 409, code: "VACATION_SKIP_NO_CANDIDATE" });
+  }
   const caseId = makeCaseId(data.cases);
   const state = makeQueueState(data, normalized["ЮЦ"], normalized["Тип дела"]);
   const created = {
