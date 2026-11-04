@@ -81,6 +81,20 @@ export function displayName(name) {
   return shortName(name) || "—";
 }
 
+export function formatDayCount(value) {
+  const count = Math.max(0, Math.trunc(Number(value) || 0));
+  const lastTwo = count % 100;
+  const last = count % 10;
+  const word = lastTwo >= 11 && lastTwo <= 14
+    ? "дней"
+    : last === 1
+      ? "день"
+      : last >= 2 && last <= 4
+        ? "дня"
+        : "дней";
+  return `${count} ${word}`;
+}
+
 export function nameMatches(a, b) {
   const left = String(a ?? "").trim();
   const right = String(b ?? "").trim();
