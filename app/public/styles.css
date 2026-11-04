@@ -19,6 +19,7 @@
   --mts-green: #00a651;
   --mts-orange: #ff6600;
   --vacation-day-bg: #2f80ed;
+  --vacation-day-border: rgba(20, 85, 184, 0.32);
   --non-working-star: #e30611;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -2221,7 +2222,7 @@ body.write-pending button:not(:disabled) {
   color: #fff;
   font-weight: 700;
   background: var(--vacation-day-bg);
-  box-shadow: inset 0 0 0 1px rgba(20, 85, 184, 0.32);
+  box-shadow: inset 0 0 0 1px var(--vacation-day-border);
 }
 
 .vacation-calendar-legend {
@@ -2279,7 +2280,7 @@ body.write-pending button:not(:disabled) {
 }
 
 .vacation-legend-swatch.is-vacation-non-working {
-  border-color: rgba(20, 85, 184, 0.32);
+  border-color: var(--vacation-day-border);
   background: var(--vacation-day-bg);
 }
 
@@ -3844,6 +3845,7 @@ body.theme-apple {
   --apple-help-text: #174f92;
   --apple-ghost-text: #1f6fd2;
   --vacation-day-bg: #2f80ed;
+  --vacation-day-border: rgba(20, 85, 184, 0.32);
   --non-working-star: #e30611;
   --mts-red: var(--apple-accent);
   --mts-red-dark: var(--apple-accent-dark);
@@ -3888,7 +3890,8 @@ body.theme-apple.theme-red {
   --apple-muted-pill-text: #A4000B;
   --apple-help-text: #8b0010;
   --apple-ghost-text: #C60010;
-  --vacation-day-bg: #2f80ed;
+  --vacation-day-bg: linear-gradient(135deg, #ff6670, #e30611);
+  --vacation-day-border: rgba(164, 0, 11, 0.4);
   --non-working-star: #f59e0b;
 }
 
