@@ -2787,9 +2787,9 @@ function renderVacationCalendar() {
   }).join("");
 
   $("#vacationCalendarLegend").innerHTML = `
-    <span><i class="vacation-legend-swatch is-working"></i>Рабочий день</span>
-    <span><i class="vacation-legend-swatch is-non-working"></i>Нерабочий день</span>
-    <span><i class="vacation-legend-swatch is-vacation-working"></i>Отпуск в рабочий день</span>
+    <span><i class="vacation-legend-swatch is-working"></i>Рабочий день — без отметки</span>
+    <span><i class="vacation-legend-swatch is-non-working"></i>Нерабочий день — звёздочка</span>
+    <span><i class="vacation-legend-swatch is-vacation-working"></i>Отпуск</span>
     <span><i class="vacation-legend-swatch is-vacation-non-working"></i>Отпуск в нерабочий день</span>
     <small>${hasProductionCalendar(year) ? `Производственный календарь ${year} года` : "Для этого года используется стандартная пятидневная неделя"}</small>
   `;
