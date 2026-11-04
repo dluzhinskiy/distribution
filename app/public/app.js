@@ -2,6 +2,7 @@ import {
   displayName,
   employeeInitials,
   escapeHtml,
+  formatDayCount,
   nameMatches,
   normalizeCaseType,
   normalizeYucName,
@@ -3388,19 +3389,18 @@ function queueMarkerKind(marker) {
 
 function upcomingVacationLabel(vacation) {
   if (!vacation) return "";
-  const countdown = vacation.daysUntil === 1 ? "через 1 день" : `через ${vacation.daysUntil} дня`;
   const duration = Number(vacation.workingDays) || 0;
-  return `отпуск ${countdown} · на ${duration} раб. дн. до ${formatRuDate(vacation.end)}`;
+  return `отпуск через ${formatDayCount(vacation.daysUntil)} на ${formatDayCount(duration)}`;
 }
 
 function queueRowHtml(row) {
-  const vacationMarker = row.upcomingVacation ? upcomingVacationLabel(row.upcomingVacation) : "";
-  const markers = [...(row.markers ?? []).filter((marker) => !String(marker).startsWith("отпуск через")), ...(vacationMarker ? [vacationMarker] : [])]
+  const vacationNotice = row.upcomingVacation ? upcomingVacationLabel(row.upcomingVacation) : "";
+  const markers = [...(row.markers ?? []).filter((marker) => !String(marker).startsWith("отпуск через"))]
     .map((marker) => badge(marker, queueMarkerKind(marker))).join("");
   const action = row.recommended
     ? `<div class="queue-recommend-actions">
         <button class="btn btn-primary queue-row-action queue-assign-auto" type="button">Назначить</button>
-        ${row.upcomingVacation ? `<button class="btn btn-secondary queue-row-action queue-skip-upcoming-vacation" type="button" data-employee-id="${escapeHtml(row.employee_id)}">Пропустить назначение</button>` : ""}
+        ${row.upcomingVacation ? `<button class="btn btn-secondary queue-row-action queue-skip-upcoming-vacation" type="button" data-employee-id="${escapeHtml(row.employee_id)}">Пропустить</button>` : ""}
       </div>`
     : row.available && !state.distributionVacationSkipEmployeeIds.length
       ? `<button class="btn btn-secondary queue-row-action queue-assign-manual" type="button" data-name="${escapeHtml(row.name)}">Вне очереди</button>`
@@ -3416,6 +3416,7 @@ function queueRowHtml(row) {
       </div>
       <div class="queue-preview-markers">${markers || badge(row.available ? "доступен" : "недоступен", row.available ? "green" : "gray")}</div>
       <div class="queue-preview-action">${action}</div>
+      ${vacationNotice ? `<div class="queue-upcoming-vacation-note" title="Отпуск до ${escapeHtml(formatRuDate(row.upcomingVacation.end))}">${escapeHtml(vacationNotice)}</div>` : ""}
     </div>
   `;
 }

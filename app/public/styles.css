@@ -2596,22 +2596,38 @@ textarea:focus,
 .queue-preview-action {
   grid-column: 3;
   grid-row: 1 / span 2;
-  align-self: center;
+  align-self: start;
 }
 
 .queue-recommend-actions {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: flex-end;
   gap: 7px;
-  flex-wrap: wrap;
-  max-width: 245px;
+  flex-wrap: nowrap;
+  width: 154px;
 }
 
 .queue-skip-upcoming-vacation {
   color: #8a4a00;
   border-color: rgba(255, 149, 0, 0.38);
   background: rgba(255, 245, 232, 0.92);
+}
+
+.queue-upcoming-vacation-note {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 149, 0, 0.1);
+  color: #b64300;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .queue-row-action {
