@@ -674,10 +674,7 @@ async function loadCaseRegistry({ page = 1, force = false } = {}) {
   if (search) query.set("search", search);
   if (state.casesQuickFilter) query.set("quickFilter", state.casesQuickFilter);
   if (state.casesResponsibleFilter) query.set("responsible", state.casesResponsibleFilter);
-  if (state.casesCellFilter?.field && state.casesCellFilter?.value) {
-    query.set("cellField", state.casesCellFilter.field);
-    query.set("cellValue", state.casesCellFilter.value);
-  }
+  if (state.casesCellFilters.length) query.set("cellFilters", JSON.stringify(state.casesCellFilters));
   if (state.showDeletedCases) query.set("showDeleted", "1");
   if (force) query.set("refresh", "1");
   try {
@@ -909,7 +906,7 @@ function selectCaseListScope(scope) {
   state.caseListScope = scope === "mine" && canUseMyCasesScope() ? "mine" : "yuc";
   state.casesQuickFilter = "";
   state.casesResponsibleFilter = "";
-  state.casesCellFilter = null;
+  state.casesCellFilters = [];
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
   renderYucTabs();
@@ -1208,20 +1205,20 @@ function caseMatchesResponsibleFilter(row) {
   return nameMatches(row["Ответственный"], state.casesResponsibleFilter);
 }
 
-function caseCellFilterLabel() {
-  const filter = state.casesCellFilter;
+function caseCellFilterLabel(filter) {
   if (!filter?.field || !filter.value) return "";
   const value = filter.field === "Ответственный" ? displayName(filter.value) : filter.value;
   return `${filter.field}: ${value}`;
 }
 
 function caseMatchesCellFilter(row) {
-  const filter = state.casesCellFilter;
-  if (!filter?.field || !filter.value) return true;
-  const current = String(row[filter.field] ?? "").trim();
-  if (filter.field === "Ответственный") return nameMatches(current, filter.value);
-  if (filter.field === "Тип дела" && workloadCaseTypes.includes(filter.value)) return workloadCaseType(current) === filter.value;
-  return current === filter.value;
+  return state.casesCellFilters.every((filter) => {
+    if (!filter?.field || !filter.value) return true;
+    const current = String(row[filter.field] ?? "").trim();
+    if (filter.field === "Ответственный") return nameMatches(current, filter.value);
+    if (filter.field === "Тип дела" && workloadCaseTypes.includes(filter.value)) return workloadCaseType(current) === filter.value;
+    return current === filter.value;
+  });
 }
 
 function renderCasesQuickFilter() {
@@ -1245,15 +1242,16 @@ function renderCasesQuickFilter() {
       </span>
     `);
   }
-  const cellFilterLabel = caseCellFilterLabel();
-  if (cellFilterLabel) {
+  state.casesCellFilters.forEach((filter, index) => {
+    const cellFilterLabel = caseCellFilterLabel(filter);
+    if (!cellFilterLabel) return;
     chips.push(`
       <span class="quick-filter-chip">
         ${escapeHtml(cellFilterLabel)}
-        <button type="button" id="clearCasesCellFilter" aria-label="Сбросить фильтр по полю">×</button>
+        <button type="button" data-clear-case-cell-filter="${index}" aria-label="Сбросить фильтр по полю">×</button>
       </span>
     `);
-  }
+  });
   node.innerHTML = chips.join("");
 }
 
@@ -1414,10 +1412,13 @@ function historicalPresetButton(preset, label) {
 function applyHistoricalCaseFilter(responsible, type = "") {
   state.casesResponsibleFilter = responsible || "";
   state.casesQuickFilter = "";
-  state.casesCellFilter = type ? { field: "Тип дела", value: type } : null;
+  state.casesCellFilters = type ? [{ field: "Тип дела", value: type }] : [];
+  state.casesPage = 1;
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
-  renderCases();
+  if (state.loadedViews.has("cases")) {
+    loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
+  }
 }
 
 function workloadByEmployee() {
@@ -1679,7 +1680,13 @@ function renderWorkloadDashboard() {
           const inactiveWidth = inactiveValue ? Math.max(8, Math.round((inactiveValue / maxTotal) * 100)) : 0;
           const loadWidth = loadValue ? Math.max(8, Math.round((loadValue / maxTotal) * 100)) : 0;
           return `
-            <div class="workload-cell">
+            <button
+              type="button"
+              class="workload-cell workload-cell-filter"
+              data-dashboard-responsible="${escapeHtml(row.employee["ФИО"])}"
+              data-dashboard-type="${escapeHtml(type)}"
+              title="Показать дела сотрудника с типом нагрузки «${escapeHtml(type)}»"
+            >
               <div class="workload-count">
                 <strong>${item.load}</strong>
                 <span>${includeInactive ? "в расчёте" : `${item.active} / ${item.inactive}`}</span>
@@ -1692,7 +1699,7 @@ function renderWorkloadDashboard() {
                     ${inactiveValue ? `<div class="workload-bar inactive" style="width:${inactiveWidth}%"></div>` : ""}
                   `}
               </div>
-            </div>
+            </button>
           `;
         }).join("")}
         <div class="workload-total">
@@ -2197,7 +2204,13 @@ function applyCasesCellFilter(field, value) {
   const normalizedField = String(field ?? "").trim();
   const normalizedValue = String(value ?? "").trim();
   if (!caseCellFilterFields.has(normalizedField) || !normalizedValue) return;
-  state.casesCellFilter = { field: normalizedField, value: normalizedValue };
+  const nextFilter = { field: normalizedField, value: normalizedValue };
+  const existingIndex = state.casesCellFilters.findIndex((filter) => filter.field === normalizedField);
+  if (existingIndex >= 0) {
+    state.casesCellFilters = state.casesCellFilters.map((filter, index) => index === existingIndex ? nextFilter : filter);
+  } else {
+    state.casesCellFilters = [...state.casesCellFilters, nextFilter];
+  }
   state.casesPage = 1;
   if ($("#casesSearch")) $("#casesSearch").value = "";
   showView("cases");
@@ -2206,8 +2219,8 @@ function applyCasesCellFilter(field, value) {
   }
 }
 
-function clearCasesCellFilter() {
-  state.casesCellFilter = null;
+function clearCasesCellFilter(index) {
+  state.casesCellFilters = state.casesCellFilters.filter((_, filterIndex) => filterIndex !== index);
   state.casesPage = 1;
   loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
 }
@@ -5287,8 +5300,9 @@ function bindEvents() {
       state.casesPage = 1;
       loadCaseRegistry({ page: 1 }).catch((error) => toast(error.message, "error"));
     }
-    if (event.target.closest("#clearCasesCellFilter")) {
-      clearCasesCellFilter();
+    const clearCellFilterButton = event.target.closest("[data-clear-case-cell-filter]");
+    if (clearCellFilterButton) {
+      clearCasesCellFilter(Number(clearCellFilterButton.dataset.clearCaseCellFilter));
     }
   });
   $("#caseResponsibleEditToggle").addEventListener("change", (event) => {
@@ -5364,7 +5378,10 @@ function bindEvents() {
     }
     const dashboardResponsibleButton = event.target.closest("[data-dashboard-responsible]");
     if (dashboardResponsibleButton) {
-      applyCasesResponsibleFilter(dashboardResponsibleButton.dataset.dashboardResponsible);
+      applyHistoricalCaseFilter(
+        dashboardResponsibleButton.dataset.dashboardResponsible,
+        dashboardResponsibleButton.dataset.dashboardType || "",
+      );
       return;
     }
     const historicalPresetButton = event.target.closest(".historical-preset");

@@ -19,3 +19,23 @@ test("mine scope and search work across YUCs", () => {
   assert.equal(result.total, 1);
   assert.equal(result.rows[0].case_id, "3");
 });
+
+test("case register combines multiple cell filters before pagination", () => {
+  const extendedRows = [
+    ...rows,
+    { case_id: "4", "ЮЦ": "Юг", "Ответственный": "Иванов Иван", "Статус": "Завершено", "Актуально": "Нет", "Тип дела": "судебное" },
+    { case_id: "5", "ЮЦ": "Юг", "Ответственный": "Иванов Иван", "Статус": "В работе", "Актуально": "Да", "Тип дела": "претензия" },
+  ];
+  const cellFilters = JSON.stringify([
+    { field: "Ответственный", value: "Иванов Иван" },
+    { field: "Тип дела", value: "судебное" },
+    { field: "Статус", value: "В работе" },
+  ]);
+  const result = paginateCaseRegister(extendedRows, { yuc: "Юг", cellFilters }, { name: "Руководитель" });
+  assert.deepEqual(result.rows.map((row) => row.case_id), ["1"]);
+});
+
+test("legacy single cell filter remains supported", () => {
+  const result = paginateCaseRegister(rows, { yuc: "Юг", cellField: "Тип дела", cellValue: "судебное" }, { name: "Руководитель" });
+  assert.deepEqual(result.rows.map((row) => row.case_id), ["1"]);
+});

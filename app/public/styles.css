@@ -1329,6 +1329,23 @@ body.write-pending button:not(:disabled) {
   min-width: 170px;
 }
 
+button.workload-cell-filter {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border-top: 0;
+  border-left: 0;
+  cursor: pointer;
+}
+
+button.workload-cell-filter:hover,
+button.workload-cell-filter:focus-visible {
+  background: var(--mts-blue-pale);
+  outline: none;
+}
+
 .workload-count {
   display: flex;
   justify-content: space-between;

@@ -21,7 +21,7 @@ export function createAppState() {
     showDeletedCases: false,
     casesQuickFilter: "",
     casesResponsibleFilter: "",
-    casesCellFilter: null,
+    casesCellFilters: [],
     casesPage: 1,
     casesPageSize: 150,
     casesSearchTimer: null,

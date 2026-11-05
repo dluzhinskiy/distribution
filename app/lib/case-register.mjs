@@ -26,14 +26,31 @@ function cellFilterMatches(row, field, value) {
   return current === value;
 }
 
+function parseCellFilters(query = {}) {
+  if (query.cellFilters) {
+    try {
+      const parsed = JSON.parse(query.cellFilters);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((filter) => ({ field: cleanText(filter?.field), value: cleanText(filter?.value) }))
+          .filter((filter) => ALLOWED_CELL_FIELDS.has(filter.field) && filter.value);
+      }
+    } catch {
+      // Совместимость: некорректный новый параметр не мешает старой паре параметров.
+    }
+  }
+  const field = cleanText(query.cellField);
+  const value = cleanText(query.cellValue);
+  return ALLOWED_CELL_FIELDS.has(field) && value ? [{ field, value }] : [];
+}
+
 export function paginateCaseRegister(rows = [], query = {}, user = {}) {
   const pageSize = Math.min(200, positiveInteger(query.pageSize, 150));
   const requestedPage = positiveInteger(query.page, 1);
   const yuc = normalizeYuc(query.yuc);
   const scope = cleanText(query.scope);
   const responsible = cleanText(query.responsible);
-  const cellField = cleanText(query.cellField);
-  const cellValue = cleanText(query.cellValue);
+  const cellFilters = parseCellFilters(query);
   const term = cleanText(query.search).toLowerCase();
   const showDeleted = ["1", "true", "yes"].includes(cleanText(query.showDeleted).toLowerCase());
 
@@ -44,7 +61,7 @@ export function paginateCaseRegister(rows = [], query = {}, user = {}) {
     .filter((row) => showDeleted || !isDeletedCase(row))
     .filter((row) => quickFilterMatches(row, cleanText(query.quickFilter)))
     .filter((row) => !responsible || nameMatches(row[FIELD.responsible], responsible))
-    .filter((row) => cellFilterMatches(row, cellField, cellValue))
+    .filter((row) => cellFilters.every(({ field, value }) => cellFilterMatches(row, field, value)))
     .filter((row) => !term || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(term)))
     .slice()
     .reverse();
