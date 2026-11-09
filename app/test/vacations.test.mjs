@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allDatesInRange, replaceVacationYear, setVacationDates, upcomingVacation, vacationDatesForEmployee, workingDaysInRange } from "../lib/vacations.mjs";
+import { allDatesInRange, replaceVacationDatesForEmployees, replaceVacationYear, setVacationDates, upcomingVacation, vacationDatesForEmployee, workingDaysInRange } from "../lib/vacations.mjs";
+import { parseMonthlyVacationRows } from "../lib/xlsx-vacation-import.mjs";
 import { FIELD } from "../lib/domain-schema.mjs";
 
 function fixture() {
@@ -41,4 +42,35 @@ test("upcoming vacation warns two calendar days before and counts weekdays", () 
   assert.equal(workingDaysInRange("2026-11-02", "2026-11-06"), 4);
   assert.equal(workingDaysInRange("2026-12-28", "2026-12-31"), 3);
   assert.equal(upcomingVacation(employee, new Date(2026, 6, 26, 12), vacations, 2), null);
+});
+
+test("monthly colored vacation grid reads highlighted dates under month headers", () => {
+  const january = ["Январь 2026"];
+  const employee = ["Иванов Иван Иванович", 1, 2, 3, 4];
+  employee.cellStyles = [0, 4, 5, 5, 4];
+  const parsed = parseMonthlyVacationRows([january, employee], new Map([
+    [4, { pattern: "solid", rgb: "FFFFFFFF", theme: "" }],
+    [5, { pattern: "solid", rgb: "FFFFAAFF", theme: "" }],
+  ]));
+  assert.equal(parsed.scopeDates.length, 31);
+  assert.deepEqual(parsed.sourceRows[0].vacationDates, ["2026-01-02", "2026-01-03"]);
+});
+
+test("vacation import replaces the full file period including past days and preserves absent employees", () => {
+  const data = {
+    employees: [
+      { employee_id: "e1", "ФИО": "Иванов Иван Иванович" },
+      { employee_id: "e2", "ФИО": "Петров Петр Петрович" },
+    ],
+    vacations: [
+      { employee_id: "e1", "ФИО": "Иванов Иван Иванович", "Дата начала": "2026-01-05", "Дата окончания": "2026-01-06" },
+      { employee_id: "e1", "ФИО": "Иванов Иван Иванович", "Дата начала": "2027-02-01", "Дата окончания": "2027-02-02" },
+      { employee_id: "e2", "ФИО": "Петров Петр Петрович", "Дата начала": "2026-03-10", "Дата окончания": "2026-03-11" },
+    ],
+  };
+  const scopeDates = allDatesInRange("2026-01-01", "2026-12-31");
+  replaceVacationDatesForEmployees(data, [{ employee_id: "e1", vacationDates: ["2026-09-14"] }], scopeDates);
+  assert.deepEqual(vacationDatesForEmployee(data.vacations, "e1", 2026), ["2026-09-14"]);
+  assert.deepEqual(vacationDatesForEmployee(data.vacations, "e1", 2027), ["2027-02-01", "2027-02-02"]);
+  assert.deepEqual(vacationDatesForEmployee(data.vacations, "e2", 2026), ["2026-03-10", "2026-03-11"]);
 });
