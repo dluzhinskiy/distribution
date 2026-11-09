@@ -1939,15 +1939,17 @@ button.workload-cell-filter:focus-visible {
 
 .import-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin: 16px 0;
 }
 
 .import-summary-card {
+  min-width: 0;
   padding: 12px;
   border-radius: var(--radius-lg);
   background: var(--mts-gray-100);
+  overflow: hidden;
 }
 
 .import-summary-card span {
@@ -1959,7 +1961,23 @@ button.workload-cell-filter:focus-visible {
 .import-summary-card strong {
   display: block;
   margin-top: 4px;
-  font-size: 24px;
+  max-width: 100%;
+  font-size: clamp(18px, 2vw, 24px);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .import-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 440px) {
+  .import-summary-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .import-list {
