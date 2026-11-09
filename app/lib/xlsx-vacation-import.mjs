@@ -165,16 +165,45 @@ function parseSheetRows(sheetXml, sharedStrings) {
     const rowAttrs = parseAttrs(rowMatch[1]);
     const rowIndex = Number(rowAttrs.r || rows.length + 1) - 1;
     const row = rows[rowIndex] ?? [];
+    const cellStyles = row.cellStyles ?? [];
     const cellRe = /<c\b([^>]*?)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g;
     let cellMatch;
     while ((cellMatch = cellRe.exec(rowMatch[2]))) {
       const attrs = parseAttrs(cellMatch[1] ?? cellMatch[2]);
       const index = attrs.r ? columnIndex(attrs.r) : row.length;
       row[index] = parseCellValue(attrs, cellMatch[3] || "", sharedStrings);
+      cellStyles[index] = Number(attrs.s || 0);
     }
+    row.cellStyles = cellStyles;
     rows[rowIndex] = row;
   }
   return rows;
+}
+
+function parseCellStyleFills(stylesXml) {
+  const fills = [];
+  const fillsMatch = stylesXml.match(/<fills\b[^>]*>([\s\S]*?)<\/fills>/);
+  const fillRe = /<fill\b[^>]*>([\s\S]*?)<\/fill>/g;
+  let fillMatch;
+  while ((fillMatch = fillRe.exec(fillsMatch?.[1] ?? ""))) {
+    const patternMatch = fillMatch[1].match(/<patternFill\b([^>]*)>/);
+    const colorMatch = fillMatch[1].match(/<fgColor\b([^>]*)\/?>(?:<\/fgColor>)?/);
+    const pattern = parseAttrs(patternMatch?.[1] ?? "").patternType ?? "";
+    const colorAttrs = parseAttrs(colorMatch?.[1] ?? "");
+    fills.push({ pattern, rgb: String(colorAttrs.rgb ?? "").toUpperCase(), theme: colorAttrs.theme ?? "" });
+  }
+
+  const styleFills = new Map();
+  const cellXfsMatch = stylesXml.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/);
+  const xfRe = /<xf\b([^>]*)\/?>(?:<\/xf>)?/g;
+  let xfMatch;
+  let styleIndex = 0;
+  while ((xfMatch = xfRe.exec(cellXfsMatch?.[1] ?? ""))) {
+    const attrs = parseAttrs(xfMatch[1]);
+    styleFills.set(styleIndex, fills[Number(attrs.fillId || 0)] ?? { pattern: "", rgb: "", theme: "" });
+    styleIndex += 1;
+  }
+  return styleFills;
 }
 
 function excelSerialToISO(value) {
@@ -259,6 +288,166 @@ function parseVacationFlag(value) {
   return null;
 }
 
+const RUSSIAN_MONTHS = new Map([
+  ["январь", 1], ["февраль", 2], ["март", 3], ["апрель", 4],
+  ["май", 5], ["июнь", 6], ["июль", 7], ["август", 8],
+  ["сентябрь", 9], ["октябрь", 10], ["ноябрь", 11], ["декабрь", 12],
+]);
+
+function parseMonthHeader(value) {
+  const match = String(value ?? "").trim().toLowerCase().match(/^([а-яё]+)\s+(\d{4})$/i);
+  const month = RUSSIAN_MONTHS.get(match?.[1]?.replaceAll("ё", "е") ?? "");
+  const year = Number(match?.[2]);
+  return month && year >= 2000 && year <= 2200 ? { year, month } : null;
+}
+
+function daysInMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function monthDate(year, month, day) {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function isHighlightedVacationStyle(styleIndex, styleFills) {
+  const fill = styleFills.get(Number(styleIndex));
+  if (!fill || fill.pattern !== "solid") return false;
+  if (fill.theme !== "") return true;
+  return Boolean(fill.rgb && !["FFFFFFFF", "FFF2F2F2"].includes(fill.rgb));
+}
+
+export function parseMonthlyVacationRows(rows, styleFills) {
+  const sourceRows = [];
+  const scopeDates = [];
+  let currentMonth = null;
+  rows.forEach((row, rowIndex) => {
+    const monthHeader = parseMonthHeader(row?.[0]);
+    if (monthHeader) {
+      currentMonth = monthHeader;
+      for (let day = 1; day <= daysInMonth(monthHeader.year, monthHeader.month); day += 1) {
+        scopeDates.push(monthDate(monthHeader.year, monthHeader.month, day));
+      }
+      return;
+    }
+    const sourceName = String(row?.[0] ?? "").trim();
+    if (!currentMonth || !sourceName) return;
+    const vacationDates = [];
+    const invalidDays = [];
+    for (let column = 1; column < row.length; column += 1) {
+      const rawDay = row[column];
+      if (rawDay === "" || rawDay === null || rawDay === undefined) continue;
+      const day = Number(rawDay);
+      if (!Number.isInteger(day) || day < 1 || day > daysInMonth(currentMonth.year, currentMonth.month)) {
+        invalidDays.push({ rowNumber: rowIndex + 1, column: column + 1, value: rawDay });
+        continue;
+      }
+      if (isHighlightedVacationStyle(row.cellStyles?.[column], styleFills)) {
+        vacationDates.push(monthDate(currentMonth.year, currentMonth.month, day));
+      }
+    }
+    sourceRows.push({ rowNumber: rowIndex + 1, sourceName, vacationDates, invalidDays });
+  });
+  return {
+    sourceRows,
+    scopeDates: [...new Set(scopeDates)].sort(),
+  };
+}
+
+function buildMonthlyVacationPlan(rows, employees, styleFills, sheetName) {
+  const parsed = parseMonthlyVacationRows(rows, styleFills);
+  if (!parsed.scopeDates.length || !parsed.sourceRows.length) {
+    throw new Error("Не найден помесячный график: нужны строки вида «Январь 2026» и сотрудники с днями месяца.");
+  }
+  const grouped = new Map();
+  for (const sourceRow of parsed.sourceRows) {
+    const key = compactNameKey(sourceRow.sourceName);
+    if (!key) continue;
+    const current = grouped.get(key) ?? {
+      rowNumber: sourceRow.rowNumber,
+      rowNumbers: [],
+      sourceName: sourceRow.sourceName,
+      vacationDates: [],
+      invalidValues: [],
+    };
+    current.rowNumbers.push(sourceRow.rowNumber);
+    current.vacationDates.push(...sourceRow.vacationDates);
+    current.invalidValues.push(...sourceRow.invalidDays);
+    grouped.set(key, current);
+  }
+
+  const matchEmployee = buildEmployeeMatcher(employees);
+  const matchedByEmployee = new Map();
+  const unmatched = [];
+  const ambiguous = [];
+  const invalidCells = [];
+  for (const source of grouped.values()) {
+    source.vacationDates = [...new Set(source.vacationDates)].sort();
+    invalidCells.push(...source.invalidValues);
+    const match = matchEmployee(source.sourceName);
+    if (match.status === "matched") {
+      const employeeId = String(match.employee.employee_id ?? "").trim();
+      const current = matchedByEmployee.get(employeeId) ?? {
+        rowNumber: source.rowNumber,
+        rowNumbers: [],
+        sourceName: source.sourceName,
+        employee_id: employeeId,
+        employeeName: String(match.employee["ФИО"] ?? "").trim(),
+        matchBy: match.by,
+        vacationDates: [],
+      };
+      current.rowNumbers.push(...source.rowNumbers);
+      current.vacationDates.push(...source.vacationDates);
+      current.vacationDates = [...new Set(current.vacationDates)].sort();
+      current.vacationDays = current.vacationDates.length;
+      matchedByEmployee.set(employeeId, current);
+    } else if (match.status === "ambiguous") {
+      ambiguous.push({
+        rowNumber: source.rowNumber,
+        rowNumbers: source.rowNumbers,
+        sourceName: source.sourceName,
+        matchBy: match.by,
+        candidates: match.candidates.map((employee) => ({
+          employee_id: String(employee.employee_id ?? "").trim(),
+          employeeName: String(employee["ФИО"] ?? "").trim(),
+        })),
+        vacationDays: source.vacationDates.length,
+      });
+    } else {
+      unmatched.push({
+        rowNumber: source.rowNumber,
+        rowNumbers: source.rowNumbers,
+        sourceName: source.sourceName,
+        vacationDays: source.vacationDates.length,
+      });
+    }
+  }
+
+  const matched = [...matchedByEmployee.values()];
+  const years = uniqueYears(parsed.scopeDates);
+  return {
+    format: "monthly-colored-grid",
+    sheetName,
+    year: years.length === 1 ? Number(years[0]) : null,
+    years,
+    firstDate: parsed.scopeDates[0],
+    lastDate: parsed.scopeDates[parsed.scopeDates.length - 1],
+    scopeDates: parsed.scopeDates,
+    sourceRows: parsed.sourceRows.length,
+    matched,
+    unmatched,
+    ambiguous,
+    invalidCells: invalidCells.slice(0, 100),
+    stats: {
+      dateColumns: parsed.scopeDates.length,
+      matchedEmployees: matched.length,
+      unmatchedEmployees: unmatched.length,
+      ambiguousEmployees: ambiguous.length,
+      vacationDays: matched.reduce((sum, item) => sum + item.vacationDays, 0),
+      invalidCells: invalidCells.length,
+    },
+  };
+}
+
 function uniqueYears(dates) {
   return [...new Set(dates.map((date) => date.slice(0, 4)))].sort();
 }
@@ -279,7 +468,12 @@ export function parseVacationWorkbook(buffer, employees, options = {}) {
   if (!rows.length) throw new Error("Лист с отпусками пуст.");
   const header = rows[0] ?? [];
   if (!String(header[0] ?? "").toLowerCase().includes("фио")) {
-    throw new Error("Ожидалась таблица, где первая колонка называется «ФИО».");
+    return buildMonthlyVacationPlan(
+      rows,
+      employees,
+      parseCellStyleFills(xmlText(entries, "xl/styles.xml")),
+      sheet.name,
+    );
   }
 
   const dateHeaders = header.slice(1).map((value, index) => ({
