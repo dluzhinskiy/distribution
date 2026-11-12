@@ -2534,7 +2534,7 @@ textarea:focus,
   padding: 10px;
   border: 1px solid var(--mts-gray-200);
   border-radius: var(--radius-lg);
-  background: var(--mts-white);
+  background: var(--queue-card-surface, var(--mts-white));
 }
 
 .queue-preview-row.is-passed {
@@ -2572,8 +2572,8 @@ textarea:focus,
   align-items: center;
   justify-content: center;
   border-radius: var(--skin-radius-003);
-  background: var(--mts-gray-900);
-  color: var(--mts-white);
+  background: var(--queue-position-surface, var(--mts-gray-900));
+  color: var(--queue-position-text, var(--mts-white));
   font-size: 13px;
   font-weight: 700;
 }
@@ -2581,6 +2581,7 @@ textarea:focus,
 .queue-preview-name {
   font-weight: 700;
   color: var(--mts-gray-900);
+  overflow-wrap: anywhere;
 }
 
 .queue-preview-details {
@@ -2652,7 +2653,7 @@ textarea:focus,
   padding: 10px 12px;
   border: 1px solid var(--mts-gray-200);
   border-radius: var(--radius-lg);
-  background: var(--skin-color-095);
+  background: var(--queue-manual-surface, var(--skin-color-095));
   color: var(--mts-gray-600);
   font-size: 12px;
   line-height: 1.35;
