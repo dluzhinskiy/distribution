@@ -784,6 +784,9 @@ body.theme-apple.theme-red {
 
 body.theme-apple.theme-gray {
   --font: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --settings-save-text: var(--skin-color-525);
+  --settings-save-border: var(--skin-color-060);
+  --settings-save-surface: var(--skin-color-528);
   --apple-accent: #27765a;
   --apple-accent-dark: #18533f;
   --apple-accent-soft: rgba(86, 166, 126, .14);
@@ -822,6 +825,9 @@ body.theme-apple.theme-gray {
 }
 
 body.theme-apple.theme-gray.theme-gray-dark {
+  --settings-save-text: var(--skin-color-534);
+  --settings-save-border: var(--skin-color-535);
+  --settings-save-surface: var(--skin-color-536);
   --queue-card-surface: var(--skin-color-358);
   --queue-manual-surface: var(--skin-color-462);
   --queue-position-surface: var(--skin-color-462);
