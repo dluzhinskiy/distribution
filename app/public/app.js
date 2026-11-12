@@ -1,3 +1,4 @@
+import { skins, getSkin, defaultSkin, defaultIcons, workloadSkinIcon } from "./skins/catalog.js";
 import {
   displayName,
   employeeInitials,
@@ -38,8 +39,7 @@ const statuses = ["В работе", "Ожидает распределения"
 const deletedStatus = "Удалено";
 const completedStatuses = new Set(["Завершено", "Отменено", deletedStatus]);
 const themeStorageKey = "mts-load-distribution-theme";
-const blueTheme = "blue";
-const redTheme = "red";
+const currentSkin = () => getSkin(document.body.dataset.activeSkin);
 const caseColumnsStoragePrefix = "mts-load-distribution-case-columns-v1";
 const weightedDashboardStorageKey = "mts-load-distribution-weighted-dashboard";
 try { state.weightedDashboard = localStorage.getItem(weightedDashboardStorageKey) === "1"; } catch { /* localStorage may be unavailable */ }
@@ -109,9 +109,11 @@ function setAuthMode(mode = "login") {
   $$(".auth-mode").forEach((button) => button.classList.toggle("active", button.dataset.authMode === state.authMode));
   $("#authLoginForm")?.classList.toggle("hidden", state.authMode !== "login");
   $("#authFirstAccessForm")?.classList.toggle("hidden", state.authMode !== "first");
-  $("#authDescription").textContent = state.authMode === "first"
-    ? "Введите одноразовый код, затем задайте личный пароль."
-    : "Введите логин и пароль.";
+  const description = $("#authDescription");
+  if (description) {
+    description.hidden = state.authMode !== "first";
+    description.textContent = state.authMode === "first" ? "Введите одноразовый код, затем задайте личный пароль." : "";
+  }
   setAuthMessage("");
 }
 
@@ -159,7 +161,7 @@ function applyAuthUser(user) {
   const node = $("#currentUser");
   if (node) node.textContent = user ? `${displayName(user.name)} · ${user.role}` : "";
   const exitButton = $("#exitBtn");
-  if (exitButton) exitButton.textContent = isEmployeeUser() ? "Выйти" : "Выход";
+  if (exitButton) { exitButton.title = "Выйти"; exitButton.setAttribute("aria-label", "Выйти из системы"); }
   applyRoleUi();
 }
 
@@ -360,6 +362,7 @@ function toast(message, type = "ok") {
 function statusKind(message = "") {
   const text = String(message).toLowerCase();
   if (text.includes("ошибка")) return "error";
+  if (text.includes("предупрежден")) return "draft";
   if (text.includes("чита") || text.includes("загружа") || text.includes("обнов")) return "reading";
   if (text.includes("сохраня") || text.includes("удаля") || text.includes("восстанавли") || text.includes("распределя") || text.includes("назнача") || text.includes("заверша") || text.includes("останавли")) return "writing";
   if (text.includes("несохран")) return "draft";
@@ -388,7 +391,8 @@ function setStatus(message) {
   }
   const canCopyError = kind === "error" && Boolean(state.lastApiError);
   node.classList.toggle("status-copyable", canCopyError);
-  node.title = canCopyError ? "Нажмите, чтобы скопировать запись об ошибке" : "";
+  node.title = canCopyError ? `${statusLabel(message)}. Нажмите, чтобы скопировать запись об ошибке` : statusLabel(message);
+  node.setAttribute("aria-label", node.title);
   node.setAttribute("role", canCopyError ? "button" : "status");
   node.tabIndex = canCopyError ? 0 : -1;
 }
@@ -450,8 +454,8 @@ function renderTableOperationProgress() {
   $("#tableOperationTitle").textContent = operation.title;
   $("#tableOperationStage").textContent = progress.stage;
   $("#tableOperationElapsed").textContent = elapsedMs < 1000 ? "< 1 сек." : `${Math.floor(elapsedMs / 1000)} сек.`;
-  $("#tableOperationFill").style.width = `${progress.percent}%`;
-  $("#tableOperationHint").textContent = progress.hint || "Шкала показывает этап операции; длительность зависит от объёма данных и ответа MTS Tabs.";
+  $("#tableOperationFill").style.setProperty("--operation-progress", String(progress.percent));
+  $("#tableOperationHint").textContent = progress.hint || "Этап ожидания, не точный процент выполнения.";
 }
 
 function beginTableOperation(path, method = "GET", title = "") {
@@ -553,11 +557,9 @@ function blockWritePendingButtonEvents(event) {
 
 function savedTheme() {
   try {
-    const saved = localStorage.getItem(themeStorageKey);
-    if (saved === redTheme) return redTheme;
-    return blueTheme;
+    return getSkin(localStorage.getItem(themeStorageKey)).id;
   } catch {
-    return blueTheme;
+    return defaultSkin;
   }
 }
 
@@ -569,19 +571,48 @@ function saveTheme(theme) {
   }
 }
 
+function syncSkinIcons(root = document) {
+  const sprite = currentSkin().icons ?? defaultIcons;
+  const selector = 'use[href*="#skin-icon-"]';
+  const icons = [...(root.querySelectorAll?.(selector) ?? [])];
+  if (root.matches?.(selector)) icons.unshift(root);
+  for (const icon of icons) {
+    const href = icon.getAttribute("href");
+    const next = sprite + href.slice(href.indexOf("#skin-icon-"));
+    if (href !== next) icon.setAttribute("href", next);
+  }
+}
+
 function applyTheme(theme, persist = true) {
-  const variant = theme === redTheme ? redTheme : blueTheme;
-  const isRed = variant === redTheme;
+  const skin = getSkin(theme);
+  const variant = skin.id;
+  const isDark = Boolean(skin.dark);
+  document.body.dataset.activeSkin = variant;
   document.body.classList.add("theme-apple");
-  document.body.classList.toggle("theme-blue", !isRed);
-  document.body.classList.toggle("theme-red", isRed);
-  const toggle = $("#themeToggle");
-  const label = $("#themeToggleLabel");
+  for (const name of new Set(Object.values(skins).flatMap((entry) => entry.classes))) {
+    document.body.classList.toggle(name, skin.classes.includes(name));
+  }
+  const label = $("#currentSkinLabel");
   const logo = $("#brandLogo");
-  if (toggle) toggle.checked = isRed;
-  if (label) label.textContent = isRed ? "Красный" : "Голубой";
-  if (logo) logo.src = isRed ? "/apple_logo_red_512.png" : "/apple_logo_blue_512.png";
+  const authLogo = $(".auth-logo");
+  if (label) label.textContent = skin.label;
+  $$("[data-skin]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.skin === (skin.menuId ?? variant))));
+  const dayNight = $("#skinDayNight");
+  if (dayNight) {
+    dayNight.hidden = !skin.alternate;
+    dayNight.title = isDark ? "Включить светлую тему" : "Включить тёмную тему";
+    dayNight.setAttribute("aria-label", dayNight.title);
+    dayNight.setAttribute("aria-pressed", String(isDark));
+  }
+  if (logo) logo.src = skin.logo;
+  if (authLogo) authLogo.src = skin.authLogo ?? skin.logo;
+  syncSkinIcons();
+  syncRegionalPolicySelects();
   if (persist) saveTheme(variant);
+  if (persist && state.data && state.historicalDashboard && activeDataViewName() === "dashboard") {
+    closeHistoricalCalendar();
+    renderWorkloadDashboard();
+  }
 }
 
 async function api(path, options = {}) {
@@ -705,7 +736,6 @@ function applyDataPayload(payload = {}) {
   };
   if (payload.user) applyAuthUser(payload.user);
   state.storagePath = payload.storagePath || state.storagePath;
-  if ($("#storagePath")) $("#storagePath").textContent = state.storagePath || "MTS Tabs API";
   markDataViewsDirty();
   renderAll();
 }
@@ -765,6 +795,8 @@ function showView(name) {
   $(`#view-${name}`).classList.add("active");
   $$(".nav-link").forEach((link) => link.classList.toggle("active", link.dataset.view === name));
   $("#pageTitle").textContent = name === "cases" && state.caseListScope === "mine" ? "Мои дела" : titles[name];
+  const refreshButton = $("#refreshBtn");
+  if (refreshButton) refreshButton.hidden = name === "reports";
   if (state.data && dataViewNames.includes(name) && !state.loadedViews.has(name)) {
     loadData({ view: name }).catch((error) => { setStatus("Ошибка"); toast(error.message, "error"); });
   } else if (state.data) renderDataView(name);
@@ -778,6 +810,14 @@ function badge(text, kind = "gray") {
   return `<span class="badge badge-${kind}">${escapeHtml(text)}</span>`;
 }
 
+function deleteIcon() {
+  return `<svg class="delete-action-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-delete"/></svg>`;
+}
+
+function saveIcon() {
+  return `<svg class="save-action-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-save"/></svg>`;
+}
+
 const caseCellFilterFields = new Set([
   "Тип дела",
   "Статус",
@@ -787,6 +827,7 @@ const caseCellFilterFields = new Set([
   "Ответчик",
   "Третье лицо",
   "Дата поступления",
+  "Актуально",
 ]);
 
 function canUseCaseCellFilters() {
@@ -1110,13 +1151,13 @@ function renderSummary() {
     ["К завершению", summary.completionDue, "completion"],
   ].map(([label, value, action]) => `
     <button class="metric-card metric-button ${action === "completion" && state.completionControlExpanded ? "active" : ""}" type="button" data-summary-action="${action}">
-      <div class="metric-label">${label}</div>
-      <div class="metric-value">${value}</div>
+      <span class="skin-metric-icon" aria-hidden="true"><svg><use href="/skins/icons.svg#skin-icon-${({ production: "cases", active: "active", inactive: "inactive", waiting: "waiting", completion: "completion" })[action]}"></use></svg></span>
+      <span class="metric-content"><span class="metric-label">${label}</span><span class="metric-value">${value}</span></span>
     </button>
   `).join("");
 
   $("#typeSummary").innerHTML = summary.byType.map((item) => `
-    <div class="type-load-card">
+    <div class="type-load-card load-type-${historicalSegmentClass(item.type)}">
       <div class="type-load-head">
         <strong>${escapeHtml(item.type)}</strong>
         <span>${item.load}</span>
@@ -1409,6 +1450,75 @@ function historicalPresetButton(preset, label) {
   `;
 }
 
+function historicalDateField(id, label, value) {
+  const locked = state.historicalPeriodPreset !== "custom";
+  if (!currentSkin().customControls) {
+    return `<label class="field compact"><span>${label}</span><input type="date" id="${id}" value="${escapeHtml(value)}" ${locked ? "disabled" : ""} /></label>`;
+  }
+  const formatted = value ? value.split("-").reverse().join(".") : "";
+  return `<div class="field compact"><label for="${id}">${label}</label><div class="skin-date-control"><input type="text" inputmode="numeric" id="${id}" value="${escapeHtml(formatted)}" placeholder="ДД.ММ.ГГГГ" aria-describedby="historicalDateHint" ${locked ? "disabled" : ""}><button type="button" class="skin-date-open" data-date-target="${id}" aria-label="Выбрать дату: ${label}" aria-expanded="false" ${locked ? "disabled" : ""}>▦</button></div></div>`;
+}
+
+function parseManualHistoricalDate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const match = text.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return date.getUTCFullYear() === Number(year) && date.getUTCMonth() === Number(month) - 1 && date.getUTCDate() === Number(day)
+    ? `${year}-${month}-${day}` : null;
+}
+
+let historicalCalendar = null;
+function closeHistoricalCalendar({ restoreFocus = false } = {}) {
+  if (!historicalCalendar) return;
+  const trigger = historicalCalendar.trigger;
+  historicalCalendar.popup.remove();
+  trigger.setAttribute("aria-expanded", "false");
+  historicalCalendar = null;
+  if (restoreFocus && trigger.isConnected) trigger.focus();
+}
+
+function drawHistoricalCalendar(focusDay = false) {
+  if (!historicalCalendar) return;
+  const { popup, target, year, month } = historicalCalendar;
+  const selected = target === "historicalFrom" ? state.historicalFrom : state.historicalTo;
+  const monthText = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month, 1)));
+  const offset = (new Date(Date.UTC(year, month, 1)).getUTCDay() + 6) % 7;
+  const count = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  popup.innerHTML = `<div class="skin-calendar-head"><button type="button" data-calendar-move="-1" aria-label="Предыдущий месяц">‹</button><strong>${escapeHtml(monthText)}</strong><button type="button" data-calendar-move="1" aria-label="Следующий месяц">›</button></div><div class="skin-calendar-grid">${["Пн","Вт","Ср","Чт","Пт","Сб","Вс"].map((day) => `<span class="skin-calendar-weekday">${day}</span>`).join("")}${"<span></span>".repeat(offset)}${Array.from({ length: count }, (_, index) => { const iso = dateISO(year, month, index + 1); return `<button type="button" data-calendar-date="${iso}" class="${iso === selected ? "is-selected" : ""} ${iso === today() ? "is-today" : ""}" aria-label="${formatRuDate(iso)}" ${iso === selected ? 'aria-current="date"' : ""}>${index + 1}</button>`; }).join("")}</div><div class="skin-calendar-actions"><button type="button" data-calendar-clear>Очистить</button><button type="button" data-calendar-today>Сегодня</button></div>`;
+  if (focusDay) (popup.querySelector(".is-selected") ?? popup.querySelector("[data-calendar-date]"))?.focus();
+}
+
+function openHistoricalCalendar(trigger) {
+  if (historicalCalendar?.trigger === trigger) { closeHistoricalCalendar({ restoreFocus: true }); return; }
+  closeHistoricalCalendar();
+  const target = trigger.dataset.dateTarget;
+  const value = target === "historicalFrom" ? state.historicalFrom : state.historicalTo;
+  const initial = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : today();
+  const [year, month] = initial.split("-").map(Number);
+  const popup = document.createElement("div");
+  popup.className = "skin-calendar-popup";
+  popup.setAttribute("role", "dialog");
+  popup.setAttribute("aria-label", "Выбор даты");
+  trigger.parentElement.append(popup);
+  historicalCalendar = { trigger, target, popup, year, month: month - 1 };
+  trigger.setAttribute("aria-expanded", "true");
+  drawHistoricalCalendar(true);
+}
+
+function setHistoricalDateValue(target, value) {
+  closeHistoricalCalendar();
+  if (target === "historicalFrom") state.historicalFrom = value;
+  else state.historicalTo = value;
+  state.historicalAllTime = false;
+  state.historicalInitialized = true;
+  state.historicalPeriodPreset = "custom";
+  renderWorkloadDashboard();
+  document.getElementById(target)?.focus();
+}
+
 function applyHistoricalCaseFilter(responsible, type = "") {
   state.casesResponsibleFilter = responsible || "";
   state.casesQuickFilter = "";
@@ -1516,14 +1626,9 @@ function renderHistoricalWorkloadDashboard() {
       </div>
     </div>
     <div class="historical-custom-period ${state.historicalPeriodPreset === "custom" ? "" : "is-locked"}" aria-label="Границы выбранного периода">
-        <label class="field compact">
-          <span>С даты</span>
-          <input type="date" id="historicalFrom" value="${escapeHtml(state.historicalFrom)}" ${state.historicalPeriodPreset === "custom" ? "" : "disabled"} />
-        </label>
-        <label class="field compact">
-          <span>По дату</span>
-          <input type="date" id="historicalTo" value="${escapeHtml(state.historicalTo)}" ${state.historicalPeriodPreset === "custom" ? "" : "disabled"} />
-        </label>
+        ${historicalDateField("historicalFrom", "С даты", state.historicalFrom)}
+        ${historicalDateField("historicalTo", "По дату", state.historicalTo)}
+        <small id="historicalDateHint" class="skin-date-hint">${currentSkin().customControls && state.historicalPeriodPreset === "custom" ? "Формат даты: ДД.ММ.ГГГГ" : ""}</small>
     </div>
     <div class="historical-mode-row">
       <label
@@ -1609,8 +1714,8 @@ function renderHistoricalWorkloadDashboard() {
 function renderWorkloadDashboard() {
   const title = $("#workloadCardTitle");
   const subtitle = $("#workloadCardSubtitle");
-  const badgeNode = $("#workloadCardBadge");
   const toggle = $("#toggleHistoricalDashboard");
+  const currentToggle = $("#toggleCurrentDashboard");
   const coefficientConfig = currentLoadCoefficientConfig();
   if (state.weightedDashboard && !coefficientConfig.valid) state.weightedDashboard = false;
   const historicalWeighted = state.historicalDashboard && state.weightedDashboard && coefficientConfig.valid;
@@ -1622,15 +1727,12 @@ function renderWorkloadDashboard() {
         ? "Назначенные дела за выбранный период: завершённые и те, которые ещё находятся в работе."
         : "Ярким показаны активные дела, полупрозрачным — незавершённые дела, которые уже не активны по сроку актуальности.";
   }
-  if (badgeNode) {
-    badgeNode.textContent = historicalWeighted ? "приведённая" : state.historicalDashboard ? "история" : "по типам нагрузки";
-    badgeNode.className = `badge ${state.historicalDashboard ? "badge-blue" : "badge-red"}`;
-  }
   if (toggle) {
     toggle.classList.toggle("active", state.historicalDashboard);
-    toggle.title = state.historicalDashboard ? "Вернуться к текущей нагрузке" : "Показать историческую нагрузку";
-    toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-pressed", String(state.historicalDashboard));
   }
+  currentToggle?.classList.toggle("active", !state.historicalDashboard);
+  currentToggle?.setAttribute("aria-pressed", String(!state.historicalDashboard));
   const card = $(".workload-card");
   card?.classList.toggle("show-history", state.historicalDashboard);
   if (state.historicalDashboard) {
@@ -1682,7 +1784,7 @@ function renderWorkloadDashboard() {
           return `
             <button
               type="button"
-              class="workload-cell workload-cell-filter"
+              class="workload-cell workload-cell-filter load-type-${historicalSegmentClass(type)}"
               data-dashboard-responsible="${escapeHtml(row.employee["ФИО"])}"
               data-dashboard-type="${escapeHtml(type)}"
               title="Показать дела сотрудника с типом нагрузки «${escapeHtml(type)}»"
@@ -1723,17 +1825,18 @@ function setWeightedDashboard(enabled) {
   renderWorkloadDashboard();
 }
 
-function toggleHistoricalDashboardWithFlip() {
+function toggleHistoricalDashboardWithFlip(toHistory = !state.historicalDashboard) {
   const card = $(".workload-card");
   const dashboard = $("#workloadDashboard");
   const toggle = $("#toggleHistoricalDashboard");
-  const toHistory = !state.historicalDashboard;
-  if (!card || card.classList.contains("is-flipping")) return;
+  const currentToggle = $("#toggleCurrentDashboard");
+  if (!card || card.classList.contains("is-flipping") || toHistory === state.historicalDashboard) return;
   card.classList.remove("flip-to-history", "flip-to-current");
   card.classList.add("is-flipping", toHistory ? "flip-to-history" : "flip-to-current");
   dashboard?.classList.remove("flip-in", "flip-out");
   dashboard?.classList.add("flip-out");
   if (toggle) toggle.disabled = true;
+  if (currentToggle) currentToggle.disabled = true;
   window.setTimeout(() => {
     state.historicalDashboard = toHistory;
     renderWorkloadDashboard();
@@ -1743,6 +1846,7 @@ function toggleHistoricalDashboardWithFlip() {
     card.classList.remove("is-flipping", "flip-to-history", "flip-to-current");
     $("#workloadDashboard")?.classList.remove("flip-in", "flip-out");
     if (toggle) toggle.disabled = false;
+    if (currentToggle) currentToggle.disabled = false;
   }, 470);
 }
 
@@ -1893,7 +1997,7 @@ function existingCaseActions(row) {
   if (state.deleteEditEnabled) {
     return `
       <div class="case-actions">
-        <button class="icon-btn danger open-delete-case" data-id="${escapeHtml(row.case_id)}" title="Удалить дело">🗑</button>
+        <button class="icon-btn danger open-delete-case" type="button" data-id="${escapeHtml(row.case_id)}" title="Удалить дело" aria-label="Удалить дело ${escapeHtml(row.case_id)}">${deleteIcon()}</button>
       </div>
     `;
   }
@@ -2090,7 +2194,7 @@ function caseColumnCell(row, key, profile, visibility) {
       return caseFilterValue("Регион", row["Регион"], label);
     }
     case "receivedDate": return caseFilterValue("Дата поступления", row["Дата поступления"], caseDateColumn(row, "Дата поступления"));
-    case "actual": return badge(row["Актуально"] || "—", row["Актуально"] === "Да" ? "green" : "gray");
+    case "actual": return caseFilterValue("Актуально", row["Актуально"], badge(row["Актуально"] || "—", row["Актуально"] === "Да" ? "green" : "gray"));
     case "responsible": return profile === "manager"
       ? caseResponsibleCell(row)
       : caseFilterValue("Ответственный", row["Ответственный"], `<span class="case-filter-pill">${escapeHtml(displayName(row["Ответственный"]) || "—")}</span>`);
@@ -2961,6 +3065,11 @@ function currentLoadCoefficientConfig() {
   return loadCoefficientConfig(state.data?.loadCoefficients ?? []);
 }
 
+function settingsWorkloadLabel(type) {
+  const icon = workloadSkinIcon(type);
+  return `<span class="settings-workload-label"><svg class="settings-workload-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-${icon}"/></svg><span>${escapeHtml(type)}</span></span>`;
+}
+
 function settingsNumberStepper({ value, min = 0, step = 1, inputClass = "", inputAttributes = "", label = "Числовое значение", disabled = false } = {}) {
   const numericValue = Number(value);
   const minusDisabled = disabled || (Number.isFinite(numericValue) && numericValue <= min);
@@ -2982,7 +3091,7 @@ function renderLoadCoefficients() {
   const config = currentLoadCoefficientConfig();
   table.innerHTML = loadCoefficientTypes.map((type) => `
     <div class="load-coefficient-item" data-load-coefficient-type="${escapeHtml(type)}">
-      <span>${escapeHtml(type)}</span>
+      ${settingsWorkloadLabel(type)}
       ${settingsNumberStepper({ value: config.values[type] ?? "", min: 0.05, step: 0.05, inputClass: "load-coefficient-input", label: `Коэффициент: ${type}`, disabled: !admin })}
     </div>
   `).join("");
@@ -3030,7 +3139,7 @@ function renderDeadlineSettings() {
   if (!table) return;
   table.innerHTML = deadlineSettingsForSelectedYuc().map((row) => `
     <tr data-deadline-type="${escapeHtml(row["Тип дела"])}">
-      <td>${escapeHtml(row["Тип дела"])}</td>
+      <td>${settingsWorkloadLabel(row["Тип дела"])}</td>
       <td>${settingsNumberStepper({ value: row["Активность, дни"], min: 1, inputClass: "deadline-input deadline-setting-field", inputAttributes: 'data-field="Активность, дни"', label: `Активность, дни: ${row["Тип дела"]}` })}</td>
       <td>${settingsNumberStepper({ value: row["Автозавершение, дни"], min: 1, inputClass: "deadline-input deadline-setting-field", inputAttributes: 'data-field="Автозавершение, дни"', label: `Автозавершение, дни: ${row["Тип дела"]}` })}</td>
       <td>${yesNoToggle({
@@ -3055,6 +3164,72 @@ function renderYucSettingsForm() {
   updateRegionalSettingsAvailability();
 }
 
+function closeRegionalPolicySelects(except = null) {
+  $$(".regional-policy-custom").forEach((wrapper) => {
+    if (wrapper === except) return;
+    wrapper.querySelector(".regional-policy-trigger")?.setAttribute("aria-expanded", "false");
+    const list = wrapper.querySelector(".regional-policy-options");
+    if (list) list.hidden = true;
+  });
+}
+
+function syncRegionalPolicySelects() {
+  const gray = currentSkin().customControls;
+  $$(".regional-policy-custom").forEach((wrapper) => {
+    const select = wrapper.previousElementSibling;
+    const trigger = wrapper.querySelector(".regional-policy-trigger");
+    const list = wrapper.querySelector(".regional-policy-options");
+    if (!select || !trigger || !list) return;
+    select.hidden = gray;
+    wrapper.hidden = !gray;
+    trigger.disabled = select.disabled;
+    trigger.querySelector(".regional-policy-value").textContent = select.selectedOptions[0]?.textContent ?? "";
+    list.querySelectorAll("[role=option]").forEach((option, index) => option.setAttribute("aria-selected", String(index === select.selectedIndex)));
+    if (!gray || select.disabled) closeRegionalPolicySelects();
+  });
+}
+
+function initRegionalPolicySelects() {
+  $$(".regional-policy-select").forEach((select) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "regional-policy-custom";
+    const listId = `${select.id}Options`;
+    wrapper.innerHTML = `<button type="button" class="regional-policy-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="${listId}" aria-label="${escapeHtml(select.labels[0]?.textContent || "Выбор настройки")}"><span class="regional-policy-value"></span><svg viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-chevron-down"/></svg></button><div class="regional-policy-options" id="${listId}" role="listbox" aria-label="${escapeHtml(select.labels[0]?.textContent || "Варианты настройки")}" hidden>${Array.from(select.options).map((option, index) => `<button type="button" role="option" data-option-index="${index}">${escapeHtml(option.textContent)}</button>`).join("")}</div>`;
+    select.after(wrapper);
+    const trigger = wrapper.querySelector(".regional-policy-trigger");
+    const list = wrapper.querySelector(".regional-policy-options");
+    trigger.addEventListener("click", () => {
+      const open = trigger.getAttribute("aria-expanded") !== "true";
+      closeRegionalPolicySelects();
+      if (open && !select.disabled) { list.hidden = false; trigger.setAttribute("aria-expanded", "true"); }
+    });
+    list.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-option-index]");
+      if (!option || select.disabled) return;
+      const changed = select.selectedIndex !== Number(option.dataset.optionIndex);
+      select.selectedIndex = Number(option.dataset.optionIndex);
+      syncRegionalPolicySelects();
+      closeRegionalPolicySelects();
+      if (changed) select.dispatchEvent(new Event("change", { bubbles: true }));
+      trigger.focus();
+    });
+    wrapper.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { closeRegionalPolicySelects(); trigger.focus(); event.preventDefault(); }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (list.hidden) { closeRegionalPolicySelects(); list.hidden = false; trigger.setAttribute("aria-expanded", "true"); }
+        const options = Array.from(list.querySelectorAll("[role=option]"));
+        const index = options.indexOf(document.activeElement);
+        const next = index < 0 ? select.selectedIndex : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+        options[Math.max(0, next)]?.focus();
+      }
+    });
+  });
+  document.addEventListener("click", (event) => { if (!event.target.closest(".regional-policy-custom")) closeRegionalPolicySelects(); });
+  document.addEventListener("focusin", (event) => { if (!event.target.closest(".regional-policy-custom")) closeRegionalPolicySelects(); });
+  syncRegionalPolicySelects();
+}
+
 function updateRegionalSettingsAvailability() {
   const form = $("#yucSettingsForm");
   const enabled = Boolean(form?.elements["Региональные очереди вкл\\выкл"]?.checked);
@@ -3069,11 +3244,13 @@ function updateRegionalSettingsAvailability() {
   if (addAssignment) addAssignment.disabled = !enabled;
   const addSubstitution = $("#addRegionalSubstitutionBtn");
   if (addSubstitution) addSubstitution.disabled = !enabled;
-  $$(".regional-assignment-field, .regional-substitution-field, .save-regional-assignment, .delete-regional-assignment, .save-regional-substitution, .delete-regional-substitution").forEach((control) => {
+  $$(".regional-assignment-field, .regional-substitution-field, .delete-regional-assignment, .delete-regional-substitution").forEach((control) => {
     control.disabled = !enabled;
     control.closest(".toggle-inline")?.classList.toggle("disabled", !enabled);
   });
+  $$("#regionalAssignmentsTable tr, #regionalSubstitutionsTable tr").forEach(syncRegionalRowSave);
   panel?.querySelectorAll(".settings-number-input").forEach(syncSettingsNumberStepper);
+  syncRegionalPolicySelects();
 }
 
 function regionalAssignmentRow(row = {}, index = -1, isNew = false) {
@@ -3089,8 +3266,8 @@ function regionalAssignmentRow(row = {}, index = -1, isNew = false) {
       })}</td>
       <td>
         <div class="case-actions">
-          <button class="icon-btn confirm save-regional-assignment" title="Сохранить закрепление">✓</button>
-          <button class="icon-btn cancel ${isNew ? "cancel-new-regional-assignment" : "delete-regional-assignment"}" title="${isNew ? "Отменить" : "Удалить"}">${isNew ? "×" : "🗑"}</button>
+          <button class="icon-btn confirm save-regional-assignment" type="button" title="Сохранить закрепление" aria-label="Сохранить закрепление" disabled>${saveIcon()}</button>
+          <button class="icon-btn cancel ${isNew ? "cancel-new-regional-assignment" : "delete-regional-assignment"}" type="button" title="${isNew ? "Отменить" : "Удалить"}" aria-label="${isNew ? "Отменить добавление" : "Удалить закрепление"}">${isNew ? "×" : deleteIcon()}</button>
         </div>
       </td>
     </tr>
@@ -3110,6 +3287,7 @@ function renderRegionalAssignments() {
   $("#regionalAssignmentsTable").innerHTML = html || draft
     ? `${draft}${html}`
     : `<tr><td colspan="5" class="empty-cell">Закрепления выбранного ЮЦ пока не настроены.</td></tr>`;
+  initializeRegionalRows($("#regionalAssignmentsTable"));
 }
 
 function regionalSubstitutionRow(row = {}, index = -1, isNew = false) {
@@ -3127,8 +3305,8 @@ function regionalSubstitutionRow(row = {}, index = -1, isNew = false) {
       <td><input class="inline-input regional-substitution-field" data-field="Комментарий" value="${escapeHtml(row["Комментарий"] || "")}" /></td>
       <td>
         <div class="case-actions">
-          <button class="icon-btn confirm save-regional-substitution" title="Сохранить замещение">✓</button>
-          <button class="icon-btn cancel ${isNew ? "cancel-new-regional-substitution" : "delete-regional-substitution"}" title="${isNew ? "Отменить" : "Удалить"}">${isNew ? "×" : "🗑"}</button>
+          <button class="icon-btn confirm save-regional-substitution" type="button" title="Сохранить замещение" aria-label="Сохранить замещение" disabled>${saveIcon()}</button>
+          <button class="icon-btn cancel ${isNew ? "cancel-new-regional-substitution" : "delete-regional-substitution"}" type="button" title="${isNew ? "Отменить" : "Удалить"}" aria-label="${isNew ? "Отменить добавление" : "Удалить замещение"}">${isNew ? "×" : deleteIcon()}</button>
         </div>
       </td>
     </tr>
@@ -3151,6 +3329,26 @@ function renderRegionalSubstitutions() {
   $("#regionalSubstitutionsTable").innerHTML = html || draft
     ? `${draft}${html}`
     : `<tr><td colspan="7" class="empty-cell">Замещения выбранного ЮЦ пока не настроены.</td></tr>`;
+  initializeRegionalRows($("#regionalSubstitutionsTable"));
+}
+
+function regionalRowSnapshot(tr) {
+  return JSON.stringify([...tr.querySelectorAll(".regional-assignment-field, .regional-substitution-field")]
+    .map((input) => [input.dataset.field, rowFieldValue(input)]));
+}
+
+function syncRegionalRowSave(tr) {
+  const button = tr.querySelector(".save-regional-assignment, .save-regional-substitution");
+  if (!button) return;
+  button.disabled = !regionalQueuesCurrentlyEnabled() || !tr.dataset.initialValues || regionalRowSnapshot(tr) === tr.dataset.initialValues;
+}
+
+function initializeRegionalRows(table) {
+  table?.querySelectorAll("tr").forEach((tr) => {
+    if (!tr.querySelector(".save-regional-assignment, .save-regional-substitution")) return;
+    tr.dataset.initialValues = regionalRowSnapshot(tr);
+    syncRegionalRowSave(tr);
+  });
 }
 
 function renderSettings() {
@@ -3161,6 +3359,52 @@ function renderSettings() {
   renderRegionalAssignments();
   renderRegionalSubstitutions();
   updateRegionalSettingsAvailability();
+  resetSettingsSaveBaseline();
+}
+
+const settingsSaveGroups = {
+  attachments: { fields: "#attachmentsEnabledToggle", buttons: "#saveAttachmentSettingsBtn" },
+  coefficients: { fields: "#loadCoefficientsTable .load-coefficient-input", buttons: "#saveLoadCoefficientsBtn" },
+  deadlines: { fields: "#deadlineSettingsTable .deadline-setting-field", buttons: "#saveDeadlineSettingsBtn" },
+  yuc: { fields: "#yucSettingsForm input, #yucSettingsForm select", buttons: ".save-yuc-settings" },
+};
+const settingsSaveBaseline = {};
+
+function settingsGroupSnapshot(group) {
+  return JSON.stringify($$(settingsSaveGroups[group].fields).map((input) => input.type === "checkbox" ? input.checked : input.value));
+}
+
+function syncSettingsSaveButtons(group) {
+  const config = settingsSaveGroups[group];
+  const changed = settingsSaveBaseline[group] !== undefined && settingsGroupSnapshot(group) !== settingsSaveBaseline[group];
+  $$(config.buttons).forEach((button) => { button.disabled = !changed; });
+}
+
+function resetSettingsSaveBaseline(group) {
+  for (const key of group ? [group] : Object.keys(settingsSaveGroups)) {
+    settingsSaveBaseline[key] = settingsGroupSnapshot(key);
+    syncSettingsSaveButtons(key);
+  }
+}
+
+function applySettingsSavePayload(payload, savedGroup) {
+  const pending = Object.keys(settingsSaveGroups).filter((key) => key !== savedGroup && settingsSaveBaseline[key] !== undefined && settingsGroupSnapshot(key) !== settingsSaveBaseline[key]).map((key) => ({
+    key,
+    baseline: settingsSaveBaseline[key],
+    values: $$(settingsSaveGroups[key].fields).map((input) => input.type === "checkbox" ? input.checked : input.value),
+  }));
+  setDataFromPayload(payload);
+  for (const draft of pending) {
+    $$(settingsSaveGroups[draft.key].fields).forEach((input, index) => {
+      if (index >= draft.values.length) return;
+      if (input.type === "checkbox") input.checked = draft.values[index];
+      else input.value = draft.values[index];
+    });
+    settingsSaveBaseline[draft.key] = draft.baseline;
+    if (draft.key === "yuc") updateRegionalSettingsAvailability();
+    if (draft.key === "coefficients" || draft.key === "deadlines") $$(settingsSaveGroups[draft.key].fields).forEach(syncSettingsNumberStepper);
+    syncSettingsSaveButtons(draft.key);
+  }
 }
 
 function renderAttachmentSettings() {
@@ -3185,7 +3429,7 @@ async function saveAttachmentSettings() {
     method: "PUT",
     body: JSON.stringify({ enabled: requestedEnabled }),
   });
-  setDataFromPayload(payload);
+  applySettingsSavePayload(payload, "attachments");
   const enabled = payload.attachmentSettings?.enabled === true;
   const applyAvailability = (row) => ({
     ...row,
@@ -3200,6 +3444,7 @@ async function saveAttachmentSettings() {
   state.caseRegistryLoaded = false;
   markDataViewsDirty(["cases"]);
   if (state.caseModalCaseId) await refreshCaseModal(state.caseModalCaseId);
+  resetSettingsSaveBaseline("attachments");
   setStatus("Сохранено");
   toast(enabled ? "Работа с документами включена." : "Работа с документами отключена.");
 }
@@ -3211,7 +3456,8 @@ async function saveLoadCoefficients() {
     "Коэффициент": Number(String(row.querySelector(".load-coefficient-input")?.value ?? "").replace(",", ".")),
   }));
   const payload = await api("/api/load-coefficients", { method: "PUT", body: JSON.stringify({ rows }) });
-  setDataFromPayload(payload);
+  applySettingsSavePayload(payload, "coefficients");
+  resetSettingsSaveBaseline("coefficients");
   toast("Глобальные коэффициенты сохранены.");
 }
 
@@ -3900,8 +4146,9 @@ async function saveYucSettings() {
     method: "PATCH",
     body: JSON.stringify(payloadBody),
   });
-  setDataFromPayload(payload);
+  applySettingsSavePayload(payload, "yuc");
   state.lastRecommendation = null;
+  resetSettingsSaveBaseline("yuc");
   scheduleRecommendation();
   setStatus("Сохранено");
   toast("Настройки ЮЦ сохранены.");
@@ -3923,7 +4170,8 @@ async function saveDeadlineSettings() {
     method: "POST",
     body: JSON.stringify({ yuc: selectedYuc(), rows }),
   });
-  setDataFromPayload(payload);
+  applySettingsSavePayload(payload, "deadlines");
+  resetSettingsSaveBaseline("deadlines");
   setStatus("Сохранено");
   toast("Настройки по типам нагрузки сохранены.");
 }
@@ -4416,9 +4664,9 @@ function caseDocumentsSection(row, canEdit) {
             <strong title="${escapeHtml(document.name || "Документ")}">${escapeHtml(document.name || "Документ")}</strong>
             <span>${escapeHtml(formatDocumentSize(document.size))}</span>
           </div>
-          ${key ? `<button class="icon-btn case-document-preview" type="button" data-case-id="${escapeHtml(row.case_id)}" data-document-id="${escapeHtml(key)}" title="Открыть для просмотра" aria-label="Открыть ${escapeHtml(document.name || "документ")} для просмотра"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2.75h7l5 5v13.5H6zM13 2.75v5h5M9 12h6M9 15.5h6" /></svg></button>` : ""}
-          ${downloadUrl ? `<a class="icon-btn case-document-download" href="${downloadUrl}" title="Скачать документ" aria-label="Скачать ${escapeHtml(document.name || "документ")}"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.5m0 0 4-4m-4 4-4-4M5 15.5v4.75h14V15.5" /></svg></a>` : ""}
-          ${state.caseModalEditing && canEdit && key ? `<button class="icon-btn case-document-delete" type="button" data-document-id="${escapeHtml(key)}" data-document-name="${escapeHtml(document.name || "Документ")}" title="Удалить документ" aria-label="Удалить ${escapeHtml(document.name || "документ")}"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9 7V4.5h6V7m-8 0 .8 13h8.4L17 7M10 10.5v6M14 10.5v6" /></svg></button>` : ""}
+          ${key ? `<button class="icon-btn case-document-preview" type="button" data-case-id="${escapeHtml(row.case_id)}" data-document-id="${escapeHtml(key)}" title="Открыть для просмотра" aria-label="Открыть ${escapeHtml(document.name || "документ")} для просмотра"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-preview"/></svg></button>` : ""}
+          ${downloadUrl ? `<a class="icon-btn case-document-download" href="${downloadUrl}" title="Скачать документ" aria-label="Скачать ${escapeHtml(document.name || "документ")}"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-download"/></svg></a>` : ""}
+          ${state.caseModalEditing && canEdit && key ? `<button class="icon-btn case-document-delete" type="button" data-document-id="${escapeHtml(key)}" data-document-name="${escapeHtml(document.name || "Документ")}" title="Удалить документ" aria-label="Удалить ${escapeHtml(document.name || "документ")}"><svg class="case-document-action-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-delete"/></svg></button>` : ""}
         </div>
       `;
     }).join("")
@@ -4449,7 +4697,7 @@ function caseDocumentsSection(row, canEdit) {
       <div class="case-documents-list">${items}</div>
       ${state.caseModalEditing && canEdit ? `
         <button class="case-document-dropzone" type="button" ${state.caseDocumentUploading ? "disabled" : ""}>
-          <svg class="case-document-drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14V3.5m0 0 4 4m-4-4-4 4M5 15.5v4.75h14V15.5" /></svg>
+          <svg class="case-document-drop-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-upload"/></svg>
           <span><strong>${state.caseDocumentUploading ? "Загрузка файлов…" : "Перетащите файлы сюда"}</strong><small>${state.caseDocumentUploading ? "Дождитесь завершения операции" : "Файлы загрузятся только после нажатия «Сохранить»"}</small></span>
         </button>
       ` : ""}
@@ -5065,6 +5313,7 @@ async function exitApplication() {
 }
 
 function bindEvents() {
+  initRegionalPolicySelects();
   document.addEventListener("click", blockWritePendingButtonEvents, true);
   $$(".nav-link").forEach((link) => {
     link.addEventListener("click", () => showView(link.dataset.view));
@@ -5097,14 +5346,25 @@ function bindEvents() {
   $("#copyAccessCodeBtn")?.addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#accessCodeValue").textContent || ""); toast("Код скопирован."); } catch { toast("Не удалось скопировать код. Скопируйте его вручную.", "error"); } });
   $("#accessCodeModal")?.addEventListener("click", (event) => { if (event.target.id === "accessCodeModal") closeAccessCodeModal(); });
   $("#exitBtn").addEventListener("click", () => exitApplication());
-  $("#toggleHistoricalDashboard")?.addEventListener("click", toggleHistoricalDashboardWithFlip);
-  $("#themeToggle")?.addEventListener("change", (event) => {
-    applyTheme(event.target.checked ? redTheme : blueTheme);
+  $("#toggleHistoricalDashboard")?.addEventListener("click", () => toggleHistoricalDashboardWithFlip(true));
+  $("#toggleCurrentDashboard")?.addEventListener("click", () => toggleHistoricalDashboardWithFlip(false));
+  $$("[data-skin]").forEach((button) => button.addEventListener("click", () => {
+    applyTheme(button.dataset.skin);
+  }));
+  $("#skinDayNight")?.addEventListener("click", () => {
+    if (currentSkin().alternate) applyTheme(currentSkin().alternate);
   });
-  $("#saveYucSettingsBtn")?.addEventListener("click", () => saveYucSettings().catch((error) => {
+  $$(".save-yuc-settings").forEach((button) => button.addEventListener("click", () => saveYucSettings().catch((error) => {
     setStatus("Ошибка");
     toast(error.message, "error");
-  }));
+  })));
+  for (const eventName of ["input", "change"]) {
+    $("#view-settings")?.addEventListener(eventName, (event) => {
+      for (const [group, config] of Object.entries(settingsSaveGroups)) {
+        if (event.target.matches(config.fields)) syncSettingsSaveButtons(group);
+      }
+    });
+  }
   $("#saveAttachmentSettingsBtn")?.addEventListener("click", () => saveAttachmentSettings().catch((error) => {
     setStatus("Ошибка");
     toast(error.message, "error");
@@ -5362,6 +5622,24 @@ function bindEvents() {
   }));
   $("#cancelVacationDraftBtn").addEventListener("click", cancelVacationDraft);
   document.addEventListener("click", (event) => {
+    const calendarTrigger = event.target.closest(".skin-date-open");
+    if (calendarTrigger) { openHistoricalCalendar(calendarTrigger); return; }
+    if (historicalCalendar && event.target.closest(".skin-calendar-popup")) {
+      const move = event.target.closest("[data-calendar-move]");
+      if (move) {
+        const next = new Date(Date.UTC(historicalCalendar.year, historicalCalendar.month + Number(move.dataset.calendarMove), 1));
+        historicalCalendar.year = next.getUTCFullYear(); historicalCalendar.month = next.getUTCMonth();
+        drawHistoricalCalendar(true);
+      } else if (event.target.closest("[data-calendar-date]")) {
+        setHistoricalDateValue(historicalCalendar.target, event.target.closest("[data-calendar-date]").dataset.calendarDate);
+      } else if (event.target.closest("[data-calendar-today]")) {
+        setHistoricalDateValue(historicalCalendar.target, today());
+      } else if (event.target.closest("[data-calendar-clear]")) {
+        setHistoricalDateValue(historicalCalendar.target, "");
+      }
+      return;
+    }
+    if (historicalCalendar && !event.target.closest(".skin-date-control")) closeHistoricalCalendar();
     const settingsNumberButton = event.target.closest("[data-settings-number-step]");
     if (settingsNumberButton) {
       changeSettingsNumber(settingsNumberButton);
@@ -5560,7 +5838,11 @@ function bindEvents() {
     const vacationDay = event.target.closest(".day-cell[data-date]");
     if (vacationDay) handleVacationDateClick(vacationDay.dataset.date);
   });
+  document.addEventListener("input", (event) => {
+    if (event.target.matches(".regional-assignment-field, .regional-substitution-field")) syncRegionalRowSave(event.target.closest("tr"));
+  });
   document.addEventListener("change", (event) => {
+    if (event.target.matches(".regional-assignment-field, .regional-substitution-field")) syncRegionalRowSave(event.target.closest("tr"));
     if (event.target.matches(".settings-number-input")) {
       syncSettingsNumberStepper(event.target);
       setStatus("Есть несохраненные изменения");
@@ -5632,6 +5914,11 @@ function bindEvents() {
       return;
     }
     if (event.target.matches("#historicalFrom")) {
+      if (event.target.type === "text") {
+        const value = parseManualHistoricalDate(event.target.value);
+        if (value === null) { event.target.setCustomValidity("Введите корректную дату в формате ДД.ММ.ГГГГ."); event.target.reportValidity(); return; }
+        event.target.setCustomValidity(""); setHistoricalDateValue("historicalFrom", value); return;
+      }
       state.historicalAllTime = false;
       state.historicalInitialized = true;
       state.historicalPeriodPreset = "custom";
@@ -5640,6 +5927,11 @@ function bindEvents() {
       return;
     }
     if (event.target.matches("#historicalTo")) {
+      if (event.target.type === "text") {
+        const value = parseManualHistoricalDate(event.target.value);
+        if (value === null) { event.target.setCustomValidity("Введите корректную дату в формате ДД.ММ.ГГГГ."); event.target.reportValidity(); return; }
+        event.target.setCustomValidity(""); setHistoricalDateValue("historicalTo", value); return;
+      }
       state.historicalAllTime = false;
       state.historicalInitialized = true;
       state.historicalPeriodPreset = "custom";
@@ -5682,6 +5974,7 @@ function bindEvents() {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (historicalCalendar) { event.preventDefault(); closeHistoricalCalendar({ restoreFocus: true }); return; }
       closeCaseModal();
       closeDeleteCaseModal();
       closePostponeCompletionModal();
@@ -5695,7 +5988,14 @@ function bindEvents() {
 }
 
 async function init() {
+  const menu = $(".skin-options");
+  if (menu) menu.innerHTML = Object.values(skins).filter((skin) => !skin.menuId).map((skin) => `<button type="button" class="skin-option" data-skin="${escapeHtml(skin.id)}"><span class="skin-preview skin-preview-${escapeHtml(skin.id)}" aria-hidden="true"></span>${escapeHtml(skin.menuLabel ?? skin.label)}</button>`).join("");
   applyTheme(savedTheme(), false);
+  new MutationObserver((records) => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (node.nodeType === Node.ELEMENT_NODE) syncSkinIcons(node);
+    }
+  }).observe(document.body, { childList: true, subtree: true });
   $("#caseForm").elements["Дата поступления"].value = today();
   updateThirdPartyVisibility();
   bindEvents();

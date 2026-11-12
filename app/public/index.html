@@ -3,16 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>МТС · Распределение нагрузки</title>
+    <title>CaseFlow</title>
+    <link rel="stylesheet" href="/skins/tokens.css" />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/skins.css" />
   </head>
   <body class="theme-apple theme-blue auth-pending">
     <div class="auth-gate show" id="authGate" aria-live="polite">
       <section class="auth-card" aria-labelledby="authTitle">
-        <img class="auth-logo" src="/apple_logo_blue_512.png" alt="" />
-        <div class="auth-eyebrow">Юридический центр</div>
-        <h1 id="authTitle">Вход в распределение нагрузки</h1>
-        <p id="authDescription">Введите логин и пароль.</p>
+        <div class="auth-heading">
+          <img class="auth-logo" src="/apple_logo_blue_512.png" alt="" />
+          <h1 id="authTitle">Вход в CaseFlow</h1>
+        </div>
+        <p id="authDescription" hidden></p>
         <div class="auth-mode-tabs" role="tablist">
           <button class="auth-mode active" type="button" data-auth-mode="login">Вход</button>
           <button class="auth-mode" type="button" data-auth-mode="first">Первый вход</button>
@@ -35,78 +38,73 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <img id="brandLogo" src="/apple_logo_blue_512.png" alt="Распределение нагрузки" />
+          <img id="brandLogo" src="/apple_logo_blue_512.png" alt="CaseFlow" />
           <div>
-            <div class="brand-title">Распределение нагрузки</div>
-            <div class="brand-subtitle">Юридический центр · MVP</div>
+            <div class="brand-title">CaseFlow</div>
           </div>
         </div>
 
         <nav class="nav" aria-label="Разделы приложения">
-          <button class="nav-link active" data-view="dashboard">Панель</button>
-          <button class="nav-link" data-view="distribution">Распределение</button>
-          <button class="nav-link" data-view="cases">Дела</button>
-          <button class="nav-link" data-view="employees">Сотрудники</button>
-          <button class="nav-link" data-view="settings">Настройки</button>
-          <button class="nav-link admin-only" data-view="access">Доступы</button>
-          <button class="nav-link" data-view="help">Инструкция</button>
+          <button class="nav-link active" data-view="dashboard"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-dashboard"/></svg><span>Панель</span></button>
+          <button class="nav-link" data-view="distribution"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-distribution"/></svg><span>Распределение</span></button>
+          <button class="nav-link" data-view="cases"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-cases"/></svg><span>Дела</span></button>
+          <button class="nav-link" data-view="employees"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-employees"/></svg><span>Сотрудники</span></button>
+          <button class="nav-link" data-view="reports"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-reports"/></svg><span>Отчёты</span></button>
+          <button class="nav-link" data-view="settings"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-settings"/></svg><span>Настройки</span></button>
+          <button class="nav-link admin-only" data-view="access"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-access"/></svg><span>Доступы</span></button>
+          <button class="nav-link" data-view="help"><svg class="skin-nav-icon" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-help"/></svg><span>Инструкция</span></button>
         </nav>
 
-        <div class="sidebar-bottom">
-          <section class="appearance-card" aria-label="Настройки отображения">
-            <div>
-              <div class="storage-label">Настройки</div>
-              <div class="appearance-title">Цвет оформления</div>
-            </div>
-            <label class="theme-switch">
-              <input type="checkbox" id="themeToggle" />
-              <span class="switch-ui"></span>
-              <span id="themeToggleLabel">Голубой</span>
-            </label>
-          </section>
-
-          <div class="storage-card">
-            <div class="storage-label">MTS Tabs API</div>
-            <div id="storagePath" class="storage-path">Загрузка…</div>
+        <section class="table-operation-progress hidden" id="tableOperationProgress" aria-live="polite" aria-atomic="true">
+          <div class="table-operation-ring" id="tableOperationFill" aria-hidden="true">
+            <svg class="table-operation-ring-svg" viewBox="0 0 100 100" focusable="false">
+              <defs><mask id="operationSegments"><circle cx="50" cy="50" r="42" fill="none" stroke="white" stroke-width="12" stroke-dasharray="12.5 4" /></mask></defs>
+              <circle class="operation-ring-base" cx="50" cy="50" r="42" fill="none" stroke-width="12" stroke-dasharray="12.5 4" />
+              <circle class="operation-ring-fill" cx="50" cy="50" r="42" fill="none" stroke-width="12" mask="url(#operationSegments)" />
+            </svg>
+            <span id="tableOperationElapsed">0 сек.</span>
           </div>
+          <div class="table-operation-copy">
+            <strong id="tableOperationTitle">Работа с таблицами</strong>
+            <span id="tableOperationStage">Подготавливаю запрос…</span>
+            <small id="tableOperationHint">Индикатор показывает этап ожидания, а не точный процент выполнения.</small>
+          </div>
+        </section>
+
+        <div class="sidebar-bottom">
+          <details class="appearance-card appearance-menu">
+            <summary><span>Оформление</span><svg class="appearance-chevron" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-chevron-up"/></svg></summary>
+            <div class="skin-options" role="group" aria-label="Выбор оформления"></div>
+          </details>
+
         </div>
       </aside>
 
       <main class="main">
         <header class="topbar">
-          <div>
-            <div class="eyebrow">MVP · MTS Tabs как хранилище</div>
+          <div class="topbar-page-title">
             <h1 id="pageTitle">Панель управления</h1>
           </div>
           <div class="topbar-actions">
             <span class="current-user" id="currentUser"></span>
-            <button class="btn btn-secondary" id="refreshBtn">Обновить</button>
-            <button class="btn btn-ghost" id="exitBtn">Выход</button>
-            <span class="status-pill status-ready" id="saveStatus">
+            <button class="skin-day-night" id="skinDayNight" type="button" hidden aria-label="Включить тёмную тему" title="Включить тёмную тему">
+              <svg class="skin-moon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-moon"/></svg>
+              <svg class="skin-sun" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-sun"/></svg>
+            </button>
+            <button class="btn btn-secondary exit-icon-button refresh-icon-button" id="refreshBtn" type="button" title="Обновить" aria-label="Обновить">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-refresh"/></svg>
+            </button>
+            <button class="btn btn-ghost exit-icon-button" id="exitBtn" type="button" title="Выйти" aria-label="Выйти">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-exit"/></svg>
+            </button>
+            <span class="status-pill status-ready" id="saveStatus" role="status" aria-label="Готово" title="Готово">
               <span class="status-dot" aria-hidden="true"></span>
               <span class="status-text">Готово</span>
             </span>
           </div>
         </header>
 
-        <section class="table-operation-progress hidden" id="tableOperationProgress" aria-live="polite" aria-atomic="true">
-          <div class="table-operation-progress-head">
-            <div>
-              <strong id="tableOperationTitle">Работа с таблицами</strong>
-              <span id="tableOperationStage">Подготавливаю запрос…</span>
-            </div>
-            <span class="table-operation-elapsed" id="tableOperationElapsed">0 сек.</span>
-          </div>
-          <div class="table-operation-track" aria-hidden="true">
-            <span id="tableOperationFill"></span>
-          </div>
-          <small id="tableOperationHint">Продолжительность зависит от объёма данных и скорости ответа MTS Tabs.</small>
-        </section>
-
         <section class="yuc-switcher" aria-label="Выбор юридического центра">
-          <div class="yuc-switcher-title">
-            <div class="yuc-switcher-label">Юридический центр</div>
-          </div>
           <div id="yucTabs" class="yuc-tabs"></div>
         </section>
 
@@ -139,8 +137,10 @@
                 <p id="workloadCardSubtitle">Ярким показаны активные дела, полупрозрачным — незавершённые дела, которые уже не активны по сроку актуальности.</p>
               </div>
               <div class="card-head-actions">
-                <span class="badge badge-red" id="workloadCardBadge">по типам нагрузки</span>
-                <button class="icon-chip" id="toggleHistoricalDashboard" type="button" title="Показать историческую нагрузку" aria-label="Показать историческую нагрузку">↻</button>
+                <div class="workload-mode-switch" role="group" aria-label="Режим нагрузки">
+                  <button class="icon-chip workload-mode-toggle active" id="toggleCurrentDashboard" type="button" aria-pressed="true">По типам нагрузки</button>
+                  <button class="icon-chip workload-mode-toggle" id="toggleHistoricalDashboard" type="button" aria-pressed="false">Историческая</button>
+                </div>
               </div>
             </div>
             <div id="workloadDashboard" class="workload-dashboard"></div>
@@ -220,7 +220,7 @@
                     <div class="case-documents-empty">Документы не выбраны.</div>
                   </div>
                   <button class="case-document-dropzone" id="distributionDocumentDropzone" type="button">
-                    <svg class="case-document-drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14V3.5m0 0 4 4m-4-4-4 4M5 15.5v4.75h14V15.5" /></svg>
+                    <svg class="case-document-drop-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-upload"/></svg>
                     <span><strong>Выберите или перетащите файлы</strong><small>Загрузка начнётся после назначения дела</small></span>
                   </button>
                   <input id="distributionDocumentInput" class="hidden" type="file" multiple />
@@ -381,6 +381,19 @@
           </section>
         </section>
 
+        <section class="view" id="view-reports">
+          <div class="card reports-placeholder">
+            <svg class="reports-barrier" viewBox="0 0 240 160" aria-hidden="true">
+              <path class="barrier-leg" d="M55 69v62m130-62v62M42 132h26m104 0h26"/>
+              <rect class="barrier-board" x="30" y="42" width="180" height="54" rx="9"/>
+              <path class="barrier-stripe" d="m50 93 30-48m15 48 30-48m15 48 30-48m15 48 23-37"/>
+              <circle class="barrier-lamp" cx="120" cy="27" r="9"/><path class="barrier-leg" d="M120 36v6"/>
+            </svg>
+            <h2>В разработке</h2>
+            <p>Раздел отчётов появится здесь позже.</p>
+          </div>
+        </section>
+
         <section class="view" id="view-settings">
           <div class="grid settings-layout">
             <section class="card" id="attachmentSettingsCard">
@@ -391,6 +404,7 @@
                 </div>
                 <div class="settings-card-actions">
                   <span class="badge badge-blue">все ЮЦ</span>
+                  <button class="settings-save-icon" id="saveAttachmentSettingsBtn" type="button" title="Сохранить настройку документов" aria-label="Сохранить настройку документов" disabled><svg aria-hidden="true"><use href="/skins/icons.svg#skin-icon-save"/></svg></button>
                   <button class="settings-help-trigger" type="button" data-settings-help="attachments" aria-label="Справка по документам" title="Как работают документы">?</button>
                 </div>
               </div>
@@ -402,9 +416,6 @@
                 <input type="checkbox" id="attachmentsEnabledToggle" />
                 <span class="switch-ui"></span>
               </label>
-              <div class="actions-row">
-                <button class="btn btn-primary" id="saveAttachmentSettingsBtn">Сохранить настройку</button>
-              </div>
             </section>
 
             <section class="card load-coefficients-card" id="loadCoefficientsCard">
@@ -415,13 +426,11 @@
                 </div>
                 <div class="settings-card-actions">
                   <span class="badge badge-blue">все ЮЦ</span>
+                  <button class="settings-save-icon" id="saveLoadCoefficientsBtn" type="button" title="Сохранить коэффициенты" aria-label="Сохранить коэффициенты" disabled><svg aria-hidden="true"><use href="/skins/icons.svg#skin-icon-save"/></svg></button>
                   <button class="settings-help-trigger" type="button" data-settings-help="loadCoefficients" aria-label="Справка по коэффициентам" title="Как работают коэффициенты">?</button>
                 </div>
               </div>
               <div class="load-coefficients-grid" id="loadCoefficientsTable"></div>
-              <div class="actions-row">
-                <button class="btn btn-primary" id="saveLoadCoefficientsBtn">Сохранить коэффициенты</button>
-              </div>
             </section>
 
             <section class="card">
@@ -432,6 +441,7 @@
                 </div>
                 <div class="settings-card-actions">
                   <span class="badge badge-red">настройки своего ЮЦ</span>
+                  <button class="settings-save-icon" id="saveDeadlineSettingsBtn" type="button" title="Сохранить настройки по типам нагрузки" aria-label="Сохранить настройки по типам нагрузки" disabled><svg aria-hidden="true"><use href="/skins/icons.svg#skin-icon-save"/></svg></button>
                   <button class="settings-help-trigger" type="button" data-settings-help="deadlines" aria-label="Справка по срокам" title="Справка">?</button>
                 </div>
               </div>
@@ -442,9 +452,6 @@
                   </thead>
                   <tbody id="deadlineSettingsTable"></tbody>
                 </table>
-              </div>
-              <div class="actions-row">
-                <button class="btn btn-primary" id="saveDeadlineSettingsBtn">Сохранить настройки</button>
               </div>
             </section>
 
@@ -457,6 +464,7 @@
                   </div>
                   <div class="settings-card-actions">
                     <span class="badge badge-red">настройка своего ЮЦ</span>
+                    <button class="settings-save-icon save-yuc-settings" type="button" title="Сохранить настройки расчёта и регионального распределения ЮЦ" aria-label="Сохранить настройки расчёта и регионального распределения ЮЦ" disabled><svg aria-hidden="true"><use href="/skins/icons.svg#skin-icon-save"/></svg></button>
                     <button class="settings-help-trigger" type="button" data-settings-help="loadAccounting" aria-label="Справка по расчёту нагрузки" title="Справка">?</button>
                   </div>
                 </div>
@@ -478,6 +486,7 @@
                   </div>
                   <div class="settings-card-actions">
                     <span class="badge badge-blue">региональная логика</span>
+                    <button class="settings-save-icon save-yuc-settings" type="button" title="Сохранить настройки расчёта и регионального распределения ЮЦ" aria-label="Сохранить настройки расчёта и регионального распределения ЮЦ" disabled><svg aria-hidden="true"><use href="/skins/icons.svg#skin-icon-save"/></svg></button>
                     <button class="settings-help-trigger" type="button" data-settings-help="regionalRules" aria-label="Справка по региональному распределению" title="Справка">?</button>
                   </div>
                 </div>
@@ -496,29 +505,26 @@
                     Учёт региона выключен. Назначение идёт по общей очереди выбранного ЮЦ; настройки ниже сохранены, но временно не применяются.
                   </div>
                   <div class="form-grid regional-policy-grid">
-                    <label class="field">
-                      <span>Если для региона и типа нагрузки нет закреплённых сотрудников</span>
-                      <select name="Регион не настроен">
+                    <div class="field">
+                      <label for="regionalNoAssignment">Если для региона и типа нагрузки нет закреплённых сотрудников</label>
+                      <select id="regionalNoAssignment" name="Регион не настроен" class="regional-policy-select">
                         <option value="общая очередь">назначить по общей очереди</option>
                         <option value="ошибка">остановить автоназначение и показать причину</option>
                       </select>
-                    </label>
-                    <label class="field">
-                      <span>Если все закреплённые сотрудники недоступны</span>
-                      <select name="Региональные юристы недоступны">
+                    </div>
+                    <div class="field">
+                      <label for="regionalUnavailable">Если все закреплённые сотрудники недоступны</label>
+                      <select id="regionalUnavailable" name="Региональные юристы недоступны" class="regional-policy-select">
                         <option value="заместитель затем общая очередь">использовать настроенное замещение, затем общую очередь</option>
                         <option value="общая очередь">назначить по общей очереди</option>
                         <option value="ошибка">остановить автоназначение и показать причину</option>
                       </select>
-                    </label>
+                    </div>
                     <div class="regional-overload-note">
                       <strong>Если региональная группа перегружена</strong>
                       <span>Дело назначается доступному сотруднику общей очереди, когда разница превышает порог выбранного типа нагрузки.</span>
                     </div>
                   </div>
-                </div>
-                <div class="actions-row">
-                  <button class="btn btn-primary" type="button" id="saveYucSettingsBtn">Сохранить настройки ЮЦ</button>
                 </div>
               </section>
             </form>
@@ -574,7 +580,9 @@
                 <h2>Доступы сотрудников</h2>
                 <p id="accessDescription">Выдавайте одноразовые коды первичного входа и назначайте роли. Код показывается один раз.</p>
               </div>
-              <button class="btn btn-secondary" id="refreshAccessBtn" type="button">Обновить</button>
+              <button class="btn btn-secondary exit-icon-button refresh-icon-button" id="refreshAccessBtn" type="button" title="Обновить доступы" aria-label="Обновить доступы">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="/skins/icons.svg#skin-icon-refresh"/></svg>
+              </button>
             </div>
             <div class="table-wrap">
               <table class="access-table">

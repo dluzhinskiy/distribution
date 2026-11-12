@@ -2,7 +2,7 @@ import { FIELD, cleanText, isDeletedCase, nameMatches, normalizeType, normalizeY
 
 const ALLOWED_CELL_FIELDS = new Set([
   "Тип дела", "Статус", "Ответственный", "Регион", "Истец", "Ответчик",
-  "Третье лицо", "Дата поступления",
+  "Третье лицо", "Дата поступления", "Актуально",
 ]);
 const COMPLETED_STATUSES = new Set(["Завершено", "Отменено", "Удалено"]);
 

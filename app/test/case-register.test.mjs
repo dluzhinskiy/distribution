@@ -39,3 +39,18 @@ test("legacy single cell filter remains supported", () => {
   const result = paginateCaseRegister(rows, { yuc: "Юг", cellField: "Тип дела", cellValue: "судебное" }, { name: "Руководитель" });
   assert.deepEqual(result.rows.map((row) => row.case_id), ["1"]);
 });
+
+test("actuality field combines with employee and type before pagination", () => {
+  const all = [
+    ...rows,
+    { case_id: "4", "ЮЦ": "Юг", "Ответственный": "Иванов Иван", "Статус": "Завершено", "Актуально": "Нет", "Тип дела": "судебное" },
+    { case_id: "5", "ЮЦ": "Юг", "Ответственный": "Иванов Иван", "Статус": "В работе", "Актуально": "Нет", "Тип дела": "судебное" },
+  ];
+  const filters = (value) => JSON.stringify([
+    { field: "Ответственный", value: "Иванов Иван" },
+    { field: "Тип дела", value: "судебное" },
+    { field: "Актуально", value },
+  ]);
+  assert.deepEqual(paginateCaseRegister(all, { yuc: "Юг", cellFilters: filters("Да") }, {}).rows.map((row) => row.case_id), ["1"]);
+  assert.deepEqual(paginateCaseRegister(all, { yuc: "Юг", cellFilters: filters("Нет") }, {}).rows.map((row) => row.case_id), ["5", "4"]);
+});

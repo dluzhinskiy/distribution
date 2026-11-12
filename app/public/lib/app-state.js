@@ -82,6 +82,7 @@ export const viewTitles = {
   distribution: "Распределение нового дела",
   cases: "Реестр дел",
   employees: "Сотрудники",
+  reports: "Отчёты",
   settings: "Настройки региональных правил",
   access: "Доступы сотрудников",
   help: "Инструкция",
