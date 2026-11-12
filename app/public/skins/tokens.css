@@ -822,6 +822,10 @@ body.theme-apple.theme-gray {
 }
 
 body.theme-apple.theme-gray.theme-gray-dark {
+  --queue-card-surface: var(--skin-color-358);
+  --queue-manual-surface: var(--skin-color-462);
+  --queue-position-surface: var(--skin-color-462);
+  --queue-position-text: var(--mts-gray-900);
   --apple-page-bg: var(--skin-color-341);
   --apple-accent: var(--skin-color-342);
   --apple-accent-dark: var(--skin-color-343);
