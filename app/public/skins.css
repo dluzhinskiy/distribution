@@ -823,15 +823,15 @@ body.theme-apple.theme-gray-dark .barrier-leg { stroke: var(--skin-color-520); }
 body.theme-apple.theme-gray-dark .barrier-board { fill: var(--skin-color-521); stroke: var(--skin-color-522); }
 body.theme-apple.theme-gray-dark .barrier-stripe { stroke: var(--skin-color-523); }
 
-.settings-save-icon { display: inline-grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; padding: 7px; border: 1px solid var(--skin-color-524); border-radius: var(--skin-radius-020); color: var(--skin-color-525); background: var(--skin-color-526); cursor: pointer; }
+.settings-save-icon { display: inline-grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; padding: 7px; border: 1px solid var(--settings-save-border, var(--apple-accent-border)); border-radius: var(--skin-radius-020); color: var(--settings-save-text, var(--apple-accent-dark)); background: var(--settings-save-surface, var(--apple-accent-soft)); cursor: pointer; }
 .settings-save-icon svg { display: block; width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .settings-save-icon:disabled { opacity: .4; cursor: default; }
-.settings-save-icon:focus-visible, .settings-help-trigger:focus-visible { outline: 3px solid var(--skin-color-527); outline-offset: 3px; }
-body.theme-apple.theme-gray .settings-save-icon { border-color: var(--skin-color-060); background: var(--skin-color-528); box-shadow: var(--skin-box-shadow-096); }
+.settings-save-icon:focus-visible, .settings-help-trigger:focus-visible { outline: 3px solid var(--apple-accent); outline-offset: 3px; }
+body.theme-apple.theme-gray .settings-save-icon { box-shadow: var(--skin-box-shadow-096); }
 body.theme-apple.theme-gray .settings-save-icon:disabled { color: var(--skin-color-529); background: var(--skin-color-530); box-shadow: var(--skin-box-shadow-097); opacity: .7; }
 body.theme-apple.theme-gray .settings-help-trigger { width: 38px; height: 38px; border: 0; border-radius: 0; color: var(--skin-color-531); background: transparent; box-shadow: none; font-size: 26px; font-weight: 700; text-shadow: var(--skin-text-shadow-001); }
 body.theme-apple.theme-gray .settings-help-trigger:hover { color: var(--skin-color-533); background: transparent; }
-body.theme-apple.theme-gray-dark .settings-save-icon { color: var(--skin-color-534); border-color: var(--skin-color-535); background: var(--skin-color-536); box-shadow: var(--skin-box-shadow-076); }
+body.theme-apple.theme-gray-dark .settings-save-icon { box-shadow: var(--skin-box-shadow-076); }
 body.theme-apple.theme-gray-dark .settings-save-icon:disabled { color: var(--skin-color-537); background: var(--skin-color-538); box-shadow: var(--skin-box-shadow-098); }
 body.theme-apple.theme-gray-dark .settings-help-trigger { color: var(--skin-color-539); text-shadow: var(--skin-text-shadow-002); }
 body.theme-apple.theme-gray-dark .settings-help-trigger:hover { color: var(--skin-color-541); }

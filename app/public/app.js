@@ -1,4 +1,5 @@
 import { skins, getSkin, defaultSkin, defaultIcons, workloadSkinIcon } from "./skins/catalog.js";
+import { distributionFeedback, distributionRuleChip } from "./lib/distribution-feedback.js";
 import {
   displayName,
   employeeInitials,
@@ -1851,18 +1852,11 @@ function toggleHistoricalDashboardWithFlip(toHistory = !state.historicalDashboar
 }
 
 function renderYucRegionSelects() {
-  const directories = state.data?.directories;
   const regionSelect = $("#regionSelect");
   if (!regionSelect) return;
-  const currentYuc = selectedYuc();
   const currentRegion = state.resetRegionOnRender ? "" : regionSelect.value;
   regionSelect.required = regionalQueuesEnabled();
   state.resetRegionOnRender = false;
-  if (!directories?.yucs?.length) {
-    regionSelect.innerHTML = `<option value="">Регион не выбран</option>`;
-    renderDistributionDocuments();
-    return;
-  }
   renderRegionSelect(currentRegion);
   renderDistributionDocuments();
 }
@@ -1916,7 +1910,8 @@ function renderRegionSelect(previousRegion = null) {
   if (!regionSelect) return;
   const current = previousRegion ?? regionSelect.value;
   const regions = directories?.regionsByYuc?.[yuc] ?? [];
-  regionSelect.innerHTML = `<option value="">Не выбран</option>` + regions
+  const placeholder = !yuc ? "Нет доступных ЮЦ" : !regions.length ? "Нет регионов для выбранного ЮЦ" : regionSelect.required ? "Выберите регион" : "Не выбран";
+  regionSelect.innerHTML = `<option value="">${placeholder}</option>` + regions
     .map((region) => `<option value="${escapeHtml(region)}">${escapeHtml(region)}</option>`)
     .join("");
   if (regions.includes(current)) {
@@ -3578,6 +3573,7 @@ function renderDataView(name, { force = false } = {}) {
     renderWorkloadDashboard();
   } else if (name === "distribution") {
     renderYucRegionSelects();
+    scheduleRecommendation();
   } else if (name === "cases") {
     renderCases();
   } else if (name === "employees") {
@@ -3705,7 +3701,7 @@ function renderQueuePreview(preview) {
   const node = $("#queuePreview");
   if (!node) return;
   if (!preview) {
-    node.innerHTML = `<div class="queue-preview-empty">Выберите тип нагрузки, чтобы увидеть очередь назначения.</div>`;
+    node.innerHTML = "";
     return;
   }
   if (!preview.rows?.length) {
@@ -3738,7 +3734,7 @@ function renderQueuePreview(preview) {
 }
 
 function activeRuleItems(result) {
-  const items = [{ text: "не два подряд", kind: "red" }];
+  const items = [distributionRuleChip(result?.basis)];
   if (!result || result.pending) return items;
   const preview = result.queuePreview;
   const mode = preview?.mode;
@@ -3748,9 +3744,7 @@ function activeRuleItems(result) {
   if (mode === "general") items.push({ text: "общая очередь", kind: "gray" });
   const basis = String(result.basis ?? "").toLowerCase();
   if (basis.includes("долг")) items.push({ text: "погашение долга", kind: "blue" });
-  if (basis.includes("не два подряд") && basis.includes("не применяется")) items.push({ text: "не два подряд не применяется", kind: "orange" });
-  if (basis.includes("повтор допускается")) items.push({ text: "повтор разрешён регионом", kind: "orange" });
-  if ((result.skippedVacation ?? []).length) items.push({ text: "учтены отпуска", kind: "orange" });
+  if (result.skippedVacation?.length || result.skippedUpcomingVacations?.length) items.push({ text: "учтены отпуска", kind: "orange" });
   return items;
 }
 
@@ -3769,6 +3763,7 @@ function renderDistributionRuleBadges(result = state.lastRecommendation) {
 }
 
 function invalidateRecommendation(message) {
+  cancelQueuedRecommendation();
   clearTestDistributionResult();
   showRecommendation({
     ok: false,
@@ -3793,7 +3788,7 @@ function showRecommendation(result) {
   const metaNode = $("#recommendationMeta");
   if (result.pending) {
     badgeNode.className = "badge badge-gray";
-    badgeNode.textContent = "ожидает типа";
+    badgeNode.textContent = result.label ?? "ожидает типа";
     personNode.textContent = "—";
     personNode.title = "";
     metaNode.textContent = result.reason;
@@ -3810,6 +3805,7 @@ function showRecommendation(result) {
     badgeNode.className = "badge badge-orange";
     badgeNode.textContent = "нужно решение";
     personNode.textContent = "—";
+    personNode.title = "";
     metaNode.textContent = result.reason;
   }
   renderQueuePreview(result.queuePreview);
@@ -3830,31 +3826,26 @@ function validateDraftForAssignment(draft) {
 }
 
 async function recommendCurrent(options = {}) {
+  const requestId = cancelQueuedRecommendation();
   const draft = formDraft();
-  if (!draft["Тип дела"]) {
-    showRecommendation({
-      ok: false,
-      pending: true,
-      reason: "Выберите тип дела — система сразу рассчитает следующего ответственного.",
-    });
-    if (!options.silent) toast("Выберите тип дела.", "error");
+  const feedback = distributionFeedback(draft, regionalQueuesEnabled());
+  showRecommendation({ pending: true, ...feedback });
+  if (!feedback.ready) {
+    if (!options.silent) toast(feedback.reason, "error");
     return null;
   }
-  if (regionalQueuesEnabled() && !draft["Регион"]) {
-    showRecommendation({
-      ok: false,
-      pending: true,
-      reason: "Выберите регион — после этого система рассчитает следующего ответственного.",
+  let payload;
+  try {
+    payload = await api("/api/recommend", {
+      method: "POST",
+      body: JSON.stringify({ draft, skipUpcomingVacationEmployeeIds: state.distributionVacationSkipEmployeeIds }),
     });
-    if (!options.silent) toast("Выберите регион.", "error");
-    return null;
+    if (!payload?.result) throw new Error("Сервер не вернул результат расчёта очереди.");
+  } catch (error) {
+    if (requestId !== state.recommendationRequestId) return null;
+    showRecommendation({ pending: true, label: "ошибка расчёта", reason: error.message });
+    throw error;
   }
-  const requestId = (state.recommendationRequestId ?? 0) + 1;
-  state.recommendationRequestId = requestId;
-  const payload = await api("/api/recommend", {
-    method: "POST",
-    body: JSON.stringify({ draft, skipUpcomingVacationEmployeeIds: state.distributionVacationSkipEmployeeIds }),
-  });
   if (requestId !== state.recommendationRequestId) return null;
   showRecommendation(payload.result);
   return payload.result;
@@ -3907,9 +3898,19 @@ async function runTestDistribution() {
   toast("Пробный расчёт завершён. Ничего не сохранено.");
 }
 
-function scheduleRecommendation() {
-  state.recommendationRequestId = (state.recommendationRequestId ?? 0) + 1;
+function cancelQueuedRecommendation() {
   clearTimeout(state.recommendationTimer);
+  state.recommendationTimer = null;
+  state.recommendationRequestId = (state.recommendationRequestId ?? 0) + 1;
+  return state.recommendationRequestId;
+}
+
+function scheduleRecommendation() {
+  cancelQueuedRecommendation();
+  if (activeDataViewName() !== "distribution") return;
+  const feedback = distributionFeedback(formDraft(), regionalQueuesEnabled());
+  showRecommendation({ pending: true, ...feedback });
+  if (!feedback.ready) return;
   state.recommendationTimer = setTimeout(() => {
     recommendCurrent({ silent: true }).catch((error) => {
       setStatus("Ошибка");
@@ -3930,6 +3931,7 @@ function handleCaseFormRecommendationChange(event) {
 }
 
 function resetDistributionForm(message) {
+  cancelQueuedRecommendation();
   clearTestDistributionResult();
   state.distributionVacationSkipEmployeeIds = [];
   state.distributionDocumentPendingFiles = [];
